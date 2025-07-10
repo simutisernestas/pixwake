@@ -23,6 +23,7 @@ python = ">=3.13.5,<3.14"
 
 [tool.pixi.feature.test.dependencies]
 pytest = "*"
+py-wake = ">=2.6.12,<3"
 
 [tool.pixi.feature.test.tasks]
 test = "pytest test/"
