@@ -23,8 +23,10 @@ def __get_eps():
 # ------------------------
 # 1) fixed_point with custom_vjp
 # ------------------------
-@partial(custom_vjp, nondiff_argnums=(0,), nondiff_argnames=["tol"])
-def fixed_point(f, a, x_guess, tol=1e-6):
+@partial(custom_vjp, nondiff_argnums=(0,))
+def fixed_point(f, a, x_guess):
+    tol = 1e-6
+
     def cond_fun(carry):
         x_prev, x = carry
         # iterate until max abs change < tol
@@ -38,8 +40,8 @@ def fixed_point(f, a, x_guess, tol=1e-6):
     return x_star
 
 
-def fixed_point_fwd(f, a, x_guess, tol):
-    x_star = fixed_point(f, a, x_guess, tol=tol)
+def fixed_point_fwd(f, a, x_guess):
+    x_star = fixed_point(f, a, x_guess)
     return x_star, (a, x_star)
 
 
@@ -49,7 +51,7 @@ def rev_iter(f, packed, u):
     return x_star_bar + vjp_x(u)[0]
 
 
-def fixed_point_rev(f, _, res, x_star_bar):
+def fixed_point_rev(f, res, x_star_bar):
     a, x_star = res
     # vjp wrt a at the fixed point
     _, vjp_a = vjp(lambda a: f(a, x_star), a)

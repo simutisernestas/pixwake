@@ -18,14 +18,14 @@ def sqrt_iter(a, x):
 def test_fixed_point_sqrt():
     a = 2.0
     x0 = 1.0
-    res = fixed_point(sqrt_iter, a, x0, tol=1e-8)
+    res = fixed_point(sqrt_iter, a, x0)
     assert jnp.allclose(res, jnp.sqrt(a), rtol=1e-6)
 
 
 def test_fixed_point_gradient():
     a = 2.0
     x0 = 1.0
-    grad_fn = jax.grad(lambda aa: fixed_point(sqrt_iter, aa, x0, tol=1e-8))
+    grad_fn = jax.grad(lambda aa: fixed_point(sqrt_iter, aa, x0))
     grad = grad_fn(a)
     expected = 1.0 / (2 * jnp.sqrt(a))
     assert jnp.allclose(grad, expected, rtol=1e-6)
