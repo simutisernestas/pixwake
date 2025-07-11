@@ -135,11 +135,20 @@ def ws2power(ws_eff, pc):
     return powers
 
 
-def ws2aep(ws_eff, pc):
+def ws2aep(ws_eff, pc, prob=None, normalize_prob=False):
     wt_powers = ws2power(ws_eff, pc)  # kW
     wt_powers *= 1e3  # W
-    aep = (wt_powers * (24 * 365) * 1e-9).sum()  # GWh
-    return aep / ws_eff.shape[0]
+
+    h_year = 24 * 365
+    to_giga = 1e-9
+
+    if prob is None:
+        # ws_eff.shape[0] is time dimension; i.e.
+        # timeseries range should cover one year
+        return (wt_powers * h_year * to_giga).sum() / ws_eff.shape[0]  # GWh
+
+    norm = 1  # TODO: implement normalization
+    return (wt_powers * prob / norm * h_year * to_giga).sum()
 
 
 # ------------------------
