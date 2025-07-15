@@ -1,13 +1,15 @@
 import jax
 import jax.numpy as jnp
+from jax import config as jcfg
 from jax.test_util import check_grads
 
 from pixwake import (
-    batched_simulate_case,
     fixed_point,
-    simulate_case,
-    wake_step,
+    noj_wake_step,
+    simulate_case_noj,
 )
+
+jcfg.update("jax_enable_x64", True)  # need float64 to match pywake
 
 
 def sqrt_iter(a, x):
@@ -48,7 +50,7 @@ def rect_grid_params(nx=3, ny=2):
     )
     xs = xs.ravel()
     ys = ys.ravel()
-    ws = jnp.full(xs.shape, 10.0)
+    ws = 10.0
     wd = 270.0
     D = 100.0
     k = 0.05
@@ -60,35 +62,27 @@ def test_wake_step_two_turbines():
     xs, ys, ws, wd, D, k, ct_curve = base_params()
     ct_xp, ct_fp = ct_curve[:, 0], ct_curve[:, 1]
     a = (xs, ys, ws, wd, D, k, ct_xp, ct_fp)
-    result = wake_step(a, ws)
+    result = noj_wake_step(a, ws)
     expected = jnp.array([10.0, 7.5154347])
     assert jnp.allclose(result, expected, rtol=1e-6)
 
 
 def test_simulate_case_two_turbines():
     xs, ys, ws, wd, D, k, ct_curve = base_params()
-    result = simulate_case(xs, ys, ws, wd, D, k, ct_curve)
+    result = simulate_case_noj(
+        xs, ys, jnp.atleast_1d(ws[0]), jnp.atleast_1d(wd), D, k, ct_curve
+    )
     expected = jnp.array([10.0, 7.5154343])
     assert jnp.allclose(result, expected, rtol=1e-6)
-
-
-def test_batched_simulate_case_matches_individual():
-    xs, ys, ws, wd, D, k, ct_curve = base_params()
-    ws = jnp.array([10.0, 12.0])
-    wd = jnp.array([270.0, 270.0])
-    batch_res = batched_simulate_case(xs, ys, ws, wd, D, k, ct_curve)
-    indiv = jnp.stack(
-        [simulate_case(xs, ys, ws[i], wd[i], D, k, ct_curve) for i in range(2)],
-        axis=0,
-    )
-    assert jnp.allclose(batch_res, indiv, rtol=1e-6)
 
 
 def test_simulate_case_gradients_and_jit():
     xs, ys, ws, wd, D, k, ct_curve = rect_grid_params()
 
     def f(xx, yy):
-        return simulate_case(xx, yy, ws, wd, D, k, ct_curve)
+        return simulate_case_noj(
+            xx, yy, jnp.atleast_1d(ws), jnp.atleast_1d(wd), D, k, ct_curve
+        )
 
     check_grads(f, (xs, ys), order=1, modes=["rev"], atol=1e-2, rtol=1e-2)
 
@@ -100,6 +94,6 @@ def test_batched_simulate_case_jit():
     xs, ys, ws, wd, D, k, ct_curve = rect_grid_params()
     ws_b = jnp.stack([ws, ws + 2.0])
     wd_b = jnp.stack([wd, wd])
-    expected = batched_simulate_case(xs, ys, ws_b, wd_b, D, k, ct_curve)
-    jitted = jax.jit(batched_simulate_case)
+    expected = simulate_case_noj(xs, ys, ws_b, wd_b, D, k, ct_curve)
+    jitted = jax.jit(simulate_case_noj)
     assert jnp.allclose(jitted(xs, ys, ws_b, wd_b, D, k, ct_curve), expected, rtol=1e-6)
