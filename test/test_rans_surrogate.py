@@ -1,3 +1,5 @@
+import time
+
 import jax
 import jax.numpy as jnp
 import numpy as onp
@@ -16,19 +18,17 @@ if __name__ == "__main__":
     CUTIN_WS = 3.0
 
     onp.random.seed(42)
-    T = 5
+    T = 100
     ws = onp.random.uniform(CUTIN_WS + 1, CUTOUT_WS - 1, T)
     wd = onp.random.uniform(0, 360, T)
 
-    wi, le = 10, 10
+    wi, le = 5, 5
     xs, ys = jnp.meshgrid(  # example positions
-        jnp.linspace(0, wi * 2 * D, wi),
-        jnp.linspace(0, le * 2 * D, le),
+        jnp.linspace(0, wi * 3 * D, wi),
+        jnp.linspace(0, le * 3 * D, le),
     )
     xs, ys = xs.ravel(), ys.ravel()
     assert xs.shape[0] == (wi * le), xs.shape
-
-    import time
 
     grad_fn = jax.jit(
         jax.value_and_grad(
@@ -46,6 +46,8 @@ if __name__ == "__main__":
             argnums=(0, 1),
         )
     )
+
+    # with jax.disable_jit():
     val, (dx, dy) = grad_fn(jnp.asarray(xs), jnp.asarray(ys))
     dx.block_until_ready()
     dy.block_until_ready()
@@ -53,4 +55,19 @@ if __name__ == "__main__":
 
     s = time.time()
     val, (dx, dy) = grad_fn(jnp.asarray(xs), jnp.asarray(ys))
+    dx.block_until_ready()
+    dy.block_until_ready()
+    val.block_until_ready()
     print(f"AEP: {val} in {time.time() - s:.3f} seconds")
+
+    # exit()
+
+    options = jax.profiler.ProfileOptions()
+    options.host_tracer_level = 3
+    with jax.profiler.trace(
+        "/tmp/jax-trace", create_perfetto_link=True, profiler_options=options
+    ):
+        val, (dx, dy) = grad_fn(jnp.asarray(xs), jnp.asarray(ys))
+        dx.block_until_ready()
+        dy.block_until_ready()
+        val.block_until_ready()

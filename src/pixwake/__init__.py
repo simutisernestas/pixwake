@@ -29,13 +29,13 @@ def __get_eps():
     nondiff_argnames=["tol", "damp"],
 )
 def fixed_point(f, a, x_guess, tol=1e-6, damp=0.5):
+    max_iter = max(20, len(jnp.atleast_1d(x_guess)))
+
     def cond_fun(carry):
         x_prev, x, it = carry
-        # iterate until max abs change < tol
-        return jnp.logical_and(
-            jnp.max(jnp.abs(x_prev - x)) > tol,
-            it < x_guess.shape[0],
-        )
+        tol_cond = jnp.max(jnp.abs(x_prev - x)) > tol
+        iter_cond = it < max_iter
+        return jnp.logical_and(tol_cond, iter_cond)
 
     def body_fun(carry):
         _, x, it = carry
@@ -43,8 +43,8 @@ def fixed_point(f, a, x_guess, tol=1e-6, damp=0.5):
         x_damped = damp * x_new + (1 - damp) * x
         return x, x_damped, it + 1
 
-    _, x_star, it = while_loop(cond_fun, body_fun, (x_guess, f(a, x_guess), 0))
-    jax.debug.print("Fixed point found after {it} iterations", it=it)
+    _, x_star, _ = while_loop(cond_fun, body_fun, (x_guess, f(a, x_guess), 0))
+    # jax.debug.print("\nFixed point found after {it} iterations", it=it)
     return x_star
 
 
@@ -66,7 +66,13 @@ def fixed_point_rev(f, tol, damp, res, x_star_bar):
 
     # run a second fixed-point solve in reverse
     (a_bar,) = vjp_a(
-        fixed_point(partial(rev_iter, f), (a, x_star, x_star_bar), x_star_bar)
+        fixed_point(
+            partial(rev_iter, f),
+            (a, x_star, x_star_bar),
+            x_star_bar,
+            tol=tol,
+            damp=damp,
+        )
     )
     # fixed_point’s x_guess gets no gradient
     return a_bar, jnp.zeros_like(x_star)
@@ -184,17 +190,23 @@ class WakeAddedTIModelFlax(fnn.Module):
         return (x * self.scale_y) + self.mean_y
 
 
-# TODO: how to deal with these ??
+# TODO: clean up!
 deficit_model = WakeDeficitModelFlax()
 variables = deficit_model.init(jax.random.PRNGKey(0), jnp.ones((1, 6)))
 with open("./data/rans_deficit_surrogate.msgpack", "rb") as f:
     bytes_data = f.read()
-restored_variables = serialization.from_bytes(variables, bytes_data)
+deficit_weights = serialization.from_bytes(variables, bytes_data)
+
+turbulence_model = WakeAddedTIModelFlax()
+variables = deficit_model.init(jax.random.PRNGKey(0), jnp.ones((1, 6)))
+with open("./data/rans_addedti_surrogate.msgpack", "rb") as f:
+    bytes_data = f.read()
+ti_weights = serialization.from_bytes(variables, bytes_data)
 
 
 def rans_wake_step(a, ws_eff):
     use_effective = True
-    xs, ys, ws, wd, D, ct_xp, ct_fp, ti = a
+    xs, ys, ws, wd, D, ct_xp, ct_fp, ambient_ti = a
 
     dx = xs[:, None] - xs[None, :]
     dy = ys[:, None] - ys[None, :]
@@ -204,27 +216,46 @@ def rans_wake_step(a, ws_eff):
     x_d = -(dx * cos_a + dy * sin_a) / D
     y_d = (dx * sin_a - dy * cos_a) / D
     ct = jnp.interp(ws_eff, ct_xp, ct_fp)
+    in_domain_mask = (
+        (x_d < 70) & (x_d > -3) & (jnp.abs(y_d) < 6) & (jnp.eye(len(xs)) == 0)
+    )
+
+    ti_inputs = jnp.stack(
+        [
+            x_d,
+            y_d,
+            jnp.zeros_like(x_d),
+            jnp.full_like(x_d, ambient_ti),  # Note: use ambient here
+            jnp.zeros_like(x_d),
+            jnp.broadcast_to(ct, x_d.shape),
+        ],
+        axis=-1,
+    ).reshape(-1, 6)
+    added_ti = jnp.where(
+        in_domain_mask,
+        turbulence_model.apply(ti_weights, ti_inputs).reshape(x_d.shape),
+        0.0,
+    ).sum(axis=1)
+
+    effective_ti = ambient_ti + added_ti
 
     x = jnp.stack(  # model inputs
         [
             x_d,  # normalized x distance
             y_d,  # normalized y distance
             jnp.zeros_like(x_d),  # (z - h_hub) / D; evaluating at hub height
-            jnp.full_like(x_d, ti),  # turbulence intensity
+            jnp.broadcast_to(effective_ti, x_d.shape),  # turbulence intensity
             jnp.zeros_like(x_d),  # yaw
             jnp.broadcast_to(ct, x_d.shape),  # thrust coefficient
         ],
         axis=-1,
     ).reshape(-1, 6)  # (N, 6)
 
-    in_domain_mask = (
-        (x_d < 70) & (x_d > -3) & (jnp.abs(y_d) < 6) & (jnp.eye(len(xs)) == 0)
-    )
     deficit = (
         jnp.where(
             in_domain_mask,
-            deficit_model.apply(restored_variables, x).reshape(x_d.shape),
-            jnp.zeros_like(ws_eff),
+            deficit_model.apply(deficit_weights, x).reshape(x_d.shape),
+            0.0,
         ).sum(axis=1)  # linear superposition (N,)
     )
 
@@ -252,7 +283,7 @@ def simulate_case_rans(xs, ys, ws, wd, D, ct_curve):
     x0 = jnp.full_like(xs, ws)
 
     # run to convergence via our custom fixed_point
-    return fixed_point(rans_wake_step, a, x0, damp=0.5, tol=1e-3)
+    return fixed_point(rans_wake_step, a, x0, damp=0.8, tol=1e-3)
 
 
 def ws2power(ws_eff, pc):
