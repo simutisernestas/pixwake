@@ -26,9 +26,11 @@ def __get_eps():
 @partial(
     custom_vjp,
     nondiff_argnums=(0,),
-    nondiff_argnames=["tol", "damp"],
+    # nondiff_argnames=["tol", "damp"],
 )
-def fixed_point(f, a, x_guess, tol=1e-6, damp=0.5):
+def fixed_point(f, a, x_guess):
+    tol=1e-3
+    damp=0.5
     def cond_fun(carry):
         x_prev, x, it = carry
         # iterate until max abs change < tol
@@ -44,12 +46,12 @@ def fixed_point(f, a, x_guess, tol=1e-6, damp=0.5):
         return x, x_damped, it + 1
 
     _, x_star, it = while_loop(cond_fun, body_fun, (x_guess, f(a, x_guess), 0))
-    jax.debug.print("Fixed point found after {it} iterations", it=it)
+    # jax.debug.print("Fixed point found after {it} iterations", it=it)
     return x_star
 
 
-def fixed_point_fwd(f, a, x_guess, tol, damp):
-    x_star = fixed_point(f, a, x_guess, tol=tol, damp=damp)
+def fixed_point_fwd(f, a, x_guess, ):
+    x_star = fixed_point(f, a, x_guess, )
     return x_star, (a, x_star)
 
 
@@ -59,7 +61,7 @@ def rev_iter(f, packed, u):
     return x_star_bar + vjp_x(u)[0]
 
 
-def fixed_point_rev(f, tol, damp, res, x_star_bar):
+def fixed_point_rev(f, res, x_star_bar):
     a, x_star = res
     # vjp wrt a at the fixed point
     _, vjp_a = vjp(lambda a: f(a, x_star), a)
@@ -125,7 +127,7 @@ def simulate_case_noj(xs, ys, ws, wd, D, k, ct_curve):
     x0 = jnp.full_like(xs, ws)
 
     # run to convergence via our custom fixed_point
-    return fixed_point(noj_wake_step, a, x0, damp=1.0)
+    return fixed_point(noj_wake_step, a, x0)
 
 
 class WakeDeficitModelFlax(fnn.Module):
@@ -252,7 +254,7 @@ def simulate_case_rans(xs, ys, ws, wd, D, ct_curve):
     x0 = jnp.full_like(xs, ws)
 
     # run to convergence via our custom fixed_point
-    return fixed_point(rans_wake_step, a, x0, damp=0.5, tol=1e-3)
+    return fixed_point(rans_wake_step, a, x0)
 
 
 def ws2power(ws_eff, pc):

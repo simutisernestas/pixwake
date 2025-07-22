@@ -1,11 +1,38 @@
+import time
+
 import jax
 import jax.numpy as jnp
 import numpy as onp
+from flax import serialization
 from py_wake.examples.data.dtu10mw import DTU10MW
 
-from pixwake import simulate_case_rans, ws2aep
+from pixwake import WakeDeficitModelFlax, rans_wake_step, simulate_case_rans, ws2aep
 
 if __name__ == "__main__":
+    # deficit_model = WakeDeficitModelFlax()
+    # variables = deficit_model.init(jax.random.PRNGKey(0), jnp.ones((1, 6)))
+    # with open("./data/rans_deficit_surrogate.msgpack", "rb") as f:
+    #     bytes_data = f.read()
+    # restored_variables = serialization.from_bytes(variables, bytes_data)
+
+    # @jax.jit
+    # def predict(x):
+    #     return deficit_model.apply(restored_variables, x)
+
+    # o = predict(jnp.ones((1_000_000, 6)))
+    # o.block_until_ready()
+
+    # onp.random.seed(42)
+    # x = onp.random.uniform(0, 1, (1_000_000, 6))
+    # x = jnp.asarray(x)
+
+    # s = time.time()
+    # for _ in range(10):
+    #     out = predict(x)
+    #     out.block_until_ready()
+    # print(f"Prediction took {time.time() - s:.3f} seconds")
+    # exit()
+
     turbine = DTU10MW()
 
     ct_xp = turbine.powerCtFunction.ws_tab
@@ -16,14 +43,14 @@ if __name__ == "__main__":
     CUTIN_WS = 3.0
 
     onp.random.seed(42)
-    T = 5
+    T = 200
     ws = onp.random.uniform(CUTIN_WS + 1, CUTOUT_WS - 1, T)
     wd = onp.random.uniform(0, 360, T)
 
-    wi, le = 10, 10
+    wi, le = 8, 8
     xs, ys = jnp.meshgrid(  # example positions
-        jnp.linspace(0, wi * 2 * D, wi),
-        jnp.linspace(0, le * 2 * D, le),
+        jnp.linspace(0, wi * 3 * D, wi),
+        jnp.linspace(0, le * 3 * D, le),
     )
     xs, ys = xs.ravel(), ys.ravel()
     assert xs.shape[0] == (wi * le), xs.shape
