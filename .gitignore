@@ -1,8 +1,5 @@
-# pixi environments
 .pixi
-# cache
 **/__pycache__
-# pytest
 .pytest_cache
-# vscode
 .vscode
+sandbox/

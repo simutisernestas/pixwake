@@ -204,8 +204,7 @@ with open("./data/rans_addedti_surrogate.msgpack", "rb") as f:
 ti_weights = serialization.from_bytes(variables, bytes_data)
 
 
-def rans_wake_step(a, ws_eff):
-    use_effective = True
+def rans_wake_step(a, ws_eff, use_effective=True):
     xs, ys, ws, wd, D, ct_xp, ct_fp, ambient_ti = a
 
     dx = xs[:, None] - xs[None, :]
@@ -220,44 +219,24 @@ def rans_wake_step(a, ws_eff):
         (x_d < 70) & (x_d > -3) & (jnp.abs(y_d) < 6) & (jnp.eye(len(xs)) == 0)
     )
 
-    ti_inputs = jnp.stack(
-        [
-            x_d,
-            y_d,
-            jnp.zeros_like(x_d),
-            jnp.full_like(x_d, ambient_ti),  # Note: use ambient here
-            jnp.zeros_like(x_d),
-            jnp.broadcast_to(ct, x_d.shape),
-        ],
-        axis=-1,
-    ).reshape(-1, 6)
-    added_ti = jnp.where(
-        in_domain_mask,
-        turbulence_model.apply(ti_weights, ti_inputs).reshape(x_d.shape),
-        0.0,
-    ).sum(axis=1)
+    def _predict(model, params, ti):
+        md_input = jnp.stack(
+            [
+                x_d,  # normalized x distance
+                y_d,  # normalized y distance
+                jnp.zeros_like(x_d),  # (z - h_hub) / D; evaluating at hub height
+                jnp.full_like(x_d, ti),  # turbulence intensity
+                jnp.zeros_like(x_d),  # yaw
+                jnp.broadcast_to(ct, x_d.shape),  # thrust coefficient
+            ],
+            axis=-1,
+        ).reshape(-1, 6)
+        output = model.apply(params, md_input).reshape(x_d.shape)
+        return jnp.where(in_domain_mask, output, 0.0).sum(axis=1)
 
-    effective_ti = ambient_ti + added_ti
+    effective_ti = ambient_ti + _predict(turbulence_model, ti_weights, ambient_ti)
 
-    x = jnp.stack(  # model inputs
-        [
-            x_d,  # normalized x distance
-            y_d,  # normalized y distance
-            jnp.zeros_like(x_d),  # (z - h_hub) / D; evaluating at hub height
-            jnp.broadcast_to(effective_ti, x_d.shape),  # turbulence intensity
-            jnp.zeros_like(x_d),  # yaw
-            jnp.broadcast_to(ct, x_d.shape),  # thrust coefficient
-        ],
-        axis=-1,
-    ).reshape(-1, 6)  # (N, 6)
-
-    deficit = (
-        jnp.where(
-            in_domain_mask,
-            deficit_model.apply(deficit_weights, x).reshape(x_d.shape),
-            0.0,
-        ).sum(axis=1)  # linear superposition (N,)
-    )
+    deficit = _predict(deficit_model, deficit_weights, effective_ti)
 
     if use_effective:
         deficit *= ws_eff
@@ -266,7 +245,6 @@ def rans_wake_step(a, ws_eff):
     return jnp.maximum(0.0, ws * (1.0 - deficit))
 
 
-@partial(jax.vmap, in_axes=(None, None, 0, 0, None, None))
 def simulate_case_rans(xs, ys, ws, wd, D, ct_curve):
     """
     Solve for ws_eff := fixed_point( wake_step, a, init=full(ws) )
