@@ -29,8 +29,13 @@ py-wake = ">=2.6.12,<3"
 tensorboard = "*"
 xprof = "*"
 
+[tool.pixi.feature.format.dependencies]
+pre-commit = "*"
+ruff = "*"
+
 [tool.pixi.feature.test.tasks]
 test = "pytest test/"
 
 [tool.pixi.environments]
 test = ["test"]
+default = ["test", "format"]

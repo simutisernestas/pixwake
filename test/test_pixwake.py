@@ -3,11 +3,9 @@ import jax.numpy as jnp
 from jax import config as jcfg
 from jax.test_util import check_grads
 
-from pixwake import (
-    fixed_point,
-    noj_wake_step,
-    simulate_case_noj,
-)
+from pixwake import Curve, Turbine
+from pixwake.core import SimulationState, WakeSimulation, fixed_point
+from pixwake.models.noj import NOJModel
 
 jcfg.update("jax_enable_x64", True)  # need float64 to match pywake
 
@@ -38,10 +36,20 @@ def base_params():
     ys = jnp.array([0.0, 0.0])
     ws = jnp.array([10.0, 10.0])
     wd = 270.0
-    D = 100.0
     k = 0.05
-    ct_curve = jnp.stack([jnp.array([0.0, 20.0]), jnp.array([0.8, 0.8])], axis=1)
-    return xs, ys, ws, wd, D, k, ct_curve
+    ct_curve_array = jnp.stack([jnp.array([0.0, 20.0]), jnp.array([0.8, 0.8])], axis=1)
+    power_curve_array = jnp.stack(
+        [jnp.array([0.0, 20.0]), jnp.array([0.0, 3000.0])], axis=1
+    )
+    turbine = Turbine(
+        rotor_diameter=100.0,
+        hub_height=100.0,
+        power_curve=Curve(
+            wind_speed=power_curve_array[:, 0], values=power_curve_array[:, 1]
+        ),
+        ct_curve=Curve(wind_speed=ct_curve_array[:, 0], values=ct_curve_array[:, 1]),
+    )
+    return xs, ys, ws, wd, k, turbine
 
 
 def rect_grid_params(nx=3, ny=2):
@@ -52,37 +60,47 @@ def rect_grid_params(nx=3, ny=2):
     ys = ys.ravel()
     ws = 10.0
     wd = 270.0
-    D = 100.0
     k = 0.05
-    ct_curve = jnp.stack([jnp.array([0.0, 20.0]), jnp.array([0.8, 0.8])], axis=1)
-    return xs, ys, ws, wd, D, k, ct_curve
+    ct_curve_array = jnp.stack([jnp.array([0.0, 20.0]), jnp.array([0.8, 0.8])], axis=1)
+    power_curve_array = jnp.stack(
+        [jnp.array([0.0, 20.0]), jnp.array([0.0, 3000.0])], axis=1
+    )
+    turbine = Turbine(
+        rotor_diameter=100.0,
+        hub_height=100.0,
+        power_curve=Curve(
+            wind_speed=power_curve_array[:, 0], values=power_curve_array[:, 1]
+        ),
+        ct_curve=Curve(wind_speed=ct_curve_array[:, 0], values=ct_curve_array[:, 1]),
+    )
+    return xs, ys, ws, wd, k, turbine
 
 
 def test_wake_step_two_turbines():
-    xs, ys, ws, wd, D, k, ct_curve = base_params()
-    ct_xp, ct_fp = ct_curve[:, 0], ct_curve[:, 1]
-    a = (xs, ys, ws, wd, D, k, ct_xp, ct_fp)
-    result = noj_wake_step(ws, a)
+    xs, ys, ws, wd, k, turbine = base_params()
+    model = NOJModel(k=k)
+    state = SimulationState(xs, ys, ws, wd, turbine)
+    result = model.compute_deficit(ws, state)
     expected = jnp.array([10.0, 7.5154347])
     assert jnp.allclose(result, expected, rtol=1e-6)
 
 
 def test_simulate_case_two_turbines():
-    xs, ys, ws, wd, D, k, ct_curve = base_params()
-    result = simulate_case_noj(
-        xs, ys, jnp.atleast_1d(ws[0]), jnp.atleast_1d(wd), D, k, ct_curve
-    )
+    xs, ys, ws, wd, k, turbine = base_params()
+    model = NOJModel(k=k)
+    sim = WakeSimulation(model)
+    result = sim(xs, ys, ws, jnp.full_like(ws, wd), turbine)
     expected = jnp.array([10.0, 7.5154343])
     assert jnp.allclose(result, expected, rtol=1e-6)
 
 
 def test_simulate_case_gradients_and_jit():
-    xs, ys, ws, wd, D, k, ct_curve = rect_grid_params()
+    xs, ys, ws, wd, k, turbine = rect_grid_params()
+    model = NOJModel(k=k)
+    sim = WakeSimulation(model)
 
     def f(xx, yy):
-        return simulate_case_noj(
-            xx, yy, jnp.atleast_1d(ws), jnp.atleast_1d(wd), D, k, ct_curve
-        )
+        return sim(xx, yy, jnp.full_like(xx, ws), jnp.full_like(xx, wd), turbine)
 
     check_grads(f, (xs, ys), order=1, modes=["rev"], atol=1e-2, rtol=1e-2)
 
@@ -91,47 +109,52 @@ def test_simulate_case_gradients_and_jit():
 
 
 def test_batched_simulate_case_jit():
-    xs, ys, ws, wd, D, k, ct_curve = rect_grid_params()
-    ws_b = jnp.stack([ws, ws + 2.0])
-    wd_b = jnp.stack([wd, wd])
-    expected = simulate_case_noj(xs, ys, ws_b, wd_b, D, k, ct_curve)
-    jitted = jax.jit(simulate_case_noj)
-    assert jnp.allclose(jitted(xs, ys, ws_b, wd_b, D, k, ct_curve), expected, rtol=1e-6)
+    xs, ys, ws, wd, k, turbine = rect_grid_params()
+    ws_b = jnp.stack([jnp.full_like(xs, ws), jnp.full_like(xs, ws + 2.0)])
+    wd_b = jnp.stack([jnp.full_like(xs, wd), jnp.full_like(xs, wd)])
+    model = NOJModel(k=k)
+    sim = WakeSimulation(model)
+    expected = sim(xs, ys, ws_b, wd_b, turbine)
+    jitted = jax.jit(sim)
+    assert jnp.allclose(jitted(xs, ys, ws_b, wd_b, turbine), expected, rtol=1e-6)
 
 
 def test_single_turbine():
-    xs, ys, ws, wd, D, k, ct_curve = base_params()
+    xs, ys, ws, wd, k, turbine = base_params()
     xs, ys = jnp.atleast_1d(xs[0]), jnp.atleast_1d(ys[0])
     ws = jnp.atleast_1d(ws[0])
-    result = simulate_case_noj(xs, ys, ws, jnp.atleast_1d(wd), D, k, ct_curve)
+    model = NOJModel(k=k)
+    sim = WakeSimulation(model)
+    result = sim(xs, ys, ws, jnp.atleast_1d(wd), turbine)
     assert jnp.allclose(result, ws, rtol=1e-6)
 
 
 def test_zero_wind_speed():
-    xs, ys, _, wd, D, k, ct_curve = base_params()
+    xs, ys, _, wd, k, turbine = base_params()
     ws = jnp.array([0.0, 0.0])
-    result = simulate_case_noj(
-        xs, ys, jnp.atleast_1d(ws[0]), jnp.atleast_1d(wd), D, k, ct_curve
-    )
+    model = NOJModel(k=k)
+    sim = WakeSimulation(model)
+    result = sim(xs, ys, ws, jnp.full_like(ws, wd), turbine)
     assert jnp.allclose(result, jnp.zeros_like(result), rtol=1e-6)
 
 
 def test_wind_speed_outside_ct_curve():
-    xs, ys, _, wd, D, k, ct_curve = base_params()
+    xs, ys, _, wd, k, turbine = base_params()
     ws = jnp.array([100.0, 100.0])  # Way outside the curve
-    result = simulate_case_noj(
-        xs, ys, jnp.atleast_1d(ws[0]), jnp.atleast_1d(wd), D, k, ct_curve
-    )
+    model = NOJModel(k=k)
+    sim = WakeSimulation(model)
+    result = sim(xs, ys, ws, jnp.full_like(ws, wd), turbine)
     # The model should still produce a result, likely with the max Ct value
     assert jnp.isfinite(result).all()
 
 
 def test_identical_turbine_locations():
-    xs, ys, ws, wd, D, k, ct_curve = base_params()
+    xs, ys, ws, wd, k, turbine = base_params()
     xs = jnp.array([0.0, 1e-6])
     ys = jnp.array([0.0, 0.0])
-    result = simulate_case_noj(
-        xs, ys, jnp.atleast_1d(ws[0]), jnp.atleast_1d(wd), D, k, ct_curve
-    )
+    ws = jnp.array([10.0, 10.0])
+    model = NOJModel(k=k)
+    sim = WakeSimulation(model)
+    result = sim(xs, ys, ws, jnp.full_like(ws, wd), turbine)
     # Deficit should be very high for the second turbine
     assert result[0, 0] > result[0, 1]

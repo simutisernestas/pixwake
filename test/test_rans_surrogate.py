@@ -6,7 +6,7 @@ import numpy as onp
 from jax.test_util import check_grads
 from py_wake.examples.data.dtu10mw import DTU10MW
 
-from pixwake import simulate_case_rans, ws2aep
+from pixwake import Curve, RANSModel, Turbine, WakeSimulation, calculate_aep
 
 
 def get_rans_dependencies():
@@ -25,8 +25,8 @@ def test_rans_surrogate_aep():
 
     onp.random.seed(42)
     T = 10
-    WSS = onp.random.uniform(CUTIN_WS, CUTOUT_WS, T)
-    WDS = onp.random.uniform(0, 360, T)
+    WSS = jnp.asarray(onp.random.uniform(CUTIN_WS, CUTOUT_WS, T))
+    WDS = jnp.asarray(onp.random.uniform(0, 360, T))
 
     wi, le = 10, 8
     xs, ys = jnp.meshgrid(  # example positions
@@ -36,20 +36,18 @@ def test_rans_surrogate_aep():
     xs, ys = xs.ravel(), ys.ravel()
     assert xs.shape[0] == (wi * le), xs.shape
 
-    def aep(xx, yy):
-        def to_be_mapped(wr):
-            return simulate_case_rans(
-                xx,
-                yy,
-                wr[0],
-                wr[1],
-                D,
-                jnp.stack([ct_xp, ct_fp], axis=1),
-            )
+    turbine = Turbine(
+        rotor_diameter=D,
+        hub_height=100.0,
+        power_curve=Curve(wind_speed=ct_xp, values=pw_fp),
+        ct_curve=Curve(wind_speed=ct_xp, values=ct_fp),
+    )
 
-        wind_resource = jnp.stack([WSS, WDS], axis=1)
-        effective_wss = jax.lax.map(to_be_mapped, wind_resource)
-        return ws2aep(effective_wss, jnp.stack([ct_xp, pw_fp], axis=1))
+    def aep(xx, yy):
+        model = RANSModel(ambient_ti=0.1)
+        sim = WakeSimulation(model, mapping_strategy="map", fpi_damp=0.8, fpi_tol=1e-3)
+        effective_wss = sim(xx, yy, WSS, WDS, turbine)
+        return calculate_aep(effective_wss, turbine.power_curve)
 
     aep_and_grad = jax.jit(jax.value_and_grad(aep, argnums=(0, 1)))
 
@@ -59,10 +57,10 @@ def test_rans_surrogate_aep():
         else:
             return res.block_until_ready()
 
-    res = aep_and_grad(jnp.asarray(xs), jnp.asarray(ys))
+    res = aep_and_grad(xs, ys)
     block_all(res)
     s = time.time()
-    res = aep_and_grad(jnp.asarray(xs), jnp.asarray(ys))
+    res = aep_and_grad(xs, ys)
     block_all(res)
     print(f"AEP: {res[0]} in {time.time() - s:.3f} seconds")
 
@@ -72,7 +70,7 @@ def test_rans_surrogate_aep():
 
 
 def test_rans_surrogate_gradients():
-    ct_xp, ct_fp, _, D = get_rans_dependencies()
+    ct_xp, ct_fp, pw_fp, D = get_rans_dependencies()
     ws = 9.0
     wd = 90.0
     wi, le = 3, 2
@@ -82,9 +80,22 @@ def test_rans_surrogate_gradients():
     )
     xs, ys = xs.ravel(), ys.ravel()
 
+    turbine = Turbine(
+        rotor_diameter=D,
+        hub_height=100.0,
+        power_curve=Curve(wind_speed=ct_xp, values=pw_fp),
+        ct_curve=Curve(wind_speed=ct_xp, values=ct_fp),
+    )
+
     def sim(x, y):
-        return simulate_case_rans(
-            x, y, ws, wd, D, jnp.stack([ct_xp, ct_fp], axis=1)
+        model = RANSModel(ambient_ti=0.1)
+        simulation = WakeSimulation(model, fpi_damp=0.8, fpi_tol=1e-3)
+        return simulation(
+            x,
+            y,
+            jnp.full_like(x, ws),
+            jnp.full_like(x, wd),
+            turbine,
         ).sum()
 
     check_grads(sim, (xs, ys), order=1, modes=["rev"], atol=1e-2, rtol=1e-2, eps=10)
