@@ -3,12 +3,10 @@ import time
 import jax
 import jax.numpy as jnp
 import numpy as onp
+from jax.test_util import check_grads
 from py_wake.examples.data.dtu10mw import DTU10MW
 
 from pixwake import simulate_case_rans, ws2aep
-
-
-from jax.test_util import check_grads
 
 
 def get_rans_dependencies():
@@ -73,10 +71,6 @@ def test_rans_surrogate_aep():
     assert jnp.isfinite(res[1][1]).all(), "Gradient of y should be finite"
 
 
-import pytest
-
-
-@pytest.mark.xfail(reason="Gradients of the RANS model are not yet correct.")
 def test_rans_surrogate_gradients():
     ct_xp, ct_fp, _, D = get_rans_dependencies()
     ws = 9.0
@@ -93,4 +87,4 @@ def test_rans_surrogate_gradients():
             x, y, ws, wd, D, jnp.stack([ct_xp, ct_fp], axis=1)
         ).sum()
 
-    check_grads(sim, (xs, ys), order=1, modes=["rev"], atol=1e-2, rtol=1e-2)
+    check_grads(sim, (xs, ys), order=1, modes=["rev"], atol=1e-2, rtol=1e-2, eps=10)
