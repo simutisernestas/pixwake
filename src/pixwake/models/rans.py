@@ -1,3 +1,5 @@
+import os
+
 import flax.linen as fnn
 import jax
 import jax.numpy as jnp
@@ -62,19 +64,23 @@ class WakeAddedTIModelFlax(fnn.Module):
         return (x * self.scale_y) + self.mean_y
 
 
-def load_rans_model():
-    deficit_model = WakeDeficitModelFlax()
-    variables = deficit_model.init(jax.random.PRNGKey(0), jnp.ones((1, 6)))
-    with open("./data/rans_deficit_surrogate.msgpack", "rb") as f:
-        bytes_data = f.read()
-    deficit_weights = serialization.from_bytes(variables, bytes_data)
+def load_rans_models():
+    def _load_model(model_class, filename):
+        model = model_class()
+        variables = model.init(jax.random.PRNGKey(0), jnp.ones((1, 6)))
+        with open(filename, "rb") as f:
+            bytes_data = f.read()
+        return model, serialization.from_bytes(variables, bytes_data)
 
-    turbulence_model = WakeAddedTIModelFlax()
-    variables = deficit_model.init(jax.random.PRNGKey(0), jnp.ones((1, 6)))
-    with open("./data/rans_addedti_surrogate.msgpack", "rb") as f:
-        bytes_data = f.read()
-    ti_weights = serialization.from_bytes(variables, bytes_data)
-
+    file_dir = os.path.dirname(os.path.abspath(__file__))
+    deficit_model, deficit_weights = _load_model(
+        WakeDeficitModelFlax,
+        os.path.join(file_dir, "./data/rans_deficit_surrogate.msgpack"),
+    )
+    turbulence_model, ti_weights = _load_model(
+        WakeAddedTIModelFlax,
+        os.path.join(file_dir, "./data/rans_addedti_surrogate.msgpack"),
+    )
     return deficit_model, deficit_weights, turbulence_model, ti_weights
 
 
@@ -86,7 +92,7 @@ class RANSModel(WakeModel):
             self.deficit_weights,
             self.turbulence_model,
             self.ti_weights,
-        ) = load_rans_model()
+        ) = load_rans_models()
 
     def compute_deficit(self, ws_eff, state, use_effective=True):
         x_d, y_d = self.get_downwind_crosswind_distances(state.xs, state.ys, state.wd)
