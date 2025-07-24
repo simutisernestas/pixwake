@@ -14,17 +14,17 @@ jobs:
       matrix:
         os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-latest]
         include:
-          - os: ubuntu-24.04-arm
-            label: linux-arm
           - os: ubuntu-latest
             label: linux-x86
+          - os: ubuntu-24.04-arm
+            label: linux-arm
           - os: windows-latest
             label: windows-x86
           - os: macos-latest
             label: macos-arm
 
     runs-on: ${{ matrix.os }}
-    name: Test on ${{ matrix.label }}
+    name: test-${{ matrix.label }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
