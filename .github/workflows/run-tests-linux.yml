@@ -1,4 +1,4 @@
-name: Run tests Linux
+name: Test suite
 
 on:
   push:
@@ -9,21 +9,33 @@ on:
       - main
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
+  test-all-platforms:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-latest]
+        include:
+          - os: ubuntu-24.04-arm
+            label: linux-arm
+          - os: ubuntu-latest
+            label: linux-x86
+          - os: windows-latest
+            label: windows-x86
+          - os: macos-latest
+            label: macos-arm
+
+    runs-on: ${{ matrix.os }}
+    name: Test on ${{ matrix.label }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-      
+
       - name: Setup Pixi
         uses: prefix-dev/setup-pixi@v0.8.13
         with:
           pixi-version: v0.49.0
-          cache: true  # enables caching of pixi environments
+          cache: true
           auth-host: prefix.dev
           auth-token: ${{ secrets.PREFIX_DEV_TOKEN }}
 
       - name: Run tests
         run: pixi run test
-
-
