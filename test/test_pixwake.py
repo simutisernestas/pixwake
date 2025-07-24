@@ -12,7 +12,7 @@ from pixwake import (
 jcfg.update("jax_enable_x64", True)  # need float64 to match pywake
 
 
-def sqrt_iter(a, x):
+def sqrt_iter(x, a):
     """Newton iteration for ``sqrt(a)``."""
     return 0.5 * (x + a / x)
 
@@ -20,14 +20,14 @@ def sqrt_iter(a, x):
 def test_fixed_point_sqrt():
     a = 2.0
     x0 = 1.0
-    res = fixed_point(sqrt_iter, a, x0, tol=1e-8)
+    res = fixed_point(sqrt_iter, x0, a, tol=1e-8)
     assert jnp.allclose(res, jnp.sqrt(a), rtol=1e-6)
 
 
 def test_fixed_point_gradient():
     a = 2.0
     x0 = 1.0
-    grad_fn = jax.grad(lambda aa: fixed_point(sqrt_iter, aa, x0, tol=1e-8))
+    grad_fn = jax.grad(lambda aa: fixed_point(sqrt_iter, x0, aa, tol=1e-8))
     grad = grad_fn(a)
     expected = 1.0 / (2 * jnp.sqrt(a))
     assert jnp.allclose(grad, expected, rtol=1e-6)
@@ -62,7 +62,7 @@ def test_wake_step_two_turbines():
     xs, ys, ws, wd, D, k, ct_curve = base_params()
     ct_xp, ct_fp = ct_curve[:, 0], ct_curve[:, 1]
     a = (xs, ys, ws, wd, D, k, ct_xp, ct_fp)
-    result = noj_wake_step(a, ws)
+    result = noj_wake_step(ws, a)
     expected = jnp.array([10.0, 7.5154347])
     assert jnp.allclose(result, expected, rtol=1e-6)
 

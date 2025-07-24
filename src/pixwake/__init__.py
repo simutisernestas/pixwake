@@ -28,7 +28,7 @@ def __get_eps():
     nondiff_argnums=(0,),
     nondiff_argnames=["tol", "damp"],
 )
-def fixed_point(f, a, x_guess, tol=1e-6, damp=0.5):
+def fixed_point(f, x_guess, a, tol=1e-6, damp=0.5):
     max_iter = max(20, len(jnp.atleast_1d(x_guess)))
 
     def cond_fun(carry):
@@ -39,51 +39,45 @@ def fixed_point(f, a, x_guess, tol=1e-6, damp=0.5):
 
     def body_fun(carry):
         _, x, it = carry
-        x_new = f(a, x)
+        x_new = f(x, a)
         x_damped = damp * x_new + (1 - damp) * x
         return x, x_damped, it + 1
 
-    _, x_star, _ = while_loop(cond_fun, body_fun, (x_guess, f(a, x_guess), 0))
+    _, x_star, _ = while_loop(cond_fun, body_fun, (x_guess, f(x_guess, a), 0))
     # jax.debug.print("\nFixed point found after {it} iterations", it=it)
     return x_star
 
 
-def fixed_point_fwd(f, a, x_guess, tol, damp):
-    x_star = fixed_point(f, a, x_guess, tol=tol, damp=damp)
+def fixed_point_fwd(f, x_guess, a, tol, damp):
+    x_star = fixed_point(f, x_guess, a, tol=tol, damp=damp)
     return x_star, (a, x_star)
-
-
-def rev_iter(f, packed, u):
-    a, x_star, x_star_bar = packed
-    _, vjp_x = vjp(lambda x: f(a, x), x_star)
-    return x_star_bar + vjp_x(u)[0]
 
 
 def fixed_point_rev(f, tol, damp, res, x_star_bar):
     a, x_star = res
     # vjp wrt a at the fixed point
-    _, vjp_a = vjp(lambda a: f(a, x_star), a)
+    _, vjp_a = vjp(lambda a: f(x_star, a), a)
 
     # run a second fixed-point solve in reverse
-    (a_bar,) = vjp_a(
+    a_bar_sum = vjp_a(
         fixed_point(
-            partial(rev_iter, f),
-            (a, x_star, x_star_bar),
+            lambda u, v: v + vjp(lambda x: f(x, a), x_star)[1](u)[0],
+            x_star_bar,
             x_star_bar,
             tol=tol,
             damp=damp,
         )
-    )
+    )[0]
     # fixed_point’s x_guess gets no gradient
-    return a_bar, jnp.zeros_like(x_star)
+    return jnp.zeros_like(x_star), a_bar_sum
 
 
 fixed_point.defvjp(fixed_point_fwd, fixed_point_rev)
 
 
-def noj_wake_step(a, ws_eff):
+def noj_wake_step(ws_eff, a):
     """
-    Single update step g(a, ws_eff) -> ws_eff_new.
+    Single update step g(ws_eff, a) -> ws_eff_new.
     a = (xs, ys, ws, wd, D, k, ct_xp, ct_fp)
     """
     xs, ys, ws, wd, D, k, ct_xp, ct_fp = a
@@ -118,7 +112,7 @@ def noj_wake_step(a, ws_eff):
 @partial(jax.vmap, in_axes=(None, None, 0, 0, None, None, None))
 def simulate_case_noj(xs, ys, ws, wd, D, k, ct_curve):
     """
-    Solve for ws_eff := fixed_point( wake_step, a, init=full(ws) )
+    Solve for ws_eff := fixed_point( wake_step, init=full(ws), a )
     where only xs, ys are differentiable.
     """
     # unpack CT curve breakpoints
@@ -131,7 +125,7 @@ def simulate_case_noj(xs, ys, ws, wd, D, k, ct_curve):
     x0 = jnp.full_like(xs, ws)
 
     # run to convergence via our custom fixed_point
-    return fixed_point(noj_wake_step, a, x0, damp=1.0)
+    return fixed_point(noj_wake_step, x0, a, damp=1.0)
 
 
 class WakeDeficitModelFlax(fnn.Module):
@@ -204,7 +198,7 @@ with open("./data/rans_addedti_surrogate.msgpack", "rb") as f:
 ti_weights = serialization.from_bytes(variables, bytes_data)
 
 
-def rans_wake_step(a, ws_eff, use_effective=True):
+def rans_wake_step(ws_eff, a, use_effective=True):
     xs, ys, ws, wd, D, ct_xp, ct_fp, ambient_ti = a
 
     dx = xs[:, None] - xs[None, :]
@@ -247,7 +241,7 @@ def rans_wake_step(a, ws_eff, use_effective=True):
 
 def simulate_case_rans(xs, ys, ws, wd, D, ct_curve):
     """
-    Solve for ws_eff := fixed_point( wake_step, a, init=full(ws) )
+    Solve for ws_eff := fixed_point( wake_step, init=full(ws), a )
     where only xs, ys are differentiable.
     """
     # unpack CT curve breakpoints
@@ -261,7 +255,7 @@ def simulate_case_rans(xs, ys, ws, wd, D, ct_curve):
     x0 = jnp.full_like(xs, ws)
 
     # run to convergence via our custom fixed_point
-    return fixed_point(rans_wake_step, a, x0, damp=0.8, tol=1e-3)
+    return fixed_point(rans_wake_step, x0, a, damp=0.8, tol=1e-3)
 
 
 def ws2power(ws_eff, pc):
