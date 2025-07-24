@@ -30,7 +30,7 @@ def __get_eps():
 )
 def fixed_point(f, a, x_guess):
     tol=1e-3
-    damp=0.5
+    damp=0.8
     def cond_fun(carry):
         x_prev, x, it = carry
         # iterate until max abs change < tol
@@ -237,7 +237,7 @@ def rans_wake_step(a, ws_eff):
     return jnp.maximum(0.0, ws * (1.0 - deficit))
 
 
-@partial(jax.vmap, in_axes=(None, None, 0, 0, None, None))
+# @partial(jax.vmap, in_axes=(None, None, 0, 0, None, None))
 def simulate_case_rans(xs, ys, ws, wd, D, ct_curve):
     """
     Solve for ws_eff := fixed_point( wake_step, a, init=full(ws) )
