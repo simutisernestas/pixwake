@@ -1,7 +1,3 @@
 # pixwake
 
-# todo
-
-- port rans scalers for model inference
-- integrate rans surrogate in pixwake
-- ...
+A JAX-based library for fast and differentiable wind farm wake modeling.

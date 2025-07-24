@@ -19,7 +19,7 @@ pip install -e .
 The tests for `pixwake` are located in the `test/` directory. To run the tests, use `pytest`:
 
 ```bash
-python -m pytest
+pytest
 ```
 
 The test suite includes:
@@ -29,93 +29,69 @@ The test suite includes:
 - Tests for the AEP and power calculation functions.
 - Tests for equivalence with PyWake.
 
-## Models
+## Usage
 
-### Jensen NOJ Model
+The main entry point for running a wake simulation is the `WakeSimulation` class. This class takes a wake model as input and provides a common interface for running simulations.
 
-The Jensen NOJ model is a simple analytical wake model that is widely used for wind farm layout optimization. It is implemented in the `simulate_case_noj` function.
+The general workflow is as follows:
+1. Define the turbine characteristics using the `Turbine` and `Curve` classes.
+2. Select a wake model, such as `NOJModel` or `RANSModel`.
+3. Instantiate the `WakeSimulation` class with the chosen model.
+4. Call the simulation with the turbine layout, wind conditions, and turbine definition.
+5. Calculate the power and AEP using the `calculate_power` and `calculate_aep` functions.
 
-**Usage Example:**
+### Example
+
+Here is a complete example of how to run a simulation with the NOJ model and calculate the AEP:
 
 ```python
 import jax.numpy as jnp
-from pixwake import simulate_case_noj
+from pixwake import (
+    NOJModel,
+    RANSModel,
+    WakeSimulation,
+    Turbine,
+    Curve,
+    calculate_aep,
+    calculate_power,
+)
 
-# Turbine layout
+# 1. Define turbine characteristics
+power_curve = Curve(
+    wind_speed=jnp.array([4.0, 10.0, 25.0]),
+    values=jnp.array([0.0, 2000.0, 2000.0]),
+)
+ct_curve = Curve(
+    wind_speed=jnp.array([4.0, 10.0, 25.0]),
+    values=jnp.array([0.8, 0.8, 0.4]),
+)
+turbine = Turbine(
+    rotor_diameter=100.0,
+    hub_height=80.0,
+    power_curve=power_curve,
+    ct_curve=ct_curve,
+)
+
+# 2. Select a wake model
+# model = NOJModel(k=0.05)
+model = RANSModel(ambient_ti=0.1)
+
+# 3. Instantiate the simulation
+sim = WakeSimulation(model)
+
+# 4. Call the simulation
 xs = jnp.array([0.0, 500.0])
 ys = jnp.array([0.0, 0.0])
+ws = jnp.array([10.0, 12.0])
+wd = jnp.array([270.0, 270.0])
 
-# Wind conditions
-ws = jnp.array([10.0])
-wd = jnp.array([270.0])
+effective_wind_speeds = sim(xs, ys, ws, wd, turbine)
 
-# Turbine parameters
-D = 100.0
-k = 0.05
-ct_curve = jnp.array([[0.0, 0.8], [20.0, 0.8]])
+# 5. Calculate power and AEP
+power = calculate_power(effective_wind_speeds, turbine.power_curve)
+aep = calculate_aep(effective_wind_speeds, turbine.power_curve)
 
-# Simulate the case
-effective_wind_speeds = simulate_case_noj(xs, ys, ws, wd, D, k, ct_curve)
+print("Effective wind speeds:", effective_wind_speeds)
+print("Power:", power)
+print("AEP:", aep)
 ```
-
-### RANS Surrogate Model
-
-The RANS surrogate model is a neural network that approximates the results of a more complex RANS simulation. It is implemented in the `simulate_case_rans` function.
-
-**Usage Example:**
-
-```python
-import jax.numpy as jnp
-from pixwake import simulate_case_rans
-
-# Turbine layout
-xs = jnp.array([0.0, 500.0])
-ys = jnp.array([0.0, 0.0])
-
-# Wind conditions
-ws = 9.0
-wd = 90.0
-
-# Turbine parameters
-D = 178.0
-ct_curve = jnp.array([[3.0, 0.8], [25.0, 0.6]])
-
-# Simulate the case
-effective_wind_speeds = simulate_case_rans(xs, ys, ws, wd, D, ct_curve)
-```
-
-## Energy Calculation
-
-The `pixwake` library provides functions for calculating power and Annual Energy Production (AEP) from effective wind speeds.
-
-### `ws2power`
-
-Calculates the power produced by each turbine for each time step.
-
-**Usage Example:**
-```python
-import jax.numpy as jnp
-from pixwake import ws2power
-
-ws_eff = jnp.array([[10.0, 12.0], [15.0, 20.0]])
-power_curve = jnp.array([[0.0, 0.0], [10.0, 1000.0], [25.0, 3000.0]])
-
-power = ws2power(ws_eff, power_curve)
-```
-
-### `ws2aep`
-
-Calculates the total Annual Energy Production (AEP) for the wind farm.
-
-**Usage Example:**
-```python
-import jax.numpy as jnp
-from pixwake import ws2aep
-
-ws_eff = jnp.array([[10.0, 12.0], [15.0, 20.0]])
-power_curve = jnp.array([[0.0, 0.0], [10.0, 1000.0], [25.0, 3000.0]])
-
-aep = ws2aep(ws_eff, power_curve)
-```
-
-The `ws2aep` function can also take a probability distribution for the wind conditions.
