@@ -97,3 +97,41 @@ def test_batched_simulate_case_jit():
     expected = simulate_case_noj(xs, ys, ws_b, wd_b, D, k, ct_curve)
     jitted = jax.jit(simulate_case_noj)
     assert jnp.allclose(jitted(xs, ys, ws_b, wd_b, D, k, ct_curve), expected, rtol=1e-6)
+
+
+def test_single_turbine():
+    xs, ys, ws, wd, D, k, ct_curve = base_params()
+    xs, ys = jnp.atleast_1d(xs[0]), jnp.atleast_1d(ys[0])
+    ws = jnp.atleast_1d(ws[0])
+    result = simulate_case_noj(xs, ys, ws, jnp.atleast_1d(wd), D, k, ct_curve)
+    assert jnp.allclose(result, ws, rtol=1e-6)
+
+
+def test_zero_wind_speed():
+    xs, ys, _, wd, D, k, ct_curve = base_params()
+    ws = jnp.array([0.0, 0.0])
+    result = simulate_case_noj(
+        xs, ys, jnp.atleast_1d(ws[0]), jnp.atleast_1d(wd), D, k, ct_curve
+    )
+    assert jnp.allclose(result, jnp.zeros_like(result), rtol=1e-6)
+
+
+def test_wind_speed_outside_ct_curve():
+    xs, ys, _, wd, D, k, ct_curve = base_params()
+    ws = jnp.array([100.0, 100.0])  # Way outside the curve
+    result = simulate_case_noj(
+        xs, ys, jnp.atleast_1d(ws[0]), jnp.atleast_1d(wd), D, k, ct_curve
+    )
+    # The model should still produce a result, likely with the max Ct value
+    assert jnp.isfinite(result).all()
+
+
+def test_identical_turbine_locations():
+    xs, ys, ws, wd, D, k, ct_curve = base_params()
+    xs = jnp.array([0.0, 1e-6])
+    ys = jnp.array([0.0, 0.0])
+    result = simulate_case_noj(
+        xs, ys, jnp.atleast_1d(ws[0]), jnp.atleast_1d(wd), D, k, ct_curve
+    )
+    # Deficit should be very high for the second turbine
+    assert result[0, 0] > result[0, 1]

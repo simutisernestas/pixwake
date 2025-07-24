@@ -8,13 +8,20 @@ from py_wake.examples.data.dtu10mw import DTU10MW
 from pixwake import simulate_case_rans, ws2aep
 
 
-def test_rans_surrogate_aep():
-    turbine = DTU10MW()
+from jax.test_util import check_grads
 
+
+def get_rans_dependencies():
+    turbine = DTU10MW()
     ct_xp = turbine.powerCtFunction.ws_tab
     ct_fp = turbine.powerCtFunction.power_ct_tab[1, :]
     pw_fp = turbine.powerCtFunction.power_ct_tab[0, :]
     D = turbine.diameter()
+    return ct_xp, ct_fp, pw_fp, D
+
+
+def test_rans_surrogate_aep():
+    ct_xp, ct_fp, pw_fp, D = get_rans_dependencies()
     CUTOUT_WS = 25.0
     CUTIN_WS = 3.0
 
@@ -65,35 +72,25 @@ def test_rans_surrogate_aep():
     assert jnp.isfinite(res[1][0]).all(), "Gradient of x should be finite"
     assert jnp.isfinite(res[1][1]).all(), "Gradient of y should be finite"
 
-    if 0:
-        options = jax.profiler.ProfileOptions()
-        options.host_tracer_level = 3
-        with jax.profiler.trace(
-            "/tmp/jax-trace", create_perfetto_link=True, profiler_options=options
-        ):
-            res = aep_and_grad(jnp.asarray(xs), jnp.asarray(ys))
-            block_all(res)
 
-    if 0:
-        ws_eff = simulate_case_rans(
-            xs,
-            ys,
-            9.0,
-            90.0,
-            D,
-            jnp.stack([ct_xp, ct_fp], axis=1),
-        )
-        import matplotlib.pyplot as plt
-
-        plt.figure(figsize=(10, 10))
-        plt.scatter(xs, ys, c=ws_eff, cmap="viridis", s=100)
-        plt.colorbar(label="Effective Wind Speed (m/s)")
-        plt.title("Effective Wind Speed at Turbine Locations")
-        plt.xlabel("X Position (m)")
-        plt.ylabel("Y Position (m)")
-        plt.grid()
-        plt.show()
+import pytest
 
 
-if __name__ == "__main__":
-    test_rans_surrogate_aep()
+@pytest.mark.xfail(reason="Gradients of the RANS model are not yet correct.")
+def test_rans_surrogate_gradients():
+    ct_xp, ct_fp, _, D = get_rans_dependencies()
+    ws = 9.0
+    wd = 90.0
+    wi, le = 3, 2
+    xs, ys = jnp.meshgrid(
+        jnp.linspace(0, wi * 3 * D, wi),
+        jnp.linspace(0, le * 3 * D, le),
+    )
+    xs, ys = xs.ravel(), ys.ravel()
+
+    def sim(x, y):
+        return simulate_case_rans(
+            x, y, ws, wd, D, jnp.stack([ct_xp, ct_fp], axis=1)
+        ).sum()
+
+    check_grads(sim, (xs, ys), order=1, modes=["rev"], atol=1e-2, rtol=1e-2)
