@@ -1,9 +1,6 @@
 import jax.numpy as jnp
-import numpy as np
-from pixwake import calculate_aep, calculate_power
 
-
-from pixwake.types import Curve
+from pixwake import Curve, calculate_aep, calculate_power
 
 
 def test_calculate_power():

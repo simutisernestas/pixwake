@@ -3,6 +3,9 @@ import jax
 import jax.numpy as jnp
 from flax import serialization
 
+from .base import WakeModel
+
+
 class WakeDeficitModelFlax(fnn.Module):
     scale_x = jnp.array(
         [21.21759238, 3.60546819, 0.31714823, 0.09218609, 18.70851079, 0.25810896]
@@ -59,9 +62,6 @@ class WakeAddedTIModelFlax(fnn.Module):
         return (x * self.scale_y) + self.mean_y
 
 
-from .base import WakeModel
-
-
 def load_rans_model():
     deficit_model = WakeDeficitModelFlax()
     variables = deficit_model.init(jax.random.PRNGKey(0), jnp.ones((1, 6)))
@@ -89,15 +89,14 @@ class RANSModel(WakeModel):
         ) = load_rans_model()
 
     def compute_deficit(self, ws_eff, state, use_effective=True):
-        x_d, y_d = self.geometry(state.xs, state.ys, state.wd)
+        x_d, y_d = self.get_downwind_crosswind_distances(state.xs, state.ys, state.wd)
         x_d /= state.turbine.rotor_diameter
         y_d /= state.turbine.rotor_diameter
-        ct = jnp.interp(ws_eff, state.turbine.ct_curve.wind_speed, state.turbine.ct_curve.values)
+        ct = jnp.interp(
+            ws_eff, state.turbine.ct_curve.wind_speed, state.turbine.ct_curve.values
+        )
         in_domain_mask = (
-            (x_d < 70)
-            & (x_d > -3)
-            & (jnp.abs(y_d) < 6)
-            & (jnp.eye(len(state.xs)) == 0)
+            (x_d < 70) & (x_d > -3) & (jnp.abs(y_d) < 6) & (jnp.eye(len(state.xs)) == 0)
         )
 
         def _predict(model, params, ti):

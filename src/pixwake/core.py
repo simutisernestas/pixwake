@@ -2,14 +2,23 @@ from functools import partial
 
 import jax
 import jax.numpy as jnp
+from flax.struct import dataclass
 from jax import custom_vjp, vjp
 from jax.lax import while_loop
 
 
-from flax.struct import dataclass
+@dataclass
+class Curve:
+    wind_speed: jnp.ndarray
+    values: jnp.ndarray
 
 
-from .types import Turbine
+@dataclass
+class Turbine:
+    rotor_diameter: float
+    hub_height: float
+    power_curve: Curve
+    ct_curve: Curve
 
 
 @dataclass
@@ -20,9 +29,73 @@ class SimulationState:
     wd: jnp.ndarray
     turbine: Turbine
 
-    @classmethod
-    def create(cls, xs, ys, ws, wd, turbine, **kwargs):
-        return cls(xs, ys, ws, wd, turbine, **kwargs)
+
+class WakeSimulation:
+    def __init__(self, model, fpi_damp=0.5, fpi_tol=1e-6, mapping_strategy="vmap"):
+        self.model = model
+        self.mapping_strategy = mapping_strategy
+        self.fpi_damp = fpi_damp
+        self.fpi_tol = fpi_tol
+
+    def __call__(self, xs, ys, ws, wd, turbine):
+        if self.mapping_strategy not in ["vmap", "map"]:
+            raise ValueError(
+                f"Invalid mapping strategy: {self.mapping_strategy}. "
+                "Valid options are: 'vmap' or 'map'."
+            )
+
+        if self.mapping_strategy == "vmap":
+            return self._simulate_vmap(xs, ys, ws, wd, turbine)
+
+        return self._simulate_map(xs, ys, ws, wd, turbine)
+
+    def _simulate_vmap(self, xs, ys, ws, wd, turbine):
+        vmaped_simulate_all_cases = jax.vmap(
+            self._simulate_single_case, in_axes=(None, None, 0, 0, None)
+        )
+        return vmaped_simulate_all_cases(xs, ys, ws, wd, turbine)
+
+    def _simulate_map(self, xs, ys, ws, wd, turbine):
+        return jax.lax.map(
+            lambda case: self._simulate_single_case(xs, ys, case[0], case[1], turbine),
+            (ws, wd),
+        )
+
+    def _simulate_single_case(self, xs, ys, ws, wd, turbine):
+        state = SimulationState(xs, ys, ws, wd, turbine)
+        x0 = jnp.full_like(state.xs, state.ws)
+        return fixed_point(self.model, x0, state, damp=self.fpi_damp, tol=self.fpi_tol)
+
+
+def calculate_power(effective_wind_speed, power_curve):
+    """Calculates the power of a wind turbine given the effective wind speed
+    and power curve."""
+
+    def power_per_case(wind_speed):
+        return jnp.interp(wind_speed, power_curve.wind_speed, power_curve.values)
+
+    return jax.vmap(power_per_case)(effective_wind_speed)
+
+
+def calculate_aep(effective_wind_speed, power_curve, probabilities=None):
+    """Calculates the Annual Energy Production (AEP) of a wind farm. Assuming
+    effective wind speeds have shape (T, N), where T is the number of time steps
+    and N is the number of turbines."""
+
+    turbine_powers = calculate_power(effective_wind_speed, power_curve) * 1e3  # W
+
+    hours_in_year = 24 * 365
+    gwh_conversion_factor = 1e-9
+
+    if probabilities is None:
+        # Assuming timeseries covers one year
+        return (
+            turbine_powers * hours_in_year * gwh_conversion_factor
+        ).sum() / effective_wind_speed.shape[0]
+
+    return (
+        turbine_powers * probabilities / 1.0 * hours_in_year * gwh_conversion_factor
+    ).sum()
 
 
 @partial(
@@ -75,65 +148,3 @@ def fixed_point_rev(f, tol, damp, res, x_star_bar):
 
 
 fixed_point.defvjp(fixed_point_fwd, fixed_point_rev)
-
-
-class WakeSimulation:
-    def __init__(self, model, mapping_strategy="vmap"):
-        self.model = model
-        self.mapping_strategy = mapping_strategy
-
-    def __call__(self, xs, ys, ws, wd, turbine):
-        if self.mapping_strategy == "vmap":
-            return self._simulate_vmap(xs, ys, ws, wd, turbine)
-        elif self.mapping_strategy == "map":
-            return self._simulate_map(xs, ys, ws, wd, turbine)
-        else:
-            raise ValueError(f"Unknown mapping strategy: {self.mapping_strategy}")
-
-    def _simulate_vmap(self, xs, ys, ws, wd, turbine):
-        return jax.vmap(self._simulate_single_case, in_axes=(None, None, 0, 0, None))(
-            xs, ys, ws, wd, turbine
-        )
-
-    def _simulate_map(self, xs, ys, ws, wd, turbine):
-        def to_be_mapped(wr):
-            return self._simulate_single_case(xs, ys, wr[0], wr[1], turbine)
-
-        wind_resource = jnp.stack([ws, wd], axis=1)
-        return jax.lax.map(to_be_mapped, wind_resource)
-
-    def _simulate_single_case(self, xs, ys, ws, wd, turbine):
-        state = SimulationState.create(xs, ys, ws, wd, turbine)
-        x0 = jnp.full_like(state.xs, state.ws)
-        return fixed_point(
-            self.model, x0, state, damp=self.model.damp, tol=getattr(self.model, "tol", 1e-6)
-        )
-
-
-def calculate_power(effective_wind_speed, power_curve):
-    """
-    Calculates the power output of a wind turbine given the effective wind speed and power curve.
-    """
-
-    def power_per_case(wind_speed):
-        return jnp.interp(
-            wind_speed, power_curve.wind_speed, power_curve.values
-        )
-
-    return jax.vmap(power_per_case)(effective_wind_speed)
-
-
-def calculate_aep(effective_wind_speed, power_curve, probabilities=None):
-    """
-    Calculates the Annual Energy Production (AEP) of a wind farm.
-    """
-    turbine_powers = calculate_power(effective_wind_speed, power_curve) * 1e3  # W
-
-    hours_in_year = 24 * 365
-    gwh_conversion_factor = 1e-9
-
-    if probabilities is None:
-        # Assuming timeseries covers one year
-        return (turbine_powers * hours_in_year * gwh_conversion_factor).sum() / effective_wind_speed.shape[0]
-
-    return (turbine_powers * probabilities / 1.0 * hours_in_year * gwh_conversion_factor).sum()

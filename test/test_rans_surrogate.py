@@ -6,8 +6,7 @@ import numpy as onp
 from jax.test_util import check_grads
 from py_wake.examples.data.dtu10mw import DTU10MW
 
-from pixwake import RANSModel, WakeSimulation, calculate_aep
-from pixwake.types import Curve, Turbine
+from pixwake import RANSModel, WakeSimulation, calculate_aep, Curve, Turbine
 
 
 def get_rans_dependencies():
@@ -26,8 +25,8 @@ def test_rans_surrogate_aep():
 
     onp.random.seed(42)
     T = 10
-    WSS = onp.random.uniform(CUTIN_WS, CUTOUT_WS, T)
-    WDS = onp.random.uniform(0, 360, T)
+    WSS = jnp.asarray(onp.random.uniform(CUTIN_WS, CUTOUT_WS, T))
+    WDS = jnp.asarray(onp.random.uniform(0, 360, T))
 
     wi, le = 10, 8
     xs, ys = jnp.meshgrid(  # example positions
@@ -45,10 +44,10 @@ def test_rans_surrogate_aep():
     )
 
     def aep(xx, yy):
-        model = RANSModel(ambient_ti=0.1, damp=0.8, tol=1e-3)
-        sim = WakeSimulation(model)
+        model = RANSModel(ambient_ti=0.1)
+        sim = WakeSimulation(model, mapping_strategy="map", fpi_damp=0.8, fpi_tol=1e-3)
         effective_wss = sim(xx, yy, WSS, WDS, turbine)
-        return calculate_aep(effective_wss, jnp.stack([ct_xp, pw_fp], axis=1))
+        return calculate_aep(effective_wss, turbine.power_curve)
 
     aep_and_grad = jax.jit(jax.value_and_grad(aep, argnums=(0, 1)))
 
@@ -58,10 +57,10 @@ def test_rans_surrogate_aep():
         else:
             return res.block_until_ready()
 
-    res = aep_and_grad(jnp.asarray(xs), jnp.asarray(ys))
+    res = aep_and_grad(xs, ys)
     block_all(res)
     s = time.time()
-    res = aep_and_grad(jnp.asarray(xs), jnp.asarray(ys))
+    res = aep_and_grad(xs, ys)
     block_all(res)
     print(f"AEP: {res[0]} in {time.time() - s:.3f} seconds")
 
@@ -89,8 +88,8 @@ def test_rans_surrogate_gradients():
     )
 
     def sim(x, y):
-        model = RANSModel(ambient_ti=0.1, damp=0.8, tol=1e-3)
-        simulation = WakeSimulation(model)
+        model = RANSModel(ambient_ti=0.1)
+        simulation = WakeSimulation(model, fpi_damp=0.8, fpi_tol=1e-3)
         return simulation(
             x,
             y,

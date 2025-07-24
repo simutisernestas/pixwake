@@ -13,8 +13,7 @@ from py_wake.wind_farm_models.engineering_models import All2AllIterative
 from py_wake.wind_turbines import WindTurbines
 from py_wake.wind_turbines.power_ct_functions import PowerCtTabular
 
-from pixwake import NOJModel, WakeSimulation, calculate_aep
-from pixwake.types import Curve, Turbine
+from pixwake import NOJModel, WakeSimulation, calculate_aep, Curve, Turbine
 
 jcfg.update("jax_enable_x64", True)  # need float64 to match pywake
 
@@ -131,14 +130,12 @@ def test_noj_aep_and_gradients_equivalence_timeseries():
         x=wt_x, y=wt_y, wd=wd, ws=ws, time=True, n_cpu=n_cpu
     )
 
-    model = NOJModel(k=wake_expansion_k, damp=1.0)
-    sim = WakeSimulation(model)
+    model = NOJModel(k=wake_expansion_k)
+    sim = WakeSimulation(model, fpi_damp=1.0)
     turbine = Turbine(
         rotor_diameter=windTurbines.diameter(),
         hub_height=100.0,
-        power_curve=Curve(
-            wind_speed=power_curve[:, 0], values=power_curve[:, 1]
-        ),
+        power_curve=Curve(wind_speed=power_curve[:, 0], values=power_curve[:, 1]),
         ct_curve=Curve(wind_speed=ct_curve[:, 0], values=ct_curve[:, 1]),
     )
     pixwake_ws_eff = sim(
@@ -151,7 +148,9 @@ def test_noj_aep_and_gradients_equivalence_timeseries():
     rtol = 1e-3
     np.testing.assert_allclose(pixwake_ws_eff.T, pywake_ws_eff, rtol=rtol)
     np.testing.assert_allclose(
-        calculate_aep(pixwake_ws_eff, turbine.power_curve), sim_res.aep().sum().values, rtol=rtol
+        calculate_aep(pixwake_ws_eff, turbine.power_curve),
+        sim_res.aep().sum().values,
+        rtol=rtol,
     )
 
     grad_fn = jax.jit(
@@ -327,14 +326,12 @@ def test_noj_aep_and_gradients_equivalence_with_site_frequencies():
     pix_ws, pix_wd = jnp.meshgrid(ws, wd)
     pix_wd, pix_ws = pix_wd.flatten(), pix_ws.flatten()
 
-    model = NOJModel(k=wake_expansion_k, damp=1.0)
-    sim = WakeSimulation(model, mapping_strategy="map")
+    model = NOJModel(k=wake_expansion_k)
+    sim = WakeSimulation(model, fpi_damp=1.0, mapping_strategy="map")
     turbine = Turbine(
         rotor_diameter=windTurbines.diameter(),
         hub_height=100.0,
-        power_curve=Curve(
-            wind_speed=power_curve[:, 0], values=power_curve[:, 1]
-        ),
+        power_curve=Curve(wind_speed=power_curve[:, 0], values=power_curve[:, 1]),
         ct_curve=Curve(wind_speed=ct_curve[:, 0], values=ct_curve[:, 1]),
     )
     pixwake_ws_eff = sim(
@@ -353,12 +350,13 @@ def test_noj_aep_and_gradients_equivalence_with_site_frequencies():
     pix_probs = P_ilk.reshape((1, pixwake_ws_eff.shape[0])).T
 
     np.testing.assert_allclose(
-        sim_res.aep().sum().values, calculate_aep(pixwake_ws_eff, turbine.power_curve, probabilities=pix_probs)
+        sim_res.aep().sum().values,
+        calculate_aep(pixwake_ws_eff, turbine.power_curve, probabilities=pix_probs),
     )
 
     n_cpu = 1
     s = time.time()
-    aep = wfm(x=wt_x, y=wt_y, wd=wd, ws=ws, n_cpu=n_cpu, WS_eff=0).aep().sum()
+    _ = wfm(x=wt_x, y=wt_y, wd=wd, ws=ws, n_cpu=n_cpu, WS_eff=0).aep().sum()
     _ = wfm.aep_gradients(x=wt_x, y=wt_y, wd=wd, ws=ws, n_cpu=n_cpu, WS_eff=0)
     pywake_runtime = time.time() - s
 
