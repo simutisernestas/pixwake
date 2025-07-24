@@ -3,7 +3,7 @@ from pathlib import Path
 
 from jax import config as jcfg
 
-from .core import WakeSimulation, calculate_power, calculate_aep, Curve, Turbine
+from .core import Curve, Turbine, WakeSimulation, calculate_aep, calculate_power
 from .models.noj import NOJModel
 from .models.rans import RANSModel
 

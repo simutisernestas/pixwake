@@ -13,7 +13,7 @@ from py_wake.wind_farm_models.engineering_models import All2AllIterative
 from py_wake.wind_turbines import WindTurbines
 from py_wake.wind_turbines.power_ct_functions import PowerCtTabular
 
-from pixwake import NOJModel, WakeSimulation, calculate_aep, Curve, Turbine
+from pixwake import Curve, NOJModel, Turbine, WakeSimulation, calculate_aep
 
 jcfg.update("jax_enable_x64", True)  # need float64 to match pywake
 

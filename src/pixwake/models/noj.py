@@ -1,9 +1,7 @@
 import jax.numpy as jnp
 
-from .base import WakeModel
-
-
 from ..utils import get_eps
+from .base import WakeModel
 
 
 class NOJModel(WakeModel):
