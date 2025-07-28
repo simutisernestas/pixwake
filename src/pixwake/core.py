@@ -37,17 +37,20 @@ class WakeSimulation:
         self.fpi_damp = fpi_damp
         self.fpi_tol = fpi_tol
 
+        self.__sim_call_table = {
+            "vmap": self._simulate_vmap,
+            "map": self._simulate_map,
+            "_manual": self._simulate_manual,  # debug/profile purposes only
+        }
+
     def __call__(self, xs, ys, ws, wd, turbine):
-        if self.mapping_strategy not in ["vmap", "map"]:
+        if self.mapping_strategy not in self.__sim_call_table.keys():
             raise ValueError(
                 f"Invalid mapping strategy: {self.mapping_strategy}. "
-                "Valid options are: 'vmap' or 'map'."
+                f"Valid options are: {self.__sim_call_table.keys()}"
             )
 
-        if self.mapping_strategy == "vmap":
-            return self._simulate_vmap(xs, ys, ws, wd, turbine)
-
-        return self._simulate_map(xs, ys, ws, wd, turbine)
+        return self.__sim_call_table[self.mapping_strategy](xs, ys, ws, wd, turbine)
 
     def _simulate_vmap(self, xs, ys, ws, wd, turbine):
         vmaped_simulate_all_cases = jax.vmap(
@@ -59,6 +62,14 @@ class WakeSimulation:
         return jax.lax.map(
             lambda case: self._simulate_single_case(xs, ys, case[0], case[1], turbine),
             (ws, wd),
+        )
+
+    def _simulate_manual(self, xs, ys, ws, wd, turbine):
+        return jnp.array(
+            [
+                self._simulate_single_case(xs, ys, _ws, _wd, turbine)
+                for _ws, _wd in zip(ws, wd)
+            ]
         )
 
     def _simulate_single_case(self, xs, ys, ws, wd, turbine):

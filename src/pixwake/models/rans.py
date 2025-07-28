@@ -101,9 +101,8 @@ class RANSModel(WakeModel):
         ct = jnp.interp(
             ws_eff, state.turbine.ct_curve.wind_speed, state.turbine.ct_curve.values
         )
-        in_domain_mask = (
-            (x_d < 70) & (x_d > -3) & (jnp.abs(y_d) < 6) & (jnp.eye(len(state.xs)) == 0)
-        )
+        mask_off_diag = ~jnp.eye(x_d.shape[0], dtype=bool)
+        in_domain_mask = (x_d < 70) & (x_d > -3) & (jnp.abs(y_d) < 6) & mask_off_diag
 
         def _predict(model, params, ti):
             md_input = jnp.stack(
