@@ -9,6 +9,8 @@ from .base import WakeModel
 
 
 class WakeDeficitModelFlax(fnn.Module):
+    """A Flax module for the wake deficit model."""
+
     scale_x = jnp.array(
         [21.21759238, 3.60546819, 0.31714823, 0.09218609, 18.70851079, 0.25810896]
     )
@@ -27,6 +29,7 @@ class WakeDeficitModelFlax(fnn.Module):
 
     @fnn.compact
     def __call__(self, x):
+        """Applies the wake deficit model to the input."""
         x = (x - self.mean_x) / self.scale_x
         x = fnn.tanh(fnn.Dense(70)(x))
         x = fnn.sigmoid(fnn.Dense(102)(x))
@@ -37,6 +40,8 @@ class WakeDeficitModelFlax(fnn.Module):
 
 
 class WakeAddedTIModelFlax(fnn.Module):
+    """A Flax module for the wake-added turbulence intensity model."""
+
     scale_x = jnp.array(
         [21.21759238, 3.60546819, 0.31714823, 0.09218609, 18.70851079, 0.25810896]
     )
@@ -55,6 +60,7 @@ class WakeAddedTIModelFlax(fnn.Module):
 
     @fnn.compact
     def __call__(self, x):
+        """Applies the wake-added TI model to the input."""
         x = (x - self.mean_x) / self.scale_x
         x = fnn.sigmoid(fnn.Dense(118)(x))
         x = fnn.sigmoid(fnn.Dense(118)(x))
@@ -65,7 +71,15 @@ class WakeAddedTIModelFlax(fnn.Module):
 
 
 def load_rans_models():
+    """Loads the pre-trained RANS surrogate models.
+
+    Returns:
+        A tuple containing the deficit model, deficit weights, turbulence
+        model, and turbulence weights.
+    """
+
     def _load_model(model_class, filename):
+        """Loads a single Flax model from a file."""
         model = model_class()
         variables = model.init(jax.random.PRNGKey(0), jnp.ones((1, 6)))
         with open(filename, "rb") as f:
@@ -85,8 +99,21 @@ def load_rans_models():
 
 
 class RANSModel(WakeModel):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+    """A RANS surrogate model for wake prediction.
+
+    This model uses two pre-trained neural networks to predict the wake deficit
+    and added turbulence intensity. The model is based on high-fidelity RANS
+    CFD simulations.
+    """
+
+    def __init__(self, ambient_ti):
+        """Initializes the RANSModel.
+
+        Args:
+            ambient_ti: The ambient turbulence intensity.
+        """
+        super().__init__()
+        self.ambient_ti = ambient_ti
         (
             self.deficit_model,
             self.deficit_weights,
@@ -95,6 +122,25 @@ class RANSModel(WakeModel):
         ) = load_rans_models()
 
     def compute_deficit(self, ws_eff, state, use_effective=True):
+        """Computes the wake deficit using the RANS surrogate model.
+
+        This method calculates the velocity deficit and added turbulence
+        intensity for each turbine in the wind farm. It offers two modes of
+        operation controlled by the `use_effective` parameter.
+
+        Args:
+            ws_eff: An array of effective wind speeds at each turbine.
+            state: The state of the simulation.
+            use_effective: A boolean flag to control the deficit calculation.
+                - If True (default), the deficit is calculated as an absolute
+                  reduction in wind speed, proportional to the effective wind
+                  speed at the waking turbine. This is more physically realistic.
+                - If False, the deficit is calculated as a fractional reduction
+                  relative to the free-stream wind speed.
+
+        Returns:
+            An array of updated effective wind speeds at each turbine.
+        """
         x_d, y_d = self.get_downwind_crosswind_distances(state.xs, state.ys, state.wd)
         x_d /= state.turbine.rotor_diameter
         y_d /= state.turbine.rotor_diameter
@@ -105,6 +151,7 @@ class RANSModel(WakeModel):
         in_domain_mask = (x_d < 70) & (x_d > -3) & (jnp.abs(y_d) < 6) & mask_off_diag
 
         def _predict(model, params, ti):
+            """A helper function to run predictions with the Flax models."""
             md_input = jnp.stack(
                 [
                     x_d,  # normalized x distance

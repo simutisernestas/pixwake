@@ -5,7 +5,30 @@ from .base import WakeModel
 
 
 class NOJModel(WakeModel):
+    """A Jensen NOJ (N.O. Jensen) wake model.
+
+    This is a simple analytical model that assumes a linearly expanding wake.
+    """
+
+    def __init__(self, k):
+        """Initializes the NOJModel.
+
+        Args:
+            k: The wake expansion coefficient.
+        """
+        super().__init__()
+        self.k = k
+
     def compute_deficit(self, ws_eff, state):
+        """Computes the wake deficit using the NOJ model.
+
+        Args:
+            ws_eff: An array of effective wind speeds at each turbine.
+            state: The state of the simulation.
+
+        Returns:
+            An array of updated effective wind speeds at each turbine.
+        """
         x_d, y_d = self.get_downwind_crosswind_distances(state.xs, state.ys, state.wd)
         wake_rad = (state.turbine.rotor_diameter / 2) + self.k * x_d
 

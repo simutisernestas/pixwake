@@ -4,6 +4,7 @@ from jax import config as jcfg
 
 
 def get_eps():
+    """Returns the machine epsilon for the current JAX float precision."""
     return (
         jax.numpy.finfo(jnp.float64).eps
         if jcfg.jax_enable_x64
