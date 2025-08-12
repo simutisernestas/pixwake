@@ -223,7 +223,7 @@ def fixed_point(f, x_guess, state, tol=1e-6, damp=0.5):
         x_damped = damp * x_new + (1 - damp) * x
         return x, x_damped, it + 1
 
-    _, x_star, _ = while_loop(cond_fun, body_fun, (x_guess, f(x_guess, state), 0))
+    _, x_star, it = while_loop(cond_fun, body_fun, (x_guess, f(x_guess, state), 0))
     # jax.debug.print("\nFixed point found after {it} iterations", it=it)
     return x_star
 
