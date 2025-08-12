@@ -6,7 +6,7 @@ import numpy as onp
 from jax.test_util import check_grads
 from py_wake.examples.data.dtu10mw import DTU10MW
 
-from pixwake import Curve, RANSModel, Turbine, WakeSimulation, calculate_aep
+from pixwake import Curve, RANSModel, Turbine, WakeSimulation
 
 
 def get_rans_dependencies():
@@ -46,8 +46,7 @@ def test_rans_surrogate_aep():
     def aep(xx, yy):
         model = RANSModel(ambient_ti=0.1)
         sim = WakeSimulation(model, mapping_strategy="map", fpi_damp=0.8, fpi_tol=1e-3)
-        effective_wss = sim(xx, yy, WSS, WDS, turbine)
-        return calculate_aep(effective_wss, turbine.power_curve)
+        return sim(xx, yy, WSS, WDS, turbine).aep()
 
     aep_and_grad = jax.jit(jax.value_and_grad(aep, argnums=(0, 1)))
 
@@ -96,6 +95,6 @@ def test_rans_surrogate_gradients():
             jnp.full_like(x, ws),
             jnp.full_like(x, wd),
             turbine,
-        ).sum()
+        ).effective_wind_speed.sum()
 
     check_grads(sim, (xs, ys), order=1, modes=["rev"], atol=1e-2, rtol=1e-2, eps=10)

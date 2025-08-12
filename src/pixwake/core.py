@@ -88,17 +88,15 @@ class WakeSimulation:
 
     def __call__(self, xs, ys, ws, wd, turbine):
         """Runs the wake simulation.
-
         Args:
             xs: An array of x-coordinates for each turbine.
             ys: An array of y-coordinates for each turbine.
             ws: An array of free-stream wind speeds.
             wd: An array of wind directions.
             turbine: The turbine object to use in the simulation.
-
         Returns:
-            An array of effective wind speeds at each turbine for each wind
-            condition.
+            A `SimulationResult` object containing the effective wind speeds
+            and turbine information.
         """
         if self.mapping_strategy not in self.__sim_call_table.keys():
             raise ValueError(
@@ -106,7 +104,13 @@ class WakeSimulation:
                 f"Valid options are: {self.__sim_call_table.keys()}"
             )
 
-        return self.__sim_call_table[self.mapping_strategy](xs, ys, ws, wd, turbine)
+        effective_wind_speed = self.__sim_call_table[self.mapping_strategy](
+            xs, ys, ws, wd, turbine
+        )
+        return SimulationResult(
+            effective_wind_speed=effective_wind_speed,
+            turbine=turbine,
+        )
 
     def _simulate_vmap(self, xs, ys, ws, wd, turbine):
         """Simulates multiple wind conditions using jax.vmap."""
@@ -138,53 +142,46 @@ class WakeSimulation:
         return fixed_point(self.model, x0, state, damp=self.fpi_damp, tol=self.fpi_tol)
 
 
-def calculate_power(effective_wind_speed, power_curve):
-    """Calculates the power of each turbine for each wind condition.
-
-    Args:
+@dataclass
+class SimulationResult:
+    """A dataclass to hold the results of a wind farm simulation.
+    Attributes:
         effective_wind_speed: An array of effective wind speeds at each
             turbine for each wind condition.
-        power_curve: The power curve of the turbine.
-
-    Returns:
-        An array of power values for each turbine and wind condition.
+        turbine: The turbine object used in the simulation.
     """
 
-    def power_per_case(wind_speed):
-        return jnp.interp(wind_speed, power_curve.wind_speed, power_curve.values)
+    effective_wind_speed: jnp.ndarray
+    turbine: Turbine
 
-    return jax.vmap(power_per_case)(effective_wind_speed)
+    def power(self):
+        """Calculates the power of each turbine for each wind condition."""
 
+        def power_per_case(wind_speed):
+            return jnp.interp(
+                wind_speed,
+                self.turbine.power_curve.wind_speed,
+                self.turbine.power_curve.values,
+            )
 
-def calculate_aep(effective_wind_speed, power_curve, probabilities=None):
-    """Calculates the Annual Energy Production (AEP) of a wind farm.
+        return jax.vmap(power_per_case)(self.effective_wind_speed)
 
-    Args:
-        effective_wind_speed: An array of effective wind speeds with shape
-            (T, N), where T is the number of time steps and N is the number of
-            turbines.
-        power_curve: The power curve of the turbine.
-        probabilities: An array of probabilities for each wind condition. If
-            None, a uniform distribution is assumed.
+    def aep(self, probabilities=None):
+        """Calculates the Annual Energy Production (AEP) of a wind farm."""
+        turbine_powers = self.power() * 1e3  # W
 
-    Returns:
-        The AEP of the wind farm in GWh.
-    """
+        hours_in_year = 24 * 365
+        gwh_conversion_factor = 1e-9
 
-    turbine_powers = calculate_power(effective_wind_speed, power_curve) * 1e3  # W
+        if probabilities is None:
+            # Assuming timeseries covers one year
+            return (
+                turbine_powers * hours_in_year * gwh_conversion_factor
+            ).sum() / self.effective_wind_speed.shape[0]
 
-    hours_in_year = 24 * 365
-    gwh_conversion_factor = 1e-9
-
-    if probabilities is None:
-        # Assuming timeseries covers one year
         return (
-            turbine_powers * hours_in_year * gwh_conversion_factor
-        ).sum() / effective_wind_speed.shape[0]
-
-    return (
-        turbine_powers * probabilities / 1.0 * hours_in_year * gwh_conversion_factor
-    ).sum()
+            turbine_powers * probabilities / 1.0 * hours_in_year * gwh_conversion_factor
+        ).sum()
 
 
 @partial(
