@@ -91,7 +91,7 @@ def test_simulate_case_two_turbines():
     sim = WakeSimulation(model)
     result = sim(xs, ys, ws, jnp.full_like(ws, wd), turbine)
     expected = jnp.array([10.0, 7.5154343])
-    assert jnp.allclose(result.effective_wind_speed, expected, rtol=1e-6)
+    assert jnp.allclose(result.effective_ws, expected, rtol=1e-6)
 
 
 def test_simulate_case_gradients_and_jit():
@@ -102,7 +102,7 @@ def test_simulate_case_gradients_and_jit():
     def f(xx, yy):
         return sim(
             xx, yy, jnp.full_like(xx, ws), jnp.full_like(xx, wd), turbine
-        ).effective_wind_speed
+        ).effective_ws
 
     check_grads(f, (xs, ys), order=1, modes=["rev"], atol=1e-2, rtol=1e-2)
 
@@ -116,9 +116,9 @@ def test_batched_simulate_case_jit():
     wd_b = jnp.stack([jnp.full_like(xs, wd), jnp.full_like(xs, wd)])
     model = NOJModel(k=k)
     sim = WakeSimulation(model)
-    expected = sim(xs, ys, ws_b, wd_b, turbine).effective_wind_speed
+    expected = sim(xs, ys, ws_b, wd_b, turbine).effective_ws
     jitted = jax.jit(sim)
-    result = jitted(xs, ys, ws_b, wd_b, turbine).effective_wind_speed
+    result = jitted(xs, ys, ws_b, wd_b, turbine).effective_ws
     assert jnp.allclose(result, expected, rtol=1e-6)
 
 
@@ -129,7 +129,7 @@ def test_single_turbine():
     model = NOJModel(k=k)
     sim = WakeSimulation(model)
     result = sim(xs, ys, ws, jnp.atleast_1d(wd), turbine)
-    assert jnp.allclose(result.effective_wind_speed, ws, rtol=1e-6)
+    assert jnp.allclose(result.effective_ws, ws, rtol=1e-6)
 
 
 def test_zero_wind_speed():
@@ -139,7 +139,9 @@ def test_zero_wind_speed():
     sim = WakeSimulation(model)
     result = sim(xs, ys, ws, jnp.full_like(ws, wd), turbine)
     assert jnp.allclose(
-        result.effective_wind_speed, jnp.zeros_like(result.effective_wind_speed), rtol=1e-6
+        result.effective_ws,
+        jnp.zeros_like(result.effective_ws),
+        rtol=1e-6,
     )
 
 
@@ -150,7 +152,7 @@ def test_wind_speed_outside_ct_curve():
     sim = WakeSimulation(model)
     result = sim(xs, ys, ws, jnp.full_like(ws, wd), turbine)
     # The model should still produce a result, likely with the max Ct value
-    assert jnp.isfinite(result.effective_wind_speed).all()
+    assert jnp.isfinite(result.effective_ws).all()
 
 
 def test_identical_turbine_locations():
@@ -160,6 +162,6 @@ def test_identical_turbine_locations():
     ws = jnp.array([10.0, 10.0])
     model = NOJModel(k=k)
     sim = WakeSimulation(model)
-    result = sim(xs, ys, ws, jnp.full_like(ws, wd), turbine).effective_wind_speed
+    result = sim(xs, ys, ws, jnp.full_like(ws, wd), turbine).effective_ws
     # Deficit should be very high for the second turbine
     assert result[0, 0] > result[0, 1]

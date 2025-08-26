@@ -3,7 +3,7 @@ from pathlib import Path
 
 from jax import config as jcfg
 
-from .core import Curve, Turbine, WakeSimulation, SimulationResult
+from .core import Curve, Turbine, WakeSimulation
 from .models.noj import NOJModel
 from .models.rans import RANSModel
 
@@ -20,5 +20,4 @@ __all__ = [
     "Turbine",
     "NOJModel",
     "RANSModel",
-    "SimulationResult",
 ]

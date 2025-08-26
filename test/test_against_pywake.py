@@ -138,7 +138,7 @@ def test_noj_aep_and_gradients_equivalence_timeseries():
         power_curve=Curve(wind_speed=power_curve[:, 0], values=power_curve[:, 1]),
         ct_curve=Curve(wind_speed=ct_curve[:, 0], values=ct_curve[:, 1]),
     )
-    pixwake_ws_eff = sim(
+    pixwake_sim_res = sim(
         jnp.asarray(wt_x),
         jnp.asarray(wt_y),
         jnp.asarray(ws),
@@ -146,9 +146,9 @@ def test_noj_aep_and_gradients_equivalence_timeseries():
         turbine,
     )
     rtol = 1e-3
-    np.testing.assert_allclose(pixwake_ws_eff.effective_wind_speed.T, pywake_ws_eff, rtol=rtol)
+    np.testing.assert_allclose(pixwake_sim_res.effective_ws.T, pywake_ws_eff, rtol=rtol)
     np.testing.assert_allclose(
-        pixwake_ws_eff.aep(),
+        pixwake_sim_res.aep(),
         sim_res.aep().sum().values,
         rtol=rtol,
     )
@@ -331,7 +331,7 @@ def test_noj_aep_and_gradients_equivalence_with_site_frequencies():
         power_curve=Curve(wind_speed=power_curve[:, 0], values=power_curve[:, 1]),
         ct_curve=Curve(wind_speed=ct_curve[:, 0], values=ct_curve[:, 1]),
     )
-    pixwake_ws_eff = sim(
+    pixwake_sim_res = sim(
         jnp.asarray(wt_x),
         jnp.asarray(wt_y),
         pix_ws,
@@ -340,15 +340,17 @@ def test_noj_aep_and_gradients_equivalence_with_site_frequencies():
     )  # transpose to match pywake shape
 
     np.testing.assert_allclose(
-        pixwake_ws_eff.effective_wind_speed.T.reshape(sim_res.WS_eff.shape), sim_res.WS_eff.values, rtol=1e-3
+        pixwake_sim_res.effective_ws.T.reshape(sim_res.WS_eff.shape),
+        sim_res.WS_eff.values,
+        rtol=1e-3,
     )
 
     P_ilk = site.local_wind().P_ilk
-    pix_probs = P_ilk.reshape((1, pixwake_ws_eff.effective_wind_speed.shape[0])).T
+    pix_probs = P_ilk.reshape((1, pixwake_sim_res.effective_ws.shape[0])).T
 
     np.testing.assert_allclose(
         sim_res.aep().sum().values,
-        pixwake_ws_eff.aep(probabilities=pix_probs),
+        pixwake_sim_res.aep(probabilities=pix_probs),
     )
 
     n_cpu = 1

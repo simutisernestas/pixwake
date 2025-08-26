@@ -95,6 +95,6 @@ def test_rans_surrogate_gradients():
             jnp.full_like(x, ws),
             jnp.full_like(x, wd),
             turbine,
-        ).effective_wind_speed.sum()
+        ).effective_ws.sum()
 
     check_grads(sim, (xs, ys), order=1, modes=["rev"], atol=1e-2, rtol=1e-2, eps=10)
