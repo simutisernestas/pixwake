@@ -13,7 +13,7 @@ from py_wake.wind_farm_models.engineering_models import All2AllIterative
 from py_wake.wind_turbines import WindTurbines
 from py_wake.wind_turbines.power_ct_functions import PowerCtTabular
 
-from pixwake import Curve, NOJModel, Turbine, WakeSimulation, calculate_aep
+from pixwake import Curve, NOJModel, Turbine, WakeSimulation
 
 jcfg.update("jax_enable_x64", True)  # need float64 to match pywake
 
@@ -138,7 +138,7 @@ def test_noj_aep_and_gradients_equivalence_timeseries():
         power_curve=Curve(wind_speed=power_curve[:, 0], values=power_curve[:, 1]),
         ct_curve=Curve(wind_speed=ct_curve[:, 0], values=ct_curve[:, 1]),
     )
-    pixwake_ws_eff = sim(
+    pixwake_sim_res = sim(
         jnp.asarray(wt_x),
         jnp.asarray(wt_y),
         jnp.asarray(ws),
@@ -146,25 +146,22 @@ def test_noj_aep_and_gradients_equivalence_timeseries():
         turbine,
     )
     rtol = 1e-3
-    np.testing.assert_allclose(pixwake_ws_eff.T, pywake_ws_eff, rtol=rtol)
+    np.testing.assert_allclose(pixwake_sim_res.effective_ws.T, pywake_ws_eff, rtol=rtol)
     np.testing.assert_allclose(
-        calculate_aep(pixwake_ws_eff, turbine.power_curve),
+        pixwake_sim_res.aep(),
         sim_res.aep().sum().values,
         rtol=rtol,
     )
 
     grad_fn = jax.jit(
         jax.value_and_grad(
-            lambda xx, yy: calculate_aep(
-                sim(
-                    xx,
-                    yy,
-                    ws,
-                    wd,
-                    turbine,
-                ),
-                turbine.power_curve,
-            ),
+            lambda xx, yy: sim(
+                xx,
+                yy,
+                ws,
+                wd,
+                turbine,
+            ).aep(),
             argnums=(0, 1),
         )
     )
@@ -334,7 +331,7 @@ def test_noj_aep_and_gradients_equivalence_with_site_frequencies():
         power_curve=Curve(wind_speed=power_curve[:, 0], values=power_curve[:, 1]),
         ct_curve=Curve(wind_speed=ct_curve[:, 0], values=ct_curve[:, 1]),
     )
-    pixwake_ws_eff = sim(
+    pixwake_sim_res = sim(
         jnp.asarray(wt_x),
         jnp.asarray(wt_y),
         pix_ws,
@@ -343,15 +340,17 @@ def test_noj_aep_and_gradients_equivalence_with_site_frequencies():
     )  # transpose to match pywake shape
 
     np.testing.assert_allclose(
-        pixwake_ws_eff.T.reshape(sim_res.WS_eff.shape), sim_res.WS_eff.values, rtol=1e-3
+        pixwake_sim_res.effective_ws.T.reshape(sim_res.WS_eff.shape),
+        sim_res.WS_eff.values,
+        rtol=1e-3,
     )
 
     P_ilk = site.local_wind().P_ilk
-    pix_probs = P_ilk.reshape((1, pixwake_ws_eff.shape[0])).T
+    pix_probs = P_ilk.reshape((1, pixwake_sim_res.effective_ws.shape[0])).T
 
     np.testing.assert_allclose(
         sim_res.aep().sum().values,
-        calculate_aep(pixwake_ws_eff, turbine.power_curve, probabilities=pix_probs),
+        pixwake_sim_res.aep(probabilities=pix_probs),
     )
 
     n_cpu = 1
@@ -362,17 +361,13 @@ def test_noj_aep_and_gradients_equivalence_with_site_frequencies():
 
     grad_and_value_fn = jax.jit(
         jax.value_and_grad(
-            lambda xx, yy: calculate_aep(
-                sim(
-                    xx,
-                    yy,
-                    pix_ws,
-                    pix_wd,
-                    turbine,
-                ),
-                turbine.power_curve,
-                pix_probs,
-            ),
+            lambda xx, yy: sim(
+                xx,
+                yy,
+                pix_ws,
+                pix_wd,
+                turbine,
+            ).aep(probabilities=pix_probs),
             argnums=(0, 1),
         )
     )
