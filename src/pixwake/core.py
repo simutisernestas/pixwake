@@ -60,7 +60,7 @@ class SimulationState:
 class SimulationResult:
     """A dataclass to hold the results of a wind farm simulation.
     Attributes:
-        effective_wind_speed: Effective wind speeds at each turbine for each wind condition.
+        effective_ws: Effective wind speeds at each turbine for each wind condition.
         turbine: The turbine object used in the simulation.
     """
 
