@@ -93,7 +93,7 @@ class SimulationResult:
             ).sum() / self.effective_ws.shape[0]
 
         return (
-            turbine_powers * probabilities / 1.0 * hours_in_year * gwh_conversion_factor
+            turbine_powers * probabilities * hours_in_year * gwh_conversion_factor
         ).sum()
 
 
