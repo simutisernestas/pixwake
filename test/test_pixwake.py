@@ -1,5 +1,6 @@
 import jax
 import jax.numpy as jnp
+import numpy as np
 from jax import config as jcfg
 from jax.test_util import check_grads
 
@@ -10,7 +11,7 @@ from pixwake.models.noj import NOJModel
 jcfg.update("jax_enable_x64", True)  # need float64 to match pywake
 
 
-def sqrt_iter(x, a):
+def _sqrt_iter(x, a):
     """Newton iteration for ``sqrt(a)``."""
     return 0.5 * (x + a / x)
 
@@ -18,14 +19,14 @@ def sqrt_iter(x, a):
 def test_fixed_point_sqrt():
     a = 2.0
     x0 = 1.0
-    res = fixed_point(sqrt_iter, x0, a, tol=1e-8)
+    res = fixed_point(_sqrt_iter, x0, a, tol=1e-8)
     assert jnp.allclose(res, jnp.sqrt(a), rtol=1e-6)
 
 
 def test_fixed_point_gradient():
     a = 2.0
     x0 = 1.0
-    grad_fn = jax.grad(lambda aa: fixed_point(sqrt_iter, x0, aa, tol=1e-8))
+    grad_fn = jax.grad(lambda aa: fixed_point(_sqrt_iter, x0, aa, tol=1e-8))
     grad = grad_fn(a)
     expected = 1.0 / (2 * jnp.sqrt(a))
     assert jnp.allclose(grad, expected, rtol=1e-6)
@@ -165,3 +166,30 @@ def test_identical_turbine_locations():
     result = sim(xs, ys, ws, jnp.full_like(ws, wd), turbine).effective_ws
     # Deficit should be very high for the second turbine
     assert result[0, 0] > result[0, 1]
+
+
+def test_numpy_inputs():
+    xs, ys, ws, wd, k, turbine = base_params()
+    model = NOJModel(k=k)
+    sim = WakeSimulation(model)
+
+    # Use numpy arrays instead of jax arrays
+    xs_np = np.array(xs)
+    ys_np = np.array(ys)
+    ws_np = np.array(ws)
+    wd_np = np.full_like(ws_np, wd)
+
+    # Use lists for the curves
+    power_curve_list = [turbine.power_curve.wind_speed, turbine.power_curve.values]
+    ct_curve_list = [turbine.ct_curve.wind_speed, turbine.ct_curve.values]
+
+    turbine_np = Turbine(
+        rotor_diameter=turbine.rotor_diameter,
+        hub_height=turbine.hub_height,
+        power_curve=Curve(wind_speed=power_curve_list[0], values=power_curve_list[1]),
+        ct_curve=Curve(wind_speed=ct_curve_list[0], values=ct_curve_list[1]),
+    )
+
+    result = sim(xs_np, ys_np, ws_np, wd_np, turbine_np)
+    expected = jnp.array([10.0, 7.5154343])
+    assert jnp.allclose(result.effective_ws, expected, rtol=1e-6)

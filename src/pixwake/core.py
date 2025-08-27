@@ -1,4 +1,5 @@
 from functools import partial
+from typing import Any, Callable
 
 import jax
 import jax.numpy as jnp
@@ -67,10 +68,10 @@ class SimulationResult:
     effective_ws: jnp.ndarray
     turbine: Turbine
 
-    def power(self):
+    def power(self) -> jnp.ndarray:
         """Calculates the power of each turbine for each wind condition."""
 
-        def power_per_case(wind_speed: jnp.ndarray):
+        def power_per_case(wind_speed: jnp.ndarray) -> jnp.ndarray:
             return jnp.interp(
                 wind_speed,
                 self.turbine.power_curve.wind_speed,
@@ -79,7 +80,7 @@ class SimulationResult:
 
         return jax.vmap(power_per_case)(self.effective_ws)
 
-    def aep(self, probabilities=None):
+    def aep(self, probabilities: jnp.ndarray | None = None) -> jnp.ndarray:
         """Calculates the Annual Energy Production (AEP) of a wind farm."""
         turbine_powers = self.power() * 1e3  # W
 
@@ -106,7 +107,13 @@ class WakeSimulation:
     over multiple wind conditions.
     """
 
-    def __init__(self, model, fpi_damp=0.5, fpi_tol=1e-6, mapping_strategy="vmap"):
+    def __init__(
+        self,
+        model: Any,
+        fpi_damp: float = 0.5,
+        fpi_tol: float = 1e-6,
+        mapping_strategy: str = "vmap",
+    ) -> None:
         """Initializes the WakeSimulation.
 
         Args:
@@ -121,13 +128,20 @@ class WakeSimulation:
         self.fpi_damp = fpi_damp
         self.fpi_tol = fpi_tol
 
-        self.__sim_call_table = {
+        self.__sim_call_table: dict[str, Callable] = {
             "vmap": self._simulate_vmap,
             "map": self._simulate_map,
             "_manual": self._simulate_manual,  # debug/profile purposes only
         }
 
-    def __call__(self, xs, ys, ws, wd, turbine):
+    def __call__(
+        self,
+        xs: jnp.ndarray,
+        ys: jnp.ndarray,
+        ws: jnp.ndarray,
+        wd: jnp.ndarray,
+        turbine: Turbine,
+    ) -> SimulationResult:
         """Runs the wake simulation.
         Args:
             xs: An array of x-coordinates for each turbine.
@@ -144,36 +158,63 @@ class WakeSimulation:
                 f"Valid options are: {self.__sim_call_table.keys()}"
             )
 
+        xs = jnp.asarray(xs)
+        ys = jnp.asarray(ys)
+        ws = jnp.asarray(ws)
+        wd = jnp.asarray(wd)
+
         sim_func = self.__sim_call_table[self.mapping_strategy]
-        eff_ws = sim_func(xs, ys, ws, wd, turbine)
-        return SimulationResult(effective_ws=eff_ws, turbine=turbine)
+        state = SimulationState(xs, ys, ws, wd, turbine)  # type: ignore
+        eff_ws = sim_func(state)
+        return SimulationResult(effective_ws=eff_ws, turbine=turbine)  # type: ignore
 
-    def _simulate_vmap(self, xs, ys, ws, wd, turbine):
+    def _simulate_vmap(
+        self,
+        state: SimulationState,
+    ) -> jnp.ndarray:
         """Simulates multiple wind conditions using jax.vmap."""
-        vmaped_simulate_all_cases = jax.vmap(
-            self._simulate_single_case, in_axes=(None, None, 0, 0, None)
-        )
-        return vmaped_simulate_all_cases(xs, ys, ws, wd, turbine)
 
-    def _simulate_map(self, xs, ys, ws, wd, turbine):
+        # vmap over wind conditions (ws, wd)
+        def _single_case(ws: jnp.ndarray, wd: jnp.ndarray) -> jnp.ndarray:
+            return self._simulate_single_case(
+                SimulationState(state.xs, state.ys, ws, wd, state.turbine)
+            )
+
+        return jax.vmap(_single_case)(state.ws, state.wd)
+
+    def _simulate_map(
+        self,
+        state: SimulationState,
+    ) -> jnp.ndarray:
         """Simulates multiple wind conditions using jax.lax.map."""
-        return jax.lax.map(
-            lambda case: self._simulate_single_case(xs, ys, case[0], case[1], turbine),
-            (ws, wd),
-        )
 
-    def _simulate_manual(self, xs, ys, ws, wd, turbine):
+        def _single_case(case: tuple[jnp.ndarray, jnp.ndarray]) -> jnp.ndarray:
+            ws, wd = case
+            return self._simulate_single_case(
+                SimulationState(state.xs, state.ys, ws, wd, state.turbine)
+            )
+
+        return jax.lax.map(_single_case, (state.ws, state.wd))
+
+    def _simulate_manual(
+        self,
+        state: SimulationState,
+    ) -> jnp.ndarray:
         """Simulates multiple wind conditions using a manual loop (for debugging)."""
         return jnp.array(
             [
-                self._simulate_single_case(xs, ys, _ws, _wd, turbine)
-                for _ws, _wd in zip(ws, wd)
+                self._simulate_single_case(
+                    SimulationState(state.xs, state.ys, _ws, _wd, state.turbine)
+                )
+                for _ws, _wd in zip(state.ws, state.wd)
             ]
         )
 
-    def _simulate_single_case(self, xs, ys, ws, wd, turbine):
+    def _simulate_single_case(
+        self,
+        state: SimulationState,
+    ) -> jnp.ndarray:
         """Simulates a single wind condition."""
-        state = SimulationState(xs, ys, ws, wd, turbine)
         x0 = jnp.full_like(state.xs, state.ws)
         return fixed_point(self.model, x0, state, damp=self.fpi_damp, tol=self.fpi_tol)
 
@@ -183,7 +224,13 @@ class WakeSimulation:
     nondiff_argnums=(0,),
     nondiff_argnames=["tol", "damp"],
 )
-def fixed_point(f, x_guess, state, tol=1e-6, damp=0.5):
+def fixed_point(
+    f: Callable,
+    x_guess: jnp.ndarray,
+    state: SimulationState,
+    tol: float = 1e-6,
+    damp: float = 0.5,
+) -> jnp.ndarray:
     """Finds the fixed point of a function using iterative updates.
 
     This function is used to solve for the stable effective wind speeds in the
@@ -202,13 +249,13 @@ def fixed_point(f, x_guess, state, tol=1e-6, damp=0.5):
     """
     max_iter = max(20, len(jnp.atleast_1d(x_guess)))
 
-    def cond_fun(carry):
+    def cond_fun(carry: tuple) -> jnp.ndarray:
         x_prev, x, it = carry
         tol_cond = jnp.max(jnp.abs(x_prev - x)) > tol
         iter_cond = it < max_iter
         return jnp.logical_and(tol_cond, iter_cond)
 
-    def body_fun(carry):
+    def body_fun(carry: tuple) -> tuple:
         _, x, it = carry
         x_new = f(x, state)
         x_damped = damp * x_new + (1 - damp) * x
@@ -219,12 +266,20 @@ def fixed_point(f, x_guess, state, tol=1e-6, damp=0.5):
     return x_star
 
 
-def fixed_point_fwd(f, x_guess, state, tol, damp):
+def fixed_point_fwd(
+    f: Callable,
+    x_guess: jnp.ndarray,
+    state: Any,
+    tol: float,
+    damp: float,
+) -> tuple[jnp.ndarray, tuple]:
     x_star = fixed_point(f, x_guess, state, tol=tol, damp=damp)
     return x_star, (state, x_star)
 
 
-def fixed_point_rev(f, tol, damp, res, x_star_bar):
+def fixed_point_rev(
+    f: Callable, tol: float, damp: float, res: tuple, x_star_bar: jnp.ndarray
+) -> tuple[jnp.ndarray, Any]:
     state, x_star = res
     # vjp wrt a at the fixed point
     _, vjp_a = vjp(lambda s: f(x_star, s), state)
