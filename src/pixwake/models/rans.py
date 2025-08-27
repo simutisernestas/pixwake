@@ -1,7 +1,3 @@
-# Using `from __future__ import annotations` allows for forward references in
-# type hints, which is useful for complex type dependencies and circular imports.
-from __future__ import annotations
-
 import os
 from typing import Any
 
@@ -9,23 +5,21 @@ import flax.linen as nn
 import jax
 import jax.numpy as jnp
 from flax import serialization
+from flax.struct import field
 
 from ..core import SimulationState
 from .base import WakeModel
 
 
-from flax.struct import field
-
-
 class WakeDeficitModelFlax(nn.Module):
     """A Flax module for the wake deficit model."""
 
-    scale_x: jnp.ndarray = field(
+    _scale_x: jnp.ndarray = field(
         default_factory=lambda: jnp.array(
             [21.21759238, 3.60546819, 0.31714823, 0.09218609, 18.70851079, 0.25810896]
         )
     )
-    mean_x: jnp.ndarray = field(
+    _mean_x: jnp.ndarray = field(
         default_factory=lambda: jnp.array(
             [
                 3.34995157e1,
@@ -37,30 +31,30 @@ class WakeDeficitModelFlax(nn.Module):
             ]
         )
     )
-    scale_y: jnp.ndarray = field(default_factory=lambda: jnp.array([0.02168894]))
-    mean_y: jnp.ndarray = field(default_factory=lambda: jnp.array([0.00614207]))
+    _scale_y: jnp.ndarray = field(default_factory=lambda: jnp.array([0.02168894]))
+    _mean_y: jnp.ndarray = field(default_factory=lambda: jnp.array([0.00614207]))
 
     @nn.compact
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
         """Applies the wake deficit model to the input."""
-        x = (x - self.mean_x) / self.scale_x
+        x = (x - self._mean_x) / self._scale_x
         x = nn.tanh(nn.Dense(70)(x))
         x = nn.sigmoid(nn.Dense(102)(x))
         x = nn.sigmoid(nn.Dense(102)(x))
         x = nn.sigmoid(nn.Dense(102)(x))
         x = nn.Dense(1)(x)
-        return (x * self.scale_y) + self.mean_y
+        return (x * self._scale_y) + self._mean_y
 
 
 class WakeAddedTIModelFlax(nn.Module):
     """A Flax module for the wake-added turbulence intensity model."""
 
-    scale_x: jnp.ndarray = field(
+    _scale_x: jnp.ndarray = field(
         default_factory=lambda: jnp.array(
             [21.21759238, 3.60546819, 0.31714823, 0.09218609, 18.70851079, 0.25810896]
         )
     )
-    mean_x: jnp.ndarray = field(
+    _mean_x: jnp.ndarray = field(
         default_factory=lambda: jnp.array(
             [
                 3.34995157e1,
@@ -72,24 +66,22 @@ class WakeAddedTIModelFlax(nn.Module):
             ]
         )
     )
-    scale_y: jnp.ndarray = field(default_factory=lambda: jnp.array([0.00571155]))
-    mean_y: jnp.ndarray = field(default_factory=lambda: jnp.array([0.0014295]))
+    _scale_y: jnp.ndarray = field(default_factory=lambda: jnp.array([0.00571155]))
+    _mean_y: jnp.ndarray = field(default_factory=lambda: jnp.array([0.0014295]))
 
     @nn.compact
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
         """Applies the wake-added TI model to the input."""
-        x = (x - self.mean_x) / self.scale_x
+        x = (x - self._mean_x) / self._scale_x
         x = nn.sigmoid(nn.Dense(118)(x))
         x = nn.sigmoid(nn.Dense(118)(x))
         x = nn.sigmoid(nn.Dense(118)(x))
         x = nn.sigmoid(nn.Dense(118)(x))
         x = nn.Dense(1)(x)
-        return (x * self.scale_y) + self.mean_y
+        return (x * self._scale_y) + self._mean_y
 
 
-def load_rans_models() -> (
-    tuple[WakeDeficitModelFlax, Any, WakeAddedTIModelFlax, Any]
-):
+def load_rans_models() -> tuple[nn.Module, Any, nn.Module, Any]:
     """Loads the pre-trained RANS surrogate models.
 
     Returns:
@@ -145,7 +137,7 @@ class RANSModel(WakeModel):
     def compute_deficit(
         self,
         ws_eff: jnp.ndarray,
-        state: "SimulationState",
+        state: SimulationState,
         use_effective: bool = True,
     ) -> jnp.ndarray:
         """Computes the wake deficit using the RANS surrogate model.
@@ -176,7 +168,9 @@ class RANSModel(WakeModel):
         mask_off_diag = ~jnp.eye(x_d.shape[0], dtype=bool)
         in_domain_mask = (x_d < 70) & (x_d > -3) & (jnp.abs(y_d) < 6) & mask_off_diag
 
-        def _predict(model: nn.Module, params: Any, ti: float) -> jnp.ndarray:
+        def _predict(
+            model: nn.Module, params: Any, ti: float | jnp.ndarray
+        ) -> jnp.ndarray:
             """A helper function to run predictions with the Flax models."""
             md_input = jnp.stack(
                 [
@@ -189,8 +183,8 @@ class RANSModel(WakeModel):
                 ],
                 axis=-1,
             ).reshape(-1, 6)
-            output = model.apply(params, md_input).reshape(x_d.shape)
-            return jnp.where(in_domain_mask, output, 0.0).sum(axis=1)
+            nn_out = jnp.array(model.apply(params, md_input)).reshape(x_d.shape)
+            return jnp.where(in_domain_mask, nn_out, 0.0).sum(axis=1)
 
         effective_ti = self.ambient_ti + _predict(
             self.turbulence_model, self.ti_weights, self.ambient_ti

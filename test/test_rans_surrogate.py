@@ -45,6 +45,7 @@ def test_rans_surrogate_aep():
 
     model = RANSModel(ambient_ti=0.1)
     sim = WakeSimulation(model, mapping_strategy="map", fpi_damp=0.8, fpi_tol=1e-3)
+
     def aep(xx, yy):
         return sim(xx, yy, WSS, WDS, turbine).aep()
 
@@ -88,6 +89,7 @@ def test_rans_surrogate_gradients():
 
     model = RANSModel(ambient_ti=0.1)
     simulation = WakeSimulation(model, fpi_damp=0.8, fpi_tol=1e-3)
+
     def sim(x, y):
         return simulation(
             x,

@@ -1,8 +1,5 @@
-# Using `from __future__ import annotations` allows for forward references in
-# type hints, which is useful for complex type dependencies and circular imports.
-from __future__ import annotations
-
 from abc import ABC
+
 import jax.numpy as jnp
 
 from ..core import SimulationState
@@ -15,9 +12,7 @@ class WakeModel(ABC):
         """Initializes the WakeModel."""
         pass
 
-    def __call__(
-        self, ws_eff: jnp.ndarray, state: "SimulationState"
-    ) -> jnp.ndarray:
+    def __call__(self, ws_eff: jnp.ndarray, state: SimulationState) -> jnp.ndarray:
         """A wrapper around the compute_deficit method.
 
         Args:
@@ -30,7 +25,7 @@ class WakeModel(ABC):
         return self.compute_deficit(ws_eff, state)
 
     def compute_deficit(
-        self, ws_eff: jnp.ndarray, state: "SimulationState"
+        self, ws_eff: jnp.ndarray, state: SimulationState
     ) -> jnp.ndarray:  # pragma: no cover
         """Computes the wake deficit.
 

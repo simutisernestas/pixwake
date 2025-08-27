@@ -1,7 +1,3 @@
-# Using `from __future__ import annotations` allows for forward references in
-# type hints, which is useful for complex type dependencies and circular imports.
-from __future__ import annotations
-
 from functools import partial
 from typing import Any, Callable
 
@@ -70,7 +66,7 @@ class SimulationResult:
     """
 
     effective_ws: jnp.ndarray
-    turbine: "Turbine"
+    turbine: Turbine
 
     def power(self) -> jnp.ndarray:
         """Calculates the power of each turbine for each wind condition."""
@@ -144,8 +140,8 @@ class WakeSimulation:
         ys: jnp.ndarray,
         ws: jnp.ndarray,
         wd: jnp.ndarray,
-        turbine: "Turbine",
-    ) -> "SimulationResult":
+        turbine: Turbine,
+    ) -> SimulationResult:
         """Runs the wake simulation.
         Args:
             xs: An array of x-coordinates for each turbine.
@@ -156,77 +152,69 @@ class WakeSimulation:
         Returns:
             A `SimulationResult` object containing relevant output information.
         """
-        xs = jnp.asarray(xs)
-        ys = jnp.asarray(ys)
-        ws = jnp.asarray(ws)
-        wd = jnp.asarray(wd)
-
         if self.mapping_strategy not in self.__sim_call_table.keys():
             raise ValueError(
                 f"Invalid mapping strategy: {self.mapping_strategy}. "
                 f"Valid options are: {self.__sim_call_table.keys()}"
             )
 
+        xs = jnp.asarray(xs)
+        ys = jnp.asarray(ys)
+        ws = jnp.asarray(ws)
+        wd = jnp.asarray(wd)
+
         sim_func = self.__sim_call_table[self.mapping_strategy]
-        eff_ws = sim_func(xs, ys, ws, wd, turbine)
-        # TODO: mypy does not support flax.struct.dataclass very well
+        state = SimulationState(xs, ys, ws, wd, turbine)  # type: ignore
+        eff_ws = sim_func(state)
         return SimulationResult(effective_ws=eff_ws, turbine=turbine)  # type: ignore
 
     def _simulate_vmap(
         self,
-        xs: jnp.ndarray,
-        ys: jnp.ndarray,
-        ws: jnp.ndarray,
-        wd: jnp.ndarray,
-        turbine: "Turbine",
+        state: SimulationState,
     ) -> jnp.ndarray:
         """Simulates multiple wind conditions using jax.vmap."""
-        vmaped_simulate_all_cases = jax.vmap(
-            self._simulate_single_case, in_axes=(None, None, 0, 0, None)
-        )
-        return vmaped_simulate_all_cases(xs, ys, ws, wd, turbine)
+
+        # vmap over wind conditions (ws, wd)
+        def _single_case(ws: jnp.ndarray, wd: jnp.ndarray) -> jnp.ndarray:
+            return self._simulate_single_case(
+                SimulationState(state.xs, state.ys, ws, wd, state.turbine)
+            )
+
+        return jax.vmap(_single_case)(state.ws, state.wd)
 
     def _simulate_map(
         self,
-        xs: jnp.ndarray,
-        ys: jnp.ndarray,
-        ws: jnp.ndarray,
-        wd: jnp.ndarray,
-        turbine: "Turbine",
+        state: SimulationState,
     ) -> jnp.ndarray:
         """Simulates multiple wind conditions using jax.lax.map."""
-        return jax.lax.map(
-            lambda case: self._simulate_single_case(xs, ys, case[0], case[1], turbine),
-            (ws, wd),
-        )
+
+        def _single_case(case: tuple[jnp.ndarray, jnp.ndarray]) -> jnp.ndarray:
+            ws, wd = case
+            return self._simulate_single_case(
+                SimulationState(state.xs, state.ys, ws, wd, state.turbine)
+            )
+
+        return jax.lax.map(_single_case, (state.ws, state.wd))
 
     def _simulate_manual(
         self,
-        xs: jnp.ndarray,
-        ys: jnp.ndarray,
-        ws: jnp.ndarray,
-        wd: jnp.ndarray,
-        turbine: "Turbine",
+        state: SimulationState,
     ) -> jnp.ndarray:
         """Simulates multiple wind conditions using a manual loop (for debugging)."""
         return jnp.array(
             [
-                self._simulate_single_case(xs, ys, _ws, _wd, turbine)
-                for _ws, _wd in zip(ws, wd)
+                self._simulate_single_case(
+                    SimulationState(state.xs, state.ys, _ws, _wd, state.turbine)
+                )
+                for _ws, _wd in zip(state.ws, state.wd)
             ]
         )
 
     def _simulate_single_case(
         self,
-        xs: jnp.ndarray,
-        ys: jnp.ndarray,
-        ws: jnp.ndarray,
-        wd: jnp.ndarray,
-        turbine: "Turbine",
+        state: SimulationState,
     ) -> jnp.ndarray:
         """Simulates a single wind condition."""
-        # TODO: mypy does not support flax.struct.dataclass very well
-        state = SimulationState(xs, ys, ws, wd, turbine)  # type: ignore
         x0 = jnp.full_like(state.xs, state.ws)
         return fixed_point(self.model, x0, state, damp=self.fpi_damp, tol=self.fpi_tol)
 
@@ -239,7 +227,7 @@ class WakeSimulation:
 def fixed_point(
     f: Callable,
     x_guess: jnp.ndarray,
-    state: "SimulationState",
+    state: SimulationState,
     tol: float = 1e-6,
     damp: float = 0.5,
 ) -> jnp.ndarray:
@@ -281,7 +269,7 @@ def fixed_point(
 def fixed_point_fwd(
     f: Callable,
     x_guess: jnp.ndarray,
-    state: "SimulationState",
+    state: Any,
     tol: float,
     damp: float,
 ) -> tuple[jnp.ndarray, tuple]:
