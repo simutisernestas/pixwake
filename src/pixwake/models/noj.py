@@ -1,5 +1,10 @@
+# Using `from __future__ import annotations` allows for forward references in
+# type hints, which is useful for complex type dependencies and circular imports.
+from __future__ import annotations
+
 import jax.numpy as jnp
 
+from ..core import SimulationState
 from ..utils import get_eps
 from .base import WakeModel
 
@@ -10,7 +15,7 @@ class NOJModel(WakeModel):
     This is a simple analytical model that assumes a linearly expanding wake.
     """
 
-    def __init__(self, k):
+    def __init__(self, k: float) -> None:
         """Initializes the NOJModel.
 
         Args:
@@ -19,7 +24,9 @@ class NOJModel(WakeModel):
         super().__init__()
         self.k = k
 
-    def compute_deficit(self, ws_eff, state):
+    def compute_deficit(
+        self, ws_eff: jnp.ndarray, state: "SimulationState"
+    ) -> jnp.ndarray:
         """Computes the wake deficit using the NOJ model.
 
         Args:

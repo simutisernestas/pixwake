@@ -1,16 +1,23 @@
-from abc import ABC
+# Using `from __future__ import annotations` allows for forward references in
+# type hints, which is useful for complex type dependencies and circular imports.
+from __future__ import annotations
 
+from abc import ABC
 import jax.numpy as jnp
+
+from ..core import SimulationState
 
 
 class WakeModel(ABC):
     """An abstract base class for wake models."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initializes the WakeModel."""
         pass
 
-    def __call__(self, ws_eff, state):
+    def __call__(
+        self, ws_eff: jnp.ndarray, state: "SimulationState"
+    ) -> jnp.ndarray:
         """A wrapper around the compute_deficit method.
 
         Args:
@@ -22,7 +29,9 @@ class WakeModel(ABC):
         """
         return self.compute_deficit(ws_eff, state)
 
-    def compute_deficit(self, ws_eff, state):  # pragma: no cover
+    def compute_deficit(
+        self, ws_eff: jnp.ndarray, state: "SimulationState"
+    ) -> jnp.ndarray:  # pragma: no cover
         """Computes the wake deficit.
 
         This method must be implemented by subclasses.
@@ -37,7 +46,9 @@ class WakeModel(ABC):
         _ = (ws_eff, state)
         raise NotImplementedError
 
-    def get_downwind_crosswind_distances(self, xs, ys, wd):
+    def get_downwind_crosswind_distances(
+        self, xs: jnp.ndarray, ys: jnp.ndarray, wd: jnp.ndarray
+    ) -> tuple[jnp.ndarray, jnp.ndarray]:
         """Calculates the downwind and crosswind distances between turbines.
 
         Args:

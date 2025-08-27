@@ -43,9 +43,9 @@ def test_rans_surrogate_aep():
         ct_curve=Curve(wind_speed=ct_xp, values=ct_fp),
     )
 
+    model = RANSModel(ambient_ti=0.1)
+    sim = WakeSimulation(model, mapping_strategy="map", fpi_damp=0.8, fpi_tol=1e-3)
     def aep(xx, yy):
-        model = RANSModel(ambient_ti=0.1)
-        sim = WakeSimulation(model, mapping_strategy="map", fpi_damp=0.8, fpi_tol=1e-3)
         return sim(xx, yy, WSS, WDS, turbine).aep()
 
     aep_and_grad = jax.jit(jax.value_and_grad(aep, argnums=(0, 1)))
@@ -86,9 +86,9 @@ def test_rans_surrogate_gradients():
         ct_curve=Curve(wind_speed=ct_xp, values=ct_fp),
     )
 
+    model = RANSModel(ambient_ti=0.1)
+    simulation = WakeSimulation(model, fpi_damp=0.8, fpi_tol=1e-3)
     def sim(x, y):
-        model = RANSModel(ambient_ti=0.1)
-        simulation = WakeSimulation(model, fpi_damp=0.8, fpi_tol=1e-3)
         return simulation(
             x,
             y,

@@ -1,76 +1,95 @@
-import os
+# Using `from __future__ import annotations` allows for forward references in
+# type hints, which is useful for complex type dependencies and circular imports.
+from __future__ import annotations
 
-import flax.linen as fnn
+import os
+from typing import Any
+
+import flax.linen as nn
 import jax
 import jax.numpy as jnp
 from flax import serialization
 
+from ..core import SimulationState
 from .base import WakeModel
 
 
-class WakeDeficitModelFlax(fnn.Module):
+from flax.struct import field
+
+
+class WakeDeficitModelFlax(nn.Module):
     """A Flax module for the wake deficit model."""
 
-    scale_x = jnp.array(
-        [21.21759238, 3.60546819, 0.31714823, 0.09218609, 18.70851079, 0.25810896]
+    scale_x: jnp.ndarray = field(
+        default_factory=lambda: jnp.array(
+            [21.21759238, 3.60546819, 0.31714823, 0.09218609, 18.70851079, 0.25810896]
+        )
     )
-    mean_x = jnp.array(
-        [
-            3.34995157e1,
-            3.63567130e-04,
-            2.25024289e-02,
-            1.43747711e-01,
-            -1.45229452e-03,
-            6.07149107e-01,
-        ]
+    mean_x: jnp.ndarray = field(
+        default_factory=lambda: jnp.array(
+            [
+                3.34995157e1,
+                3.63567130e-04,
+                2.25024289e-02,
+                1.43747711e-01,
+                -1.45229452e-03,
+                6.07149107e-01,
+            ]
+        )
     )
-    scale_y = jnp.array([0.02168894])
-    mean_y = jnp.array([0.00614207])
+    scale_y: jnp.ndarray = field(default_factory=lambda: jnp.array([0.02168894]))
+    mean_y: jnp.ndarray = field(default_factory=lambda: jnp.array([0.00614207]))
 
-    @fnn.compact
-    def __call__(self, x):
+    @nn.compact
+    def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
         """Applies the wake deficit model to the input."""
         x = (x - self.mean_x) / self.scale_x
-        x = fnn.tanh(fnn.Dense(70)(x))
-        x = fnn.sigmoid(fnn.Dense(102)(x))
-        x = fnn.sigmoid(fnn.Dense(102)(x))
-        x = fnn.sigmoid(fnn.Dense(102)(x))
-        x = fnn.Dense(1)(x)
+        x = nn.tanh(nn.Dense(70)(x))
+        x = nn.sigmoid(nn.Dense(102)(x))
+        x = nn.sigmoid(nn.Dense(102)(x))
+        x = nn.sigmoid(nn.Dense(102)(x))
+        x = nn.Dense(1)(x)
         return (x * self.scale_y) + self.mean_y
 
 
-class WakeAddedTIModelFlax(fnn.Module):
+class WakeAddedTIModelFlax(nn.Module):
     """A Flax module for the wake-added turbulence intensity model."""
 
-    scale_x = jnp.array(
-        [21.21759238, 3.60546819, 0.31714823, 0.09218609, 18.70851079, 0.25810896]
+    scale_x: jnp.ndarray = field(
+        default_factory=lambda: jnp.array(
+            [21.21759238, 3.60546819, 0.31714823, 0.09218609, 18.70851079, 0.25810896]
+        )
     )
-    mean_x = jnp.array(
-        [
-            3.34995157e1,
-            3.63567130e-04,
-            2.25024289e-02,
-            1.43747711e-01,
-            -1.45229452e-03,
-            6.07149107e-01,
-        ]
+    mean_x: jnp.ndarray = field(
+        default_factory=lambda: jnp.array(
+            [
+                3.34995157e1,
+                3.63567130e-04,
+                2.25024289e-02,
+                1.43747711e-01,
+                -1.45229452e-03,
+                6.07149107e-01,
+            ]
+        )
     )
-    scale_y = jnp.array([0.00571155])
-    mean_y = jnp.array([0.0014295])
+    scale_y: jnp.ndarray = field(default_factory=lambda: jnp.array([0.00571155]))
+    mean_y: jnp.ndarray = field(default_factory=lambda: jnp.array([0.0014295]))
 
-    @fnn.compact
-    def __call__(self, x):
+    @nn.compact
+    def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
         """Applies the wake-added TI model to the input."""
         x = (x - self.mean_x) / self.scale_x
-        x = fnn.sigmoid(fnn.Dense(118)(x))
-        x = fnn.sigmoid(fnn.Dense(118)(x))
-        x = fnn.sigmoid(fnn.Dense(118)(x))
-        x = fnn.sigmoid(fnn.Dense(118)(x))
-        x = fnn.Dense(1)(x)
+        x = nn.sigmoid(nn.Dense(118)(x))
+        x = nn.sigmoid(nn.Dense(118)(x))
+        x = nn.sigmoid(nn.Dense(118)(x))
+        x = nn.sigmoid(nn.Dense(118)(x))
+        x = nn.Dense(1)(x)
         return (x * self.scale_y) + self.mean_y
 
 
-def load_rans_models():
+def load_rans_models() -> (
+    tuple[WakeDeficitModelFlax, Any, WakeAddedTIModelFlax, Any]
+):
     """Loads the pre-trained RANS surrogate models.
 
     Returns:
@@ -78,7 +97,9 @@ def load_rans_models():
         model, and turbulence weights.
     """
 
-    def _load_model(model_class, filename):
+    def _load_model(
+        model_class: type[nn.Module], filename: str
+    ) -> tuple[nn.Module, Any]:
         """Loads a single Flax model from a file."""
         model = model_class()
         variables = model.init(jax.random.PRNGKey(0), jnp.ones((1, 6)))
@@ -106,7 +127,7 @@ class RANSModel(WakeModel):
     CFD simulations.
     """
 
-    def __init__(self, ambient_ti):
+    def __init__(self, ambient_ti: float) -> None:
         """Initializes the RANSModel.
 
         Args:
@@ -121,7 +142,12 @@ class RANSModel(WakeModel):
             self.ti_weights,
         ) = load_rans_models()
 
-    def compute_deficit(self, ws_eff, state, use_effective=True):
+    def compute_deficit(
+        self,
+        ws_eff: jnp.ndarray,
+        state: "SimulationState",
+        use_effective: bool = True,
+    ) -> jnp.ndarray:
         """Computes the wake deficit using the RANS surrogate model.
 
         This method calculates the velocity deficit and added turbulence
@@ -150,7 +176,7 @@ class RANSModel(WakeModel):
         mask_off_diag = ~jnp.eye(x_d.shape[0], dtype=bool)
         in_domain_mask = (x_d < 70) & (x_d > -3) & (jnp.abs(y_d) < 6) & mask_off_diag
 
-        def _predict(model, params, ti):
+        def _predict(model: nn.Module, params: Any, ti: float) -> jnp.ndarray:
             """A helper function to run predictions with the Flax models."""
             md_input = jnp.stack(
                 [

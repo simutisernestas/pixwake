@@ -3,7 +3,7 @@ import jax.numpy as jnp
 from jax import config as jcfg
 
 
-def get_eps():
+def get_eps() -> float:
     """Returns the machine epsilon for the current JAX float precision."""
     return (
         jax.numpy.finfo(jnp.float64).eps
