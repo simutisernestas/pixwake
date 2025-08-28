@@ -25,6 +25,7 @@ python = "<3.13"
 pytest = "*"
 py-wake = ">=2.6.12,<3"
 mypy = ">=1.17.1,<2"
+psutil = ">=7.0.0,<8"
 
 [tool.pixi.feature.test.pypi-dependencies]
 tensorboard = "*"

@@ -1,10 +1,12 @@
-import numpy as np
 import multiprocessing
 import time
+from multiprocessing import Pipe, Process
 
 import jax
-import pandas as pd
 import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import psutil
 from jax import config as jcfg
 from py_wake.deficit_models.noj import NOJDeficit
 from py_wake.site import UniformSite
@@ -15,6 +17,36 @@ from py_wake.wind_turbines.power_ct_functions import PowerCtTabular
 from pixwake import Curve, NOJModel, Turbine, WakeSimulation
 
 jcfg.update("jax_enable_x64", True)  # need float64 to match pywake
+
+
+def monitor_memory(pid, conn, interval=0.1):
+    p = psutil.Process(pid)
+    max_memory = 0
+    running = True
+    while running:
+        if conn.poll():
+            cmd = conn.recv()
+            if cmd == "get_max":
+                conn.send(max_memory / (1024**2))  # Convert bytes to MB
+            elif cmd == "reset":
+                max_memory = 0
+                conn.send("reset_done")
+            elif cmd == "stop":
+                running = False
+                conn.send("stopped")
+                break
+        try:
+            mem = p.memory_info().rss
+            # Add memory of all children processes
+            for child in p.children(recursive=True):
+                mem += child.memory_info().rss
+            if mem > max_memory:
+                max_memory = mem
+        except psutil.NoSuchProcess:
+            running = False
+            break
+        time.sleep(interval)
+    conn.close()
 
 
 def generate_turbine_layout(n_turbines, spacing_D, rotor_diameter=120.0):
@@ -76,6 +108,12 @@ def get_pywake_n_cpu(n_turbines, max_cpu=32):
 
 def run_benchmark(n_turbines_list, spacings_list):
     """Runs the full performance benchmark."""
+
+    parent_pid = psutil.Process().pid
+    parent_conn, child_conn = Pipe()
+    monitor_proc = Process(target=monitor_memory, args=(parent_pid, child_conn, 0.01))
+    monitor_proc.start()
+
     # fmt: off
     ct_vals = np.array([0.80, 0.79, 0.77, 0.75, 0.72, 0.68, 0.64, 0.62, 0.61, 
                        0.60, 0.55, 0.50, 0.45, 0.40, 0.35, 0.30, 0.25, 0.20, 
@@ -126,6 +164,12 @@ def run_benchmark(n_turbines_list, spacings_list):
             n_cpu = get_pywake_n_cpu(n_turbines_actual)
 
             ws_ts, wd_ts = generate_time_series_wind_data()
+
+            parent_conn.send("reset")
+            _ = parent_conn.recv()
+            parent_conn.send("get_max")
+            max_mem_before = parent_conn.recv()
+
             start = time.time()
             pywake_wfm(x=x, y=y, wd=wd_ts, ws=ws_ts, n_cpu=n_cpu, time=True).aep().sum()
             pywake_aep_time_ts = time.time() - start
@@ -135,6 +179,10 @@ def run_benchmark(n_turbines_list, spacings_list):
             )
             pywake_grad_time_ts = time.time() - start
 
+            parent_conn.send("get_max")
+            max_mem_after = parent_conn.recv()
+            memory_usage_pywake_sim = max_mem_after - max_mem_before
+
             @jax.jit
             def pixwake_aep_ts(xx, yy):
                 return pixwake_sim(xx, yy, ws_ts, wd_ts, pixwake_turbine).aep()
@@ -142,6 +190,12 @@ def run_benchmark(n_turbines_list, spacings_list):
             grad_fn_ts = jax.jit(jax.value_and_grad(pixwake_aep_ts, argnums=(0, 1)))
             _ = pixwake_aep_ts(x, y).block_until_ready()
             _, _ = grad_fn_ts(x, y)
+
+            parent_conn.send("reset")
+            _ = parent_conn.recv()
+            parent_conn.send("get_max")
+            max_mem_before = parent_conn.recv()
+
             start = time.time()
             _ = pixwake_aep_ts(x, y).block_until_ready()
             pixwake_aep_time_ts = time.time() - start
@@ -150,6 +204,10 @@ def run_benchmark(n_turbines_list, spacings_list):
             px_dx.block_until_ready()
             px_dy.block_until_ready()
             pixwake_grad_time_ts = time.time() - start
+
+            parent_conn.send("get_max")
+            max_mem_after = parent_conn.recv()
+            memory_usage_pixwake_sim = max_mem_after - max_mem_before
 
             # ws_wr, wd_wr, probs_wr = generate_wind_rose_data()
             # start = time.time()
@@ -193,14 +251,20 @@ def run_benchmark(n_turbines_list, spacings_list):
                     "pixwake_aep_time_wr": pixwake_aep_time_ts,
                     "pywake_grad_time_wr": pywake_grad_time_ts,
                     "pixwake_grad_time_wr": pixwake_grad_time_ts,
+                    "memory_usage_pywake_sim": memory_usage_pywake_sim,
+                    "memory_usage_pixwake_sim": memory_usage_pixwake_sim,
                 }
             )
             print(
-                f"    PixWake Time-series (AEP/Grad): {pixwake_aep_time_ts:.4f}s / {pixwake_grad_time_ts:.4f}s"
+                f"    PixWake Time-series (AEP/Grad): {pixwake_aep_time_ts:.4f}s / {pixwake_grad_time_ts:.4f}s | MMem: {memory_usage_pixwake_sim:.2f}MB"
             )
             print(
-                f"    PyWake Time-series (AEP/Grad): {pywake_aep_time_ts:.4f}s / {pywake_grad_time_ts:.4f}s"
+                f"    PyWake Time-series (AEP/Grad): {pywake_aep_time_ts:.4f}s / {pywake_grad_time_ts:.4f}s | MMem: {memory_usage_pywake_sim:.2f}MB"
             )
+
+    parent_conn.send("stop")
+    _ = parent_conn.recv()
+    monitor_proc.join()
 
     return results
 
@@ -223,9 +287,9 @@ def plot_results(results):
         "AEP_Time-Series": ("pywake_aep_time_ts", "pixwake_aep_time_ts"),
         "Gradient_Time-Series": ("pywake_grad_time_ts", "pixwake_grad_time_ts"),
         "Total_Time-Series": ("pywake_total_time_ts", "pixwake_total_time_ts"),
-        "AEP_Wind-Rose": ("pywake_aep_time_wr", "pixwake_aep_time_wr"),
-        "Gradient_Wind-Rose": ("pywake_grad_time_wr", "pixwake_grad_time_wr"),
-        "Total_Wind-Rose": ("pywake_total_time_wr", "pixwake_total_time_wr"),
+        # "AEP_Wind-Rose": ("pywake_aep_time_wr", "pixwake_aep_time_wr"),
+        # "Gradient_Wind-Rose": ("pywake_grad_time_wr", "pixwake_grad_time_wr"),
+        # "Total_Wind-Rose": ("pywake_total_time_wr", "pixwake_total_time_wr"),
     }
 
     for name, (pywake_col, pixwake_col) in plot_configs.items():
@@ -255,14 +319,41 @@ def plot_results(results):
         print(f"Saved plot: {filename}")
         plt.close()
 
+    # Plot memory usage
+    plt.figure(figsize=(10, 6))
+    for spacing in spacings:
+        df_spacing = df[df["spacing"] == spacing].sort_values("n_turbines")
+        plt.plot(
+            df_spacing["n_turbines"],
+            df_spacing["memory_usage_pywake_sim"],
+            "o-",
+            label=f"PyWake {spacing}D",
+        )
+        plt.plot(
+            df_spacing["n_turbines"],
+            df_spacing["memory_usage_pixwake_sim"],
+            "o-",
+            label=f"PixWake {spacing}D",
+        )
+    plt.xlabel("Number of Turbines")
+    plt.ylabel("Memory Usage (MB)")
+    plt.title("Memory Usage Comparison (All Spacings)")
+    plt.legend()
+    plt.grid(True, which="both", ls="--")
+    plt.yscale("log")
+    filename = "figures/benchmark_memory_usage_all_spacings.png"
+    plt.savefig(filename, dpi=300)
+    print(f"Saved plot: {filename}")
+    plt.close()
+
 
 if __name__ == "__main__":
     multiprocessing.set_start_method("spawn", force=True)
-    N_TURBINES_LIST = [50, 100, 250, 500]
+    N_TURBINES_LIST = [2**x for x in range(5, 10)]
     SPACINGS_LIST = [3, 5, 7]
 
     # For testing, run a smaller set
-    # N_TURBINES_LIST = [49, 100]
+    # N_TURBINES_LIST = [32, 49]
     # SPACINGS_LIST = [3, 5]
 
     benchmark_results = run_benchmark(N_TURBINES_LIST, SPACINGS_LIST)

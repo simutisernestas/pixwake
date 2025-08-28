@@ -6693,7 +6693,7 @@ packages:
 - pypi: ./
   name: pixwake
   version: 0.1.0
-  sha256: a31175063275020e0660755a00b20371802714f60006b50d099ba2ee8b9921dc
+  sha256: 5ed36d623173817039e8d9d1a636ad0151a0dc4f90f64e0690c23b15185c6cb4
   requires_dist:
   - jax
   - flax
