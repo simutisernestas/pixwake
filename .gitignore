@@ -1,6 +1,9 @@
 .pixi
 **/__pycache__
-.pytest_cache
-.vscode
+.pytest_cache/
+.ruff_cache/
+.vscode/
 sandbox/
-.mypy_cache
+.mypy_cache/
+logs/
+figures/
