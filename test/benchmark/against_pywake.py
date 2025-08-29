@@ -20,58 +20,26 @@ from pixwake import Curve, NOJModel, Turbine, WakeSimulation
 jcfg.update("jax_enable_x64", True)  # need float64 to match pywake
 
 
-def monitor_memory(pid, conn, interval=0.1):
-    p = psutil.Process(pid)
-    max_memory = 0
-    running = True
-    while running:
-        try:
-            if conn.poll():
-                cmd = conn.recv()
-                if cmd == "get_max":
-                    conn.send(max_memory / (1024**2))  # Convert bytes to MB
-                elif cmd == "reset":
-                    max_memory = 0
-                    conn.send("reset_done")
-                elif cmd == "stop":
-                    running = False
-                    conn.send("stopped")
-                    break
-        except:
-            running = False
-            break
-
-        try:
-            mem = p.memory_info().rss
-            # Add memory of all children processes
-            for child in p.children(recursive=True):
-                mem += child.memory_info().rss
-            if mem > max_memory:
-                max_memory = mem
-        except psutil.NoSuchProcess:
-            print("No such process!!!")
-            running = False
-            break
-        time.sleep(interval)
-    conn.close()
-
-
 def generate_turbine_layout(n_turbines, spacing_D, rotor_diameter=120.0):
     """
-    Generates a square grid of turbines.
+    Generates a rectangular grid of turbines.
     """
-    n_side = int(np.sqrt(n_turbines))
-    if n_side**2 != n_turbines:
-        print(
-            f"Warning: The requested number of turbines ({n_turbines}) is not a"
-            f" perfect square. Using the largest possible square grid with "
-            f"{n_side**2} turbines."
-        )
+
+    def _closest_factors(n):
+        factors = []
+        for i in range(1, int(np.sqrt(n)) + 1):
+            if n % i == 0:
+                factors.append((i, n // i))
+        factors.sort(key=lambda x: x[0] + x[1])
+        return factors[0]
+
+    fx, fy = _closest_factors(n_turbines)
+    assert fx * fy == n_turbines
 
     spacing_m = spacing_D * rotor_diameter
     x, y = np.meshgrid(
-        np.arange(n_side) * spacing_m,
-        np.arange(n_side) * spacing_m,
+        np.arange(fx) * spacing_m,
+        np.arange(fy) * spacing_m,
     )
     return x.flatten(), y.flatten()
 
@@ -113,6 +81,43 @@ def get_pywake_n_cpu(n_turbines, max_cpu=32):
     return max(4, min(max_cpu, int(np.round(n_cpu))))
 
 
+def monitor_memory(pid, conn, interval=0.1):
+    p = psutil.Process(pid)
+    max_memory = 0
+    running = True
+    while running:
+        try:
+            if conn.poll():
+                cmd = conn.recv()
+                if cmd == "get_max":
+                    conn.send(max_memory / (1024**2))  # Convert bytes to MB
+                elif cmd == "reset":
+                    max_memory = 0
+                    conn.send("reset_done")
+                elif cmd == "stop":
+                    running = False
+                    conn.send("stopped")
+                    break
+        except:
+            running = False
+            break
+
+        mem = p.memory_info().rss
+        # Add memory of all children processes
+        for child in p.children(recursive=True):
+            try:
+                mem += child.memory_info().rss
+            except psutil.NoSuchProcess:
+                print("No such process : ) !!!")
+                continue
+
+        if mem > max_memory:
+            max_memory = mem
+
+        time.sleep(interval)
+    conn.close()
+
+
 def run_benchmark(n_turbines_list, spacings_list):
     """Runs the full performance benchmark."""
 
@@ -122,21 +127,33 @@ def run_benchmark(n_turbines_list, spacings_list):
         parent_conn, child_conn = Pipe()
         proc = Process(target=monitor_memory, args=(parent_pid, child_conn, 0.01))
         proc.start()
-        time.sleep(0.3)  # Give monitor time to start
+        time.sleep(1.0)  # Give monitor time to start
         return parent_conn, proc
 
     parent_conn, monitor_proc = start_monitor()
 
-    def safe_send_recv(cmd, timeout=5, attempts=3):
+    def terminate_monitor():
+        nonlocal parent_conn, monitor_proc
+        try:
+            parent_conn.close()
+        except Exception:
+            pass
+        monitor_proc.join(timeout=2)
+        if monitor_proc.is_alive():
+            print("[WARN] Monitor process did not terminate, terminating forcefully.")
+            monitor_proc.terminate()
+        try:
+            parent_conn.close()
+        except Exception:
+            pass
+        time.sleep(1.0)
+
+    def safe_send_recv(cmd, timeout=5, attempts=5):
         nonlocal parent_conn, monitor_proc
         for _ in range(attempts):
             try:
                 if not monitor_proc.is_alive():
-                    print("[WARN] Memory monitor died. Restarting...")
-                    try:
-                        parent_conn.close()
-                    except Exception:
-                        pass
+                    terminate_monitor()
                     parent_conn, monitor_proc = start_monitor()
 
                 parent_conn.send(cmd)
