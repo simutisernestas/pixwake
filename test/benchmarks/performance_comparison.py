@@ -1,4 +1,5 @@
 import multiprocessing
+import os
 import time
 from multiprocessing import Pipe, Process
 
@@ -24,17 +25,22 @@ def monitor_memory(pid, conn, interval=0.1):
     max_memory = 0
     running = True
     while running:
-        if conn.poll():
-            cmd = conn.recv()
-            if cmd == "get_max":
-                conn.send(max_memory / (1024**2))  # Convert bytes to MB
-            elif cmd == "reset":
-                max_memory = 0
-                conn.send("reset_done")
-            elif cmd == "stop":
-                running = False
-                conn.send("stopped")
-                break
+        try:
+            if conn.poll():
+                cmd = conn.recv()
+                if cmd == "get_max":
+                    conn.send(max_memory / (1024**2))  # Convert bytes to MB
+                elif cmd == "reset":
+                    max_memory = 0
+                    conn.send("reset_done")
+                elif cmd == "stop":
+                    running = False
+                    conn.send("stopped")
+                    break
+        except:
+            running = False
+            break
+
         try:
             mem = p.memory_info().rss
             # Add memory of all children processes
@@ -43,6 +49,7 @@ def monitor_memory(pid, conn, interval=0.1):
             if mem > max_memory:
                 max_memory = mem
         except psutil.NoSuchProcess:
+            print("No such process!!!")
             running = False
             break
         time.sleep(interval)
@@ -99,7 +106,7 @@ def generate_wind_rose_data(
 def get_pywake_n_cpu(n_turbines, max_cpu=32):
     """Scales the number of CPUs for PyWake based on the number of turbines."""
     n_cpu_at_50 = 4
-    max_out_at = 400
+    max_out_at = 200
     n_cpu = n_cpu_at_50 + (max_cpu - n_cpu_at_50) * (n_turbines - 50) / (
         max_out_at - 50
     )
@@ -110,9 +117,44 @@ def run_benchmark(n_turbines_list, spacings_list):
     """Runs the full performance benchmark."""
 
     parent_pid = psutil.Process().pid
-    parent_conn, child_conn = Pipe()
-    monitor_proc = Process(target=monitor_memory, args=(parent_pid, child_conn, 0.01))
-    monitor_proc.start()
+
+    def start_monitor():
+        parent_conn, child_conn = Pipe()
+        proc = Process(target=monitor_memory, args=(parent_pid, child_conn, 0.01))
+        proc.start()
+        time.sleep(0.3)  # Give monitor time to start
+        return parent_conn, proc
+
+    parent_conn, monitor_proc = start_monitor()
+
+    def safe_send_recv(cmd, timeout=5, attempts=3):
+        nonlocal parent_conn, monitor_proc
+        for _ in range(attempts):
+            try:
+                if not monitor_proc.is_alive():
+                    print("[WARN] Memory monitor died. Restarting...")
+                    try:
+                        parent_conn.close()
+                    except Exception:
+                        pass
+                    parent_conn, monitor_proc = start_monitor()
+
+                parent_conn.send(cmd)
+                if parent_conn.poll(timeout):
+                    return parent_conn.recv()
+
+                raise TimeoutError(f"Timeout waiting for monitor response to '{cmd}'")
+            except (EOFError, BrokenPipeError, TimeoutError) as e:
+                print(f"[ERROR] Monitor communication failed: {e}. Restarting monitor.")
+                try:
+                    parent_conn.close()
+                except Exception:
+                    pass
+                parent_conn, monitor_proc = start_monitor()
+
+        raise RuntimeError(
+            f"Failed to communicate with monitor after restart for '{cmd}'"
+        )
 
     # fmt: off
     ct_vals = np.array([0.80, 0.79, 0.77, 0.75, 0.72, 0.68, 0.64, 0.62, 0.61, 
@@ -165,10 +207,8 @@ def run_benchmark(n_turbines_list, spacings_list):
 
             ws_ts, wd_ts = generate_time_series_wind_data()
 
-            parent_conn.send("reset")
-            _ = parent_conn.recv()
-            parent_conn.send("get_max")
-            max_mem_before = parent_conn.recv()
+            safe_send_recv("reset")
+            max_mem_before = safe_send_recv("get_max")
 
             start = time.time()
             pywake_wfm(x=x, y=y, wd=wd_ts, ws=ws_ts, n_cpu=n_cpu, time=True).aep().sum()
@@ -179,8 +219,7 @@ def run_benchmark(n_turbines_list, spacings_list):
             )
             pywake_grad_time_ts = time.time() - start
 
-            parent_conn.send("get_max")
-            max_mem_after = parent_conn.recv()
+            max_mem_after = safe_send_recv("get_max")
             memory_usage_pywake_sim = max_mem_after - max_mem_before
 
             @jax.jit
@@ -191,10 +230,8 @@ def run_benchmark(n_turbines_list, spacings_list):
             _ = pixwake_aep_ts(x, y).block_until_ready()
             _, _ = grad_fn_ts(x, y)
 
-            parent_conn.send("reset")
-            _ = parent_conn.recv()
-            parent_conn.send("get_max")
-            max_mem_before = parent_conn.recv()
+            safe_send_recv("reset")
+            max_mem_before = safe_send_recv("get_max")
 
             start = time.time()
             _ = pixwake_aep_ts(x, y).block_until_ready()
@@ -205,8 +242,7 @@ def run_benchmark(n_turbines_list, spacings_list):
             px_dy.block_until_ready()
             pixwake_grad_time_ts = time.time() - start
 
-            parent_conn.send("get_max")
-            max_mem_after = parent_conn.recv()
+            max_mem_after = safe_send_recv("get_max")
             memory_usage_pixwake_sim = max_mem_after - max_mem_before
 
             # ws_wr, wd_wr, probs_wr = generate_wind_rose_data()
@@ -262,9 +298,15 @@ def run_benchmark(n_turbines_list, spacings_list):
                 f"    PyWake Time-series (AEP/Grad): {pywake_aep_time_ts:.4f}s / {pywake_grad_time_ts:.4f}s | MMem: {memory_usage_pywake_sim:.2f}MB"
             )
 
-    parent_conn.send("stop")
-    _ = parent_conn.recv()
-    monitor_proc.join()
+    try:
+        safe_send_recv("stop")
+    except Exception as e:
+        print(f"[WARN] Could not stop monitor cleanly: {e}")
+    monitor_proc.join(timeout=2)
+    if monitor_proc.is_alive():
+        print("[WARN] Monitor process did not terminate, terminating forcefully.")
+        monitor_proc.terminate()
+    parent_conn.close()
 
     return results
 
@@ -348,8 +390,10 @@ def plot_results(results):
 
 
 if __name__ == "__main__":
+    os.makedirs("figures", exist_ok=True)
+
     multiprocessing.set_start_method("spawn", force=True)
-    N_TURBINES_LIST = [2**x for x in range(5, 10)]
+    N_TURBINES_LIST = [2**x for x in range(5, 9)]
     SPACINGS_LIST = [3, 5, 7]
 
     # For testing, run a smaller set
