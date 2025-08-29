@@ -29,69 +29,38 @@ The test suite includes:
 - Tests for the AEP and power calculation functions.
 - Tests for equivalence with PyWake.
 
+## mypy
+
+Package must comply with `mypy` type checking:
+
+```bash
+pip install mypy
+mypy src/
+```
+
+## Formatting
+
+Formatting is enforced with `pre-commit`
+
+```bash
+pip install pre-commit
+pre-commit run --all-files
+```
+
 ## Usage
 
-The main entry point for running a wake simulation is the `WakeSimulation` class. This class takes a wake model as input and provides a common interface for running simulations.
+The main entry point for running a wake simulation is the `WakeSimulation` class. This class takes a wake model as input and provides a common interface for running winf farm wake simulations.
 
 The general workflow is as follows:
 1. Define the turbine characteristics using the `Turbine` and `Curve` classes.
-2. Select a wake model, such as `NOJModel` or `RANSModel`.
+2. Select a wake model, such as `NOJModel` or `RANSModel`, etc.
 3. Instantiate the `WakeSimulation` class with the chosen model.
 4. Call the simulation with the turbine layout, wind conditions, and turbine definition.
-5. Calculate the power and AEP using the `calculate_power` and `calculate_aep` functions.
+5. Calculate the power and AEP using the `power` and `aep` functions on simulation result object.
 
-### Example
+### Examples
 
-Here is a complete example of how to run a simulation with the NOJ model and calculate the AEP:
+For examples look into the `test/` directory for package usage examples.
 
-```python
-import jax.numpy as jnp
-from pixwake import (
-    NOJModel,
-    RANSModel,
-    WakeSimulation,
-    Turbine,
-    Curve,
-    calculate_aep,
-    calculate_power,
-)
 
-# 1. Define turbine characteristics
-power_curve = Curve(
-    wind_speed=jnp.array([4.0, 10.0, 25.0]),
-    values=jnp.array([0.0, 2000.0, 2000.0]),
-)
-ct_curve = Curve(
-    wind_speed=jnp.array([4.0, 10.0, 25.0]),
-    values=jnp.array([0.8, 0.8, 0.4]),
-)
-turbine = Turbine(
-    rotor_diameter=100.0,
-    hub_height=80.0,
-    power_curve=power_curve,
-    ct_curve=ct_curve,
-)
 
-# 2. Select a wake model
-# model = NOJModel(k=0.05)
-model = RANSModel(ambient_ti=0.1)
-
-# 3. Instantiate the simulation
-sim = WakeSimulation(model)
-
-# 4. Call the simulation
-xs = jnp.array([0.0, 500.0])
-ys = jnp.array([0.0, 0.0])
-ws = jnp.array([10.0, 12.0])
-wd = jnp.array([270.0, 270.0])
-
-effective_wind_speeds = sim(xs, ys, ws, wd, turbine)
-
-# 5. Calculate power and AEP
-power = calculate_power(effective_wind_speeds, turbine.power_curve)
-aep = calculate_aep(effective_wind_speeds, turbine.power_curve)
-
-print("Effective wind speeds:", effective_wind_speeds)
-print("Power:", power)
-print("AEP:", aep)
-```

@@ -28,7 +28,7 @@ The `pixwake` library is organized as follows:
     -   `base.py`: The abstract base class for all wake models.
     -   `noj.py`: The implementation of the NOJ model.
     -   `rans.py`: The implementation of the RANS surrogate model.
--   `test/`: Contains the unit tests for the library.
+-   `test/`: Contains the unit/integration tests for the library.
 
 ## Contributing
 
