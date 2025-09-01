@@ -95,4 +95,4 @@ class BastankhahGaussianDeficit(WakeModel):
         total_deficit = jnp.sqrt(jnp.sum(deficit_matrix**2, axis=0))
 
         # New effective wind speed
-        return jnp.maximum(0.0, state.ws * (1.0 - total_deficit))
+        return jnp.maximum(0.0, state.ws - total_deficit)
