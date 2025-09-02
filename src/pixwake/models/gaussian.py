@@ -1,3 +1,5 @@
+from typing import Callable
+
 import jax.numpy as jnp
 
 from ..core import SimulationState
@@ -5,7 +7,9 @@ from ..utils import get_eps
 from .base import WakeModel
 
 
-def ct2a_madsen(ct, ct2ap=jnp.array([0.2460, 0.0586, 0.0883])):
+def ct2a_madsen(
+    ct: jnp.ndarray, ct2ap: tuple = (0.2460, 0.0586, 0.0883)
+) -> jnp.ndarray:
     """
     BEM axial induction approximation by
     Madsen, H. A., Larsen, T. J., Pirrung, G. R., Li, A., and Zahle, F.: Implementation
@@ -32,7 +36,7 @@ class BastankhahGaussianDeficit(WakeModel):
         use_effective_ws: bool = False,
         ceps: float = 0.2,
         ctlim: float = 0.899,
-        ct2a=ct2a_madsen,
+        ct2a: Callable = ct2a_madsen,
     ) -> None:
         """Initializes the BastankhahGaussianDeficit model.
 
