@@ -434,11 +434,11 @@ def test_gaussian_aep_and_gradients_equivalence_timeseries():
     ct_curve = np.stack([ct_pw_ws, ct_vals], axis=1)
     power_curve = np.stack([ct_pw_ws, power_vals], axis=1)
 
-    width = 5
-    length = 5
+    width = 3
+    length = 3
     x, y = np.meshgrid(
-        np.linspace(0, width * 120 * 3, width),
-        np.linspace(0, length * 120 * 3, length),
+        np.linspace(0, width * 120, width),
+        np.linspace(0, length * 120, length),
     )
     x, y = x.flatten(), y.flatten()
     turbines = [
@@ -454,7 +454,7 @@ def test_gaussian_aep_and_gradients_equivalence_timeseries():
         for i in range(width * length)
     ]
 
-    wake_expansion_k = 0.075
+    wake_expansion_k = 0.0324555
 
     site = Hornsrev1Site()
 
@@ -489,17 +489,17 @@ def test_gaussian_aep_and_gradients_equivalence_timeseries():
         superpositionModel=SquaredSum(),
     )
 
-    n_timestamps = 1
+    n_timestamps = 10
     ws, wd = (
         np.random.uniform(cutin_ws, cutout_ws, size=n_timestamps),
         np.random.uniform(0, 360, size=n_timestamps),
     )
 
     sim_res = wfm(x=wt_x, y=wt_y, wd=wd, ws=ws, time=True)
-    pywake_ws_eff = sim_res.WS_eff.values
+    pywake_ws_eff = sim_res["WS_eff"].values
 
     model = BastankhahGaussianDeficit(k=wake_expansion_k)
-    sim = WakeSimulation(model, fpi_damp=1.0)
+    sim = WakeSimulation(model, fpi_damp=0.5)
     turbine = Turbine(
         rotor_diameter=windTurbines.diameter(),
         hub_height=100.0,
@@ -514,12 +514,34 @@ def test_gaussian_aep_and_gradients_equivalence_timeseries():
         turbine,
     )
 
-    rtol = 1e-2
+    rtol = 1e-2  # 1%
+    np.testing.assert_allclose(pixwake_sim_res.effective_ws.T, pywake_ws_eff, rtol=rtol)
 
-    # TODO: why do i need to reverse it ??
-    np.testing.assert_allclose(
-        np.array(list(reversed(pixwake_sim_res.effective_ws.flatten()))),
-        pywake_ws_eff.flatten(),
-        rtol=rtol,
+    pywake_aep = sim_res.aep().sum().values
+    pixwake_aep = pixwake_sim_res.aep()
+    np.testing.assert_allclose(pixwake_aep, pywake_aep, rtol=rtol)
+
+    # gradients
+    pw_dx, pw_dy = wfm.aep_gradients(x=wt_x, y=wt_y, wd=wd, ws=ws, time=True)
+    grad_fn = jax.jit(
+        jax.value_and_grad(
+            lambda xx, yy: sim(
+                xx,
+                yy,
+                jnp.array(ws),
+                jnp.array(wd),
+                turbine,
+            ).aep(),
+            argnums=(0, 1),
+        )
     )
-    # np.testing.assert_allclose(pixwake_sim_res.effective_ws.T, pywake_ws_eff, rtol=rtol)
+
+    val, (dx, dy) = grad_fn(jnp.asarray(wt_x), jnp.asarray(wt_y))
+
+    dx.block_until_ready()
+    dy.block_until_ready()
+    val.block_until_ready()
+    print(f"\n\n Max grad: {jnp.max(jnp.abs(dx))}, {jnp.max(jnp.abs(dy))}")
+
+    np.testing.assert_allclose(dx, pw_dx, rtol=rtol)
+    np.testing.assert_allclose(dy, pw_dy, rtol=rtol)
