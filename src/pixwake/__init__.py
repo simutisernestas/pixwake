@@ -4,6 +4,7 @@ from pathlib import Path
 from jax import config as jcfg
 
 from .core import Curve, Turbine, WakeSimulation
+from .models.gaussian import BastankhahGaussianDeficit
 from .models.noj import NOJModel
 from .models.rans import RANSModel
 
@@ -20,4 +21,5 @@ __all__ = [
     "Turbine",
     "NOJModel",
     "RANSModel",
+    "BastankhahGaussianDeficit",
 ]
