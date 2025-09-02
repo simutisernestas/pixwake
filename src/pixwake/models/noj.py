@@ -43,6 +43,7 @@ class NOJModel(WakeModel):
             ws_eff, state.turbine.ct_curve.wind_speed, state.turbine.ct_curve.values
         )
 
+        # TODO: should provide reference of this!!!
         # wake deficit formulation
         a_coef = ct * (0.2460 + ct * (0.0586 + ct * 0.0883))
         term = (

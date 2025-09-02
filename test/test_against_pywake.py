@@ -480,6 +480,7 @@ def test_gaussian_aep_and_gradients_equivalence_timeseries():
         hub_heights=hub_heights,
         powerCtFunctions=[wt_type_0_power_ct] * len(names),
     )
+    # TODO: test the wf_eff = True as well !!!
     wake_model = PyWakeBastankhahGaussianDeficit(k=wake_expansion_k)
 
     wfm = All2AllIterative(
@@ -489,7 +490,7 @@ def test_gaussian_aep_and_gradients_equivalence_timeseries():
         superpositionModel=SquaredSum(),
     )
 
-    n_timestamps = 10
+    n_timestamps = 1000
     ws, wd = (
         np.random.uniform(cutin_ws, cutout_ws, size=n_timestamps),
         np.random.uniform(0, 360, size=n_timestamps),
@@ -515,7 +516,17 @@ def test_gaussian_aep_and_gradients_equivalence_timeseries():
     )
 
     rtol = 1e-2  # 1%
-    np.testing.assert_allclose(pixwake_sim_res.effective_ws.T, pywake_ws_eff, rtol=rtol)
+    # find problematic effective wind speed and add it to error message
+    pywake_ws_eff = np.maximum(pywake_ws_eff, 1e-6)  # pixwake does not go to minus !!!
+    relative_difference = (
+        pixwake_sim_res.effective_ws.T - pywake_ws_eff
+    ) / pywake_ws_eff
+    probl_pixwake = pixwake_sim_res.effective_ws.T[np.abs(relative_difference) > rtol]
+    probl_pywake = pywake_ws_eff[np.abs(relative_difference) > rtol]
+    error_message = f"Problematic effective wind speeds (pixwake, pywake): {list(zip(probl_pixwake, probl_pywake))}"
+    np.testing.assert_allclose(
+        pixwake_sim_res.effective_ws.T, pywake_ws_eff, atol=1e-5, err_msg=error_message
+    )
 
     pywake_aep = sim_res.aep().sum().values
     pixwake_aep = pixwake_sim_res.aep()
@@ -537,11 +548,8 @@ def test_gaussian_aep_and_gradients_equivalence_timeseries():
     )
 
     val, (dx, dy) = grad_fn(jnp.asarray(wt_x), jnp.asarray(wt_y))
-
     dx.block_until_ready()
     dy.block_until_ready()
     val.block_until_ready()
-    print(f"\n\n Max grad: {jnp.max(jnp.abs(dx))}, {jnp.max(jnp.abs(dy))}")
-
     np.testing.assert_allclose(dx, pw_dx, rtol=rtol)
     np.testing.assert_allclose(dy, pw_dy, rtol=rtol)
