@@ -1,24 +1,28 @@
+from typing import Callable
+
 import jax.numpy as jnp
 
 from ..core import SimulationState
-from ..utils import get_eps
-from .base import WakeModel
+from ..jax_utils import get_eps
+from .base import WakeDeficitModel
+from .utils import ct2a_madsen
 
 
-class NOJModel(WakeModel):
+class NOJDeficit(WakeDeficitModel):
     """A Jensen NOJ (N.O. Jensen) wake model.
 
     This is a simple analytical model that assumes a linearly expanding wake.
     """
 
-    def __init__(self, k: float) -> None:
-        """Initializes the NOJModel.
+    def __init__(self, k: float = 0.1, ct2a: Callable = ct2a_madsen) -> None:
+        """Initializes the NOJDeficit.
 
         Args:
             k: The wake expansion coefficient.
         """
         super().__init__()
         self.k = k
+        self.ct2a = ct2a
 
     def compute_deficit(
         self, ws_eff: jnp.ndarray, state: SimulationState
@@ -43,9 +47,8 @@ class NOJModel(WakeModel):
             ws_eff, state.turbine.ct_curve.wind_speed, state.turbine.ct_curve.values
         )
 
-        # TODO: should provide reference of this!!!
         # wake deficit formulation
-        a_coef = ct * (0.2460 + ct * (0.0586 + ct * 0.0883))
+        a_coef = self.ct2a(ct)
         term = (
             2
             * a_coef

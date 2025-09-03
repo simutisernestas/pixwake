@@ -1,4 +1,4 @@
-name: Type checking
+name: Code formatting
 
 on:
   push:
@@ -9,9 +9,9 @@ on:
       - main
 
 jobs:
-  mypy:
+  formatting:
     runs-on: ubuntu-latest
-    name: mypy
+    name: ruff
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -24,5 +24,5 @@ jobs:
           auth-host: prefix.dev
           auth-token: ${{ secrets.PREFIX_DEV_TOKEN }}
 
-      - name: Run mypy on src/
-        run: pixi run -e test mypy src/
+      - name: Run pre-commit hooks
+        run: pixi run -e format format

@@ -8,7 +8,7 @@ from jax import config as jcfg
 from py_wake.deficit_models.gaussian import (
     BastankhahGaussianDeficit as PyWakeBastankhahGaussianDeficit,
 )
-from py_wake.deficit_models.noj import NOJDeficit
+from py_wake.deficit_models.noj import NOJDeficit as PyWakeNOJDeficit
 from py_wake.examples.data.hornsrev1 import Hornsrev1Site
 from py_wake.site import XRSite
 from py_wake.superposition_models import SquaredSum
@@ -16,7 +16,13 @@ from py_wake.wind_farm_models.engineering_models import All2AllIterative
 from py_wake.wind_turbines import WindTurbines
 from py_wake.wind_turbines.power_ct_functions import PowerCtTabular
 
-from pixwake import BastankhahGaussianDeficit, Curve, NOJModel, Turbine, WakeSimulation
+from pixwake import (
+    BastankhahGaussianDeficit,
+    Curve,
+    NOJDeficit,
+    Turbine,
+    WakeSimulation,
+)
 
 jcfg.update("jax_enable_x64", True)  # need float64 to match pywake
 
@@ -108,7 +114,7 @@ def test_noj_aep_and_gradients_equivalence_timeseries():
         hub_heights=hub_heights,
         powerCtFunctions=[wt_type_0_power_ct] * len(names),
     )
-    wake_model = NOJDeficit(k=wake_expansion_k, rotorAvgModel=None)
+    wake_model = PyWakeNOJDeficit(k=wake_expansion_k, rotorAvgModel=None)
 
     wfm = All2AllIterative(
         site,
@@ -133,7 +139,7 @@ def test_noj_aep_and_gradients_equivalence_timeseries():
         x=wt_x, y=wt_y, wd=wd, ws=ws, time=True, n_cpu=n_cpu
     )
 
-    model = NOJModel(k=wake_expansion_k)
+    model = NOJDeficit(k=wake_expansion_k)
     sim = WakeSimulation(model, fpi_damp=1.0)
     turbine = Turbine(
         rotor_diameter=windTurbines.diameter(),
@@ -182,8 +188,8 @@ def test_noj_aep_and_gradients_equivalence_timeseries():
 
     assert np.isfinite(px_dx).all(), np.isnan(px_dx).sum()
     assert np.isfinite(px_dy).all(), np.isnan(px_dx).sum()
-    np.testing.assert_allclose(px_dx, pw_dx, rtol=1e-2)
-    np.testing.assert_allclose(px_dy, pw_dy, rtol=1e-2)
+    np.testing.assert_allclose(px_dx, pw_dx, atol=1e-5)
+    np.testing.assert_allclose(px_dy, pw_dy, atol=1e-5)
 
     assert (pywake_runtime / pixwake_runtime) > 3.0  # at least 5x speedup
 
@@ -308,7 +314,7 @@ def test_noj_aep_and_gradients_equivalence_with_site_frequencies():
         hub_heights=hub_heights,
         powerCtFunctions=[wt_type_0_power_ct] * len(names),
     )
-    wake_model = NOJDeficit(k=wake_expansion_k, rotorAvgModel=None)
+    wake_model = PyWakeNOJDeficit(k=wake_expansion_k, rotorAvgModel=None)
 
     wfm = All2AllIterative(
         site,
@@ -326,7 +332,7 @@ def test_noj_aep_and_gradients_equivalence_with_site_frequencies():
     pix_ws, pix_wd = jnp.meshgrid(ws, wd)
     pix_wd, pix_ws = pix_wd.flatten(), pix_ws.flatten()
 
-    model = NOJModel(k=wake_expansion_k)
+    model = NOJDeficit(k=wake_expansion_k)
     sim = WakeSimulation(model, fpi_damp=1.0, mapping_strategy="map")
     turbine = Turbine(
         rotor_diameter=windTurbines.diameter(),

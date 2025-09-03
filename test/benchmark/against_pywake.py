@@ -15,7 +15,7 @@ from py_wake.wind_farm_models.engineering_models import All2AllIterative
 from py_wake.wind_turbines import WindTurbines
 from py_wake.wind_turbines.power_ct_functions import PowerCtTabular
 
-from pixwake import Curve, NOJModel, Turbine, WakeSimulation
+from pixwake import Curve, NOJDeficit, Turbine, WakeSimulation
 
 jcfg.update("jax_enable_x64", True)  # need float64 to match pywake
 
@@ -203,7 +203,7 @@ def run_benchmark(n_turbines_list, spacings_list):
                 power_curve=power_curve,
                 ct_curve=ct_curve,
             )
-            pixwake_model = NOJModel(k=wake_expansion_k)
+            pixwake_model = NOJDeficit(k=wake_expansion_k)
             pixwake_sim = WakeSimulation(pixwake_model, fpi_damp=1.0)
 
             pywake_power_ct = PowerCtTabular(
