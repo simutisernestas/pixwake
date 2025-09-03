@@ -12,20 +12,20 @@ class WakeDeficitModel(ABC):
         """Initializes the WakeDeficitModel."""
         pass
 
-    def __call__(self, ws_eff: jnp.ndarray, state: SimulationContext) -> jnp.ndarray:
+    def __call__(self, ws_eff: jnp.ndarray, ctx: SimulationContext) -> jnp.ndarray:
         """A wrapper around the compute_deficit method.
 
         Args:
             ws_eff: An array of effective wind speeds at each turbine.
-            state: The context of the simulation.
+            ctx: The context of the simulation.
 
         Returns:
             The updated effective wind speeds.
         """
-        return self.compute_deficit(ws_eff, state)
+        return self.compute_deficit(ws_eff, ctx)
 
     def compute_deficit(
-        self, ws_eff: jnp.ndarray, state: SimulationContext
+        self, ws_eff: jnp.ndarray, ctx: SimulationContext
     ) -> jnp.ndarray:  # pragma: no cover
         """Computes the wake deficit.
 
@@ -33,12 +33,12 @@ class WakeDeficitModel(ABC):
 
         Args:
             ws_eff: An array of effective wind speeds at each turbine.
-            state: The context of the simulation.
+            ctx: The context of the simulation.
 
         Raises:
             NotImplementedError: If the method is not implemented by a subclass.
         """
-        _ = (ws_eff, state)
+        _ = (ws_eff, ctx)
         raise NotImplementedError
 
     def get_downwind_crosswind_distances(

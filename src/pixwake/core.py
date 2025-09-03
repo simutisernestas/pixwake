@@ -37,6 +37,36 @@ class Turbine:
     power_curve: Curve
     ct_curve: Curve
 
+    def power(self, ws: jnp.ndarray) -> jnp.ndarray:
+        """Calculates the power output of the turbine for a given wind speed.
+
+        Args:
+            ws: The wind speed(s) at which to calculate power.
+
+        Returns:
+            The power output(s) of the turbine.
+        """
+
+        def _power_single_case(_ws):
+            return jnp.interp(_ws, self.power_curve.wind_speed, self.power_curve.values)
+
+        return jax.vmap(_power_single_case)(ws)
+
+    def ct(self, ws: jnp.ndarray) -> jnp.ndarray:
+        """Calculates the thrust coefficient of the turbine for a given wind speed.
+
+        Args:
+            ws: The wind speed(s) at which to calculate thrust coefficient.
+
+        Returns:
+            The thrust coefficient(s) of the turbine.
+        """
+
+        def _ct_single_case(_ws):
+            return jnp.interp(_ws, self.ct_curve.wind_speed, self.ct_curve.values)
+
+        return jax.vmap(_ct_single_case)(ws)
+
 
 @dataclass
 class SimulationContext:
@@ -70,15 +100,7 @@ class SimulationResult:
 
     def power(self) -> jnp.ndarray:
         """Calculates the power of each turbine for each wind condition."""
-
-        def power_per_case(wind_speed: jnp.ndarray) -> jnp.ndarray:
-            return jnp.interp(
-                wind_speed,
-                self.turbine.power_curve.wind_speed,
-                self.turbine.power_curve.values,
-            )
-
-        return jax.vmap(power_per_case)(self.effective_ws)
+        return self.turbine.power(self.effective_ws)
 
     def aep(self, probabilities: jnp.ndarray | None = None) -> jnp.ndarray:
         """Calculates the Annual Energy Production (AEP) of a wind farm."""
@@ -164,59 +186,57 @@ class WakeSimulation:
         wd = jnp.asarray(wd)
 
         sim_func = self.__sim_call_table[self.mapping_strategy]
-        state = SimulationContext(xs, ys, ws, wd, turbine)  # type: ignore
-        eff_ws = sim_func(state)
-        return SimulationResult(effective_ws=eff_ws, turbine=turbine)  # type: ignore
+        eff_ws = sim_func(SimulationContext(xs, ys, ws, wd, turbine))
+        return SimulationResult(effective_ws=eff_ws, turbine=turbine)
 
     def _simulate_vmap(
         self,
-        state: SimulationContext,
+        ctx: SimulationContext,
     ) -> jnp.ndarray:
         """Simulates multiple wind conditions using jax.vmap."""
 
-        # vmap over wind conditions (ws, wd)
         def _single_case(ws: jnp.ndarray, wd: jnp.ndarray) -> jnp.ndarray:
             return self._simulate_single_case(
-                SimulationContext(state.xs, state.ys, ws, wd, state.turbine)
+                SimulationContext(ctx.xs, ctx.ys, ws, wd, ctx.turbine)
             )
 
-        return jax.vmap(_single_case)(state.ws, state.wd)
+        return jax.vmap(_single_case)(ctx.ws, ctx.wd)
 
     def _simulate_map(
         self,
-        state: SimulationContext,
+        ctx: SimulationContext,
     ) -> jnp.ndarray:
         """Simulates multiple wind conditions using jax.lax.map."""
 
         def _single_case(case: tuple[jnp.ndarray, jnp.ndarray]) -> jnp.ndarray:
             ws, wd = case
             return self._simulate_single_case(
-                SimulationContext(state.xs, state.ys, ws, wd, state.turbine)
+                SimulationContext(ctx.xs, ctx.ys, ws, wd, ctx.turbine)
             )
 
-        return jax.lax.map(_single_case, (state.ws, state.wd))
+        return jax.lax.map(_single_case, (ctx.ws, ctx.wd))
 
     def _simulate_manual(
         self,
-        state: SimulationContext,
+        ctx: SimulationContext,
     ) -> jnp.ndarray:
         """Simulates multiple wind conditions using a manual loop (for debugging)."""
         return jnp.array(
             [
                 self._simulate_single_case(
-                    SimulationContext(state.xs, state.ys, _ws, _wd, state.turbine)
+                    SimulationContext(ctx.xs, ctx.ys, _ws, _wd, ctx.turbine)
                 )
-                for _ws, _wd in zip(state.ws, state.wd)
+                for _ws, _wd in zip(ctx.ws, ctx.wd)
             ]
         )
 
     def _simulate_single_case(
         self,
-        state: SimulationContext,
+        ctx: SimulationContext,
     ) -> jnp.ndarray:
         """Simulates a single wind condition."""
-        x0 = jnp.full_like(state.xs, state.ws)
-        return fixed_point(self.model, x0, state, damp=self.fpi_damp, tol=self.fpi_tol)
+        x0 = jnp.full_like(ctx.xs, ctx.ws)
+        return fixed_point(self.model, x0, ctx, damp=self.fpi_damp, tol=self.fpi_tol)
 
 
 @partial(
@@ -227,7 +247,7 @@ class WakeSimulation:
 def fixed_point(
     f: Callable,
     x_guess: jnp.ndarray,
-    state: SimulationContext,
+    ctx: SimulationContext,
     tol: float = 1e-6,
     damp: float = 0.5,
 ) -> jnp.ndarray:
@@ -240,7 +260,7 @@ def fixed_point(
     Args:
         f: The function to iterate.
         x_guess: The initial guess for the fixed point.
-        state: The context of the simulation.
+        ctx: The context of the simulation.
         tol: The tolerance for convergence.
         damp: The damping factor for the updates.
 
@@ -257,11 +277,11 @@ def fixed_point(
 
     def body_fun(carry: tuple) -> tuple:
         _, x, it = carry
-        x_new = f(x, state)
+        x_new = f(x, ctx)
         x_damped = damp * x_new + (1 - damp) * x
         return x, x_damped, it + 1
 
-    _, x_star, it = while_loop(cond_fun, body_fun, (x_guess, f(x_guess, state), 0))
+    _, x_star, it = while_loop(cond_fun, body_fun, (x_guess, f(x_guess, ctx), 0))
     # jax.debug.print("\nFixed point found after {it} iterations", it=it)
     return x_star
 
@@ -269,25 +289,25 @@ def fixed_point(
 def fixed_point_fwd(
     f: Callable,
     x_guess: jnp.ndarray,
-    state: Any,
+    ctx: Any,
     tol: float,
     damp: float,
 ) -> tuple[jnp.ndarray, tuple]:
-    x_star = fixed_point(f, x_guess, state, tol=tol, damp=damp)
-    return x_star, (state, x_star)
+    x_star = fixed_point(f, x_guess, ctx, tol=tol, damp=damp)
+    return x_star, (ctx, x_star)
 
 
 def fixed_point_rev(
     f: Callable, tol: float, damp: float, res: tuple, x_star_bar: jnp.ndarray
 ) -> tuple[jnp.ndarray, Any]:
-    state, x_star = res
+    ctx, x_star = res
     # vjp wrt a at the fixed point
-    _, vjp_a = vjp(lambda s: f(x_star, s), state)
+    _, vjp_a = vjp(lambda s: f(x_star, s), ctx)
 
     # run a second fixed-point solve in reverse
     a_bar_sum = vjp_a(
         fixed_point(
-            lambda u, v: v + vjp(lambda x: f(x, state), x_star)[1](u)[0],
+            lambda u, v: v + vjp(lambda x: f(x, ctx), x_star)[1](u)[0],
             x_star_bar,
             x_star_bar,
             tol=tol,

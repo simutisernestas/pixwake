@@ -38,23 +38,20 @@ class BastankhahGaussianDeficit(WakeDeficitModel):
         self.ct2a = ct2a
 
     def compute_deficit(
-        self, ws_eff: jnp.ndarray, state: SimulationContext
+        self, ws_eff: jnp.ndarray, ctx: SimulationContext
     ) -> jnp.ndarray:
         """Computes the wake deficit using the Bastankhah-Gaussian model.
 
         Args:
             ws_eff: An array of effective wind speeds at each turbine.
-            state: The context of the simulation.
+            ctx: The context of the simulation.
 
         Returns:
             An array of updated effective wind speeds at each turbine.
         """
-        x_d, y_d = self.get_downwind_crosswind_distances(state.xs, state.ys, state.wd)
+        x_d, y_d = self.get_downwind_crosswind_distances(ctx.xs, ctx.ys, ctx.wd)
 
-        # Get CT
-        ct = jnp.interp(
-            ws_eff, state.turbine.ct_curve.wind_speed, state.turbine.ct_curve.values
-        )
+        ct_eff = ctx.turbine.ct(ws_eff)
 
         # Mask for upstream turbines
         mask = x_d > 0
@@ -64,21 +61,21 @@ class BastankhahGaussianDeficit(WakeDeficitModel):
 
         # According to the PyWake implementation:
         # beta = 1/2 * (1 + sqrt(1-ct)) / sqrt(1-ct)
-        sqrt_1_minus_ct = jnp.sqrt(jnp.maximum(eps, 1.0 - jnp.minimum(self.ctlim, ct)))
+        sqrt_1_minus_ct = jnp.sqrt(
+            jnp.maximum(eps, 1.0 - jnp.minimum(self.ctlim, ct_eff))
+        )
         beta = 0.5 * (1.0 + sqrt_1_minus_ct) / sqrt_1_minus_ct
 
         # sigma_sqr = (k * dw / D + ceps * sqrt(beta))**2
         # In pixwake, D_src is a scalar.
-        D_src = state.turbine.rotor_diameter
+        D_src = ctx.turbine.rotor_diameter
 
         # x_d is (n_turbines, n_turbines), D_src is a scalar.
         epsilon_ilk = self.ceps * jnp.sqrt(beta)
         sigma_term = self.k * x_d / D_src + epsilon_ilk
         sigma_sqr = sigma_term**2
 
-        # ct_eff = ct / (8 * sigma_sqr)
-        # ct needs to be from the source turbine, so ct[:, None]
-        ct_eff = ct / (8.0 * sigma_sqr + eps)
+        ct_eff = ct_eff / (8.0 * sigma_sqr + eps)
 
         # deficit_centre = ws_ref * 2 * ct2a(ct_eff)
         # ws_ref is a scalar in the single-case simulation.
@@ -102,7 +99,7 @@ class BastankhahGaussianDeficit(WakeDeficitModel):
         # PyWake uses effective wind speed for the reference wind speed if the
         # use_effective_ws flag is set. In pixwake, inside the single-case
         # simulation, ws is a scalar.
-        ws_ref = ws_eff if self.use_effective_ws else state.ws
+        ws_ref = ws_eff if self.use_effective_ws else ctx.ws
 
         # New effective wind speed
         return jnp.maximum(0.0, ws_ref * (1.0 - total_deficit))

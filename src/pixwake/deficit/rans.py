@@ -137,7 +137,7 @@ class RANSDeficit(WakeDeficitModel):
     def compute_deficit(
         self,
         ws_eff: jnp.ndarray,
-        state: SimulationContext,
+        ctx: SimulationContext,
         use_effective: bool = True,
     ) -> jnp.ndarray:
         """Computes the wake deficit using the RANS surrogate model.
@@ -148,7 +148,7 @@ class RANSDeficit(WakeDeficitModel):
 
         Args:
             ws_eff: An array of effective wind speeds at each turbine.
-            state: The context of the simulation.
+            ctx: The context of the simulation.
             use_effective: A boolean flag to control the deficit calculation.
                 - If True (default), the deficit is calculated as an absolute
                   reduction in wind speed, proportional to the effective wind
@@ -159,12 +159,10 @@ class RANSDeficit(WakeDeficitModel):
         Returns:
             An array of updated effective wind speeds at each turbine.
         """
-        x_d, y_d = self.get_downwind_crosswind_distances(state.xs, state.ys, state.wd)
-        x_d /= state.turbine.rotor_diameter
-        y_d /= state.turbine.rotor_diameter
-        ct = jnp.interp(
-            ws_eff, state.turbine.ct_curve.wind_speed, state.turbine.ct_curve.values
-        )
+        x_d, y_d = self.get_downwind_crosswind_distances(ctx.xs, ctx.ys, ctx.wd)
+        x_d /= ctx.turbine.rotor_diameter
+        y_d /= ctx.turbine.rotor_diameter
+        ct_eff = ctx.turbine.ct(ws_eff)
         mask_off_diag = ~jnp.eye(x_d.shape[0], dtype=bool)
         in_domain_mask = (x_d < 70) & (x_d > -3) & (jnp.abs(y_d) < 6) & mask_off_diag
 
@@ -179,7 +177,7 @@ class RANSDeficit(WakeDeficitModel):
                     jnp.zeros_like(x_d),  # (z - h_hub) / D; evaluating at hub height
                     jnp.full_like(x_d, ti),  # turbulence intensity
                     jnp.zeros_like(x_d),  # yaw
-                    jnp.broadcast_to(ct, x_d.shape),  # thrust coefficient
+                    jnp.broadcast_to(ct_eff, x_d.shape),  # thrust coefficient
                 ],
                 axis=-1,
             ).reshape(-1, 6)
@@ -194,6 +192,6 @@ class RANSDeficit(WakeDeficitModel):
 
         if use_effective:
             deficit *= ws_eff
-            return jnp.maximum(0.0, state.ws - deficit)  # (N,)
+            return jnp.maximum(0.0, ctx.ws - deficit)  # (N,)
 
-        return jnp.maximum(0.0, state.ws * (1.0 - deficit))
+        return jnp.maximum(0.0, ctx.ws * (1.0 - deficit))

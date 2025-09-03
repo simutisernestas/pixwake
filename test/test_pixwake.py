@@ -80,8 +80,8 @@ def rect_grid_params(nx=3, ny=2):
 def test_wake_step_two_turbines():
     xs, ys, ws, wd, k, turbine = base_params()
     model = NOJDeficit(k=k)
-    state = SimulationContext(xs, ys, ws, wd, turbine)
-    result = model.compute_deficit(ws, state)
+    ctx = SimulationContext(xs, ys, ws, wd, turbine)
+    result = model.compute_deficit(ws, ctx)
     expected = jnp.array([10.0, 7.5154347])
     assert jnp.allclose(result, expected, rtol=1e-6)
 
