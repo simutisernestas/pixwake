@@ -7,3 +7,6 @@ sandbox/
 .mypy_cache/
 logs/
 figures/
+.coverage*
+htmlcov/
+coverage.xml

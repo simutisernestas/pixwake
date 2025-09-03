@@ -1,6 +1,7 @@
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 from jax import config as jcfg
 from jax.test_util import check_grads
 
@@ -30,6 +31,15 @@ def test_fixed_point_gradient():
     grad = grad_fn(a)
     expected = 1.0 / (2 * jnp.sqrt(a))
     assert jnp.allclose(grad, expected, rtol=1e-6)
+
+
+def test_fixed_point_gradient_wrt_x_guess():
+    a = 2.0
+    x0 = 1.0
+    # The gradient of fixed_point wrt x_guess is explicitly zero.
+    grad_fn = jax.grad(lambda x: fixed_point(_sqrt_iter, x, a, tol=1e-8))
+    grad = grad_fn(x0)
+    assert jnp.allclose(grad, 0.0)
 
 
 def base_params():
@@ -193,3 +203,21 @@ def test_numpy_inputs():
     result = sim(xs_np, ys_np, ws_np, wd_np, turbine_np)
     expected = jnp.array([10.0, 7.5154343])
     assert jnp.allclose(result.effective_ws, expected, rtol=1e-6)
+
+
+def test_invalid_mapping_strategy():
+    xs, ys, ws, wd, k, turbine = base_params()
+    model = NOJDeficit(k=k)
+    with pytest.raises(ValueError):
+        sim = WakeSimulation(model, mapping_strategy="invalid_strategy")
+        sim(xs, ys, ws, jnp.full_like(ws, wd), turbine)
+
+
+def test_simulation_result_power_method():
+    xs, ys, ws, wd, k, turbine = base_params()
+    model = NOJDeficit(k=k)
+    sim = WakeSimulation(model)
+    result = sim(xs, ys, ws, jnp.full_like(ws, wd), turbine)
+    power = result.power()
+    expected_power = turbine.power(result.effective_ws)
+    assert jnp.allclose(power, expected_power, rtol=1e-6)

@@ -24,6 +24,7 @@ python = "<3.14"
 [tool.pixi.feature.test.dependencies]
 pytest = "*"
 pytest-xdist = "*"
+pytest-cov = "*"
 py-wake = ">=2.6.12,<3"
 mypy = ">=1.17.1,<2"
 psutil = ">=7.0.0,<8"
@@ -40,7 +41,7 @@ ruff = "*"
 format = "pre-commit run --all-files"
 
 [tool.pixi.feature.test.tasks]
-test = "pytest test/ -n auto --dist worksteal"
+test = "pytest test/ --cov=src/pixwake -n auto --dist worksteal"
 
 [tool.pixi.environments]
 default = ["test", "format"]
