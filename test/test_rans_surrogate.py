@@ -6,7 +6,7 @@ import numpy as onp
 from jax.test_util import check_grads
 from py_wake.examples.data.dtu10mw import DTU10MW
 
-from pixwake import Curve, RANSModel, Turbine, WakeSimulation
+from pixwake import Curve, RANSDeficit, Turbine, WakeSimulation
 
 
 def get_rans_dependencies():
@@ -43,7 +43,7 @@ def test_rans_surrogate_aep():
         ct_curve=Curve(wind_speed=ct_xp, values=ct_fp),
     )
 
-    model = RANSModel(ambient_ti=0.1)
+    model = RANSDeficit(ambient_ti=0.1)
     sim = WakeSimulation(model, mapping_strategy="map", fpi_damp=0.8, fpi_tol=1e-3)
 
     def aep(xx, yy):
@@ -87,7 +87,7 @@ def test_rans_surrogate_gradients():
         ct_curve=Curve(wind_speed=ct_xp, values=ct_fp),
     )
 
-    model = RANSModel(ambient_ti=0.1)
+    model = RANSDeficit(ambient_ti=0.1)
     simulation = WakeSimulation(model, fpi_damp=0.8, fpi_tol=1e-3)
 
     def sim(x, y):

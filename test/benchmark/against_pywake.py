@@ -9,13 +9,13 @@ import numpy as np
 import pandas as pd
 import psutil
 from jax import config as jcfg
-from py_wake.deficit_models.noj import NOJDeficit
+from py_wake.deficit_models.noj import NOJDeficit as PyWakeNOJDeficit
 from py_wake.site import UniformSite
 from py_wake.wind_farm_models.engineering_models import All2AllIterative
 from py_wake.wind_turbines import WindTurbines
 from py_wake.wind_turbines.power_ct_functions import PowerCtTabular
 
-from pixwake import Curve, NOJModel, Turbine, WakeSimulation
+from pixwake import Curve, NOJDeficit, Turbine, WakeSimulation
 
 jcfg.update("jax_enable_x64", True)  # need float64 to match pywake
 
@@ -203,7 +203,7 @@ def run_benchmark(n_turbines_list, spacings_list):
                 power_curve=power_curve,
                 ct_curve=ct_curve,
             )
-            pixwake_model = NOJModel(k=wake_expansion_k)
+            pixwake_model = NOJDeficit(k=wake_expansion_k)
             pixwake_sim = WakeSimulation(pixwake_model, fpi_damp=1.0)
 
             pywake_power_ct = PowerCtTabular(
@@ -218,7 +218,7 @@ def run_benchmark(n_turbines_list, spacings_list):
             pywake_wfm = All2AllIterative(
                 site=UniformSite(),
                 windTurbines=pywake_turbines,
-                wake_deficitModel=NOJDeficit(k=wake_expansion_k),
+                wake_deficitModel=PyWakeNOJDeficit(k=wake_expansion_k),
             )
             n_cpu = get_pywake_n_cpu(n_turbines_actual)
 
@@ -414,8 +414,8 @@ if __name__ == "__main__":
     SPACINGS_LIST = [3, 5, 7]
 
     # For testing, run a smaller set
-    # N_TURBINES_LIST = [32, 49]
-    # SPACINGS_LIST = [3, 5]
+    # N_TURBINES_LIST = [8, 16, 32, 64]
+    # SPACINGS_LIST = [3]
 
     benchmark_results = run_benchmark(N_TURBINES_LIST, SPACINGS_LIST)
 

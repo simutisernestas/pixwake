@@ -20,10 +20,12 @@ pixwake = { path = ".", editable = true }
 [tool.pixi.tasks]
 
 [tool.pixi.dependencies]
-python = "<3.13"
+python = "<3.14"
 
 [tool.pixi.feature.test.dependencies]
 pytest = "*"
+pytest-xdist = "*"
+pytest-cov = "*"
 py-wake = ">=2.6.12,<3"
 mypy = ">=1.17.1,<2"
 psutil = ">=7.0.0,<8"
@@ -36,13 +38,17 @@ xprof = "*"
 pre-commit = "*"
 ruff = "*"
 
+[tool.pixi.feature.format.tasks]
+format = "pre-commit run --all-files"
+
 [tool.pixi.feature.test.tasks]
-test = "pytest test/"
+test = "pytest test/ --cov=src/pixwake -n auto --dist worksteal"
 
 [tool.pixi.feature.cuda.target.linux-64.pypi-dependencies]
 jax = { version = "*", extras = ["cuda12"] }
 
 [tool.pixi.environments]
-test = ["test"]
 default = ["test", "format"]
+test = ["test"]
+format = { features = ["format"], no-default-feature = true }
 cuda = ["cuda", "test"]

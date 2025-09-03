@@ -38,4 +38,4 @@ jobs:
           auth-token: ${{ secrets.PREFIX_DEV_TOKEN }}
 
       - name: Run tests
-        run: pixi run test
+        run: pixi run -e test test
