@@ -188,8 +188,8 @@ def test_noj_aep_and_gradients_equivalence_timeseries():
 
     assert np.isfinite(px_dx).all(), np.isnan(px_dx).sum()
     assert np.isfinite(px_dy).all(), np.isnan(px_dx).sum()
-    np.testing.assert_allclose(px_dx, pw_dx, rtol=1e-2)
-    np.testing.assert_allclose(px_dy, pw_dy, rtol=1e-2)
+    np.testing.assert_allclose(px_dx, pw_dx, atol=1e-5)
+    np.testing.assert_allclose(px_dy, pw_dy, atol=1e-5)
 
     assert (pywake_runtime / pixwake_runtime) > 3.0  # at least 5x speedup
 
