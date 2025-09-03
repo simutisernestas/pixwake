@@ -1,4 +1,4 @@
-name: Code Formatting
+name: Code formatting
 
 on:
   push:
@@ -11,7 +11,7 @@ on:
 jobs:
   formatting:
     runs-on: ubuntu-latest
-    name: Code Formatting
+    name: ruff
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
