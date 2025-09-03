@@ -4,9 +4,7 @@ from pathlib import Path
 from jax import config as jcfg
 
 from .core import Curve, Turbine, WakeSimulation
-from .models.gaussian import BastankhahGaussianDeficit
-from .models.noj import NOJModel
-from .models.rans import RANSModel
+from .deficit import BastankhahGaussianDeficit, NOJDeficit, RANSDeficit
 
 jax_cache_dir = Path(tempfile.gettempdir(), "jax_cache")
 jcfg.update("jax_compilation_cache_dir", str(jax_cache_dir))
@@ -19,7 +17,7 @@ __all__ = [
     "WakeSimulation",
     "Curve",
     "Turbine",
-    "NOJModel",
-    "RANSModel",
+    "NOJDeficit",
+    "RANSDeficit",
     "BastankhahGaussianDeficit",
 ]

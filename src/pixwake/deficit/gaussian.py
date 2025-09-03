@@ -3,27 +3,12 @@ from typing import Callable
 import jax.numpy as jnp
 
 from ..core import SimulationState
-from ..utils import get_eps
-from .base import WakeModel
+from ..jax_utils import get_eps
+from .base import WakeDeficitModel
+from .utils import ct2a_madsen
 
 
-def ct2a_madsen(
-    ct: jnp.ndarray, ct2ap: tuple = (0.2460, 0.0586, 0.0883)
-) -> jnp.ndarray:
-    """
-    BEM axial induction approximation by
-    Madsen, H. A., Larsen, T. J., Pirrung, G. R., Li, A., and Zahle, F.: Implementation
-    of the blade element momentum model on a polar grid and its aeroelastic load impact,
-    Wind Energ. Sci., 5, 1–27, https://doi.org/10.5194/wes-5-1-2020, 2020.
-    """
-    # TODO: should unify between the NOJ and usage here !!!
-
-    # Evaluate with Horner's rule.
-    # ct2a_ilk = ct2ap[2] * ct_ilk**3 + ct2ap[1] * ct_ilk**2 + ct2ap[0] * ct_ilk
-    return ct * (ct2ap[0] + ct * (ct2ap[1] + ct * ct2ap[2]))
-
-
-class BastankhahGaussianDeficit(WakeModel):
+class BastankhahGaussianDeficit(WakeDeficitModel):
     """A Bastankhah-Gaussian wake model.
 
     This model is based on the work of Bastankhah and Porte-Agel (2014),

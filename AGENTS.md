@@ -53,7 +53,7 @@ The main entry point for running a wake simulation is the `WakeSimulation` class
 
 The general workflow is as follows:
 1. Define the turbine characteristics using the `Turbine` and `Curve` classes.
-2. Select a wake model, such as `NOJModel` or `RANSModel`, etc.
+2. Select a wake model, such as `BastankhahGaussianDeficit`, `NOJDeficit` or `RANSDeficit`, etc.
 3. Instantiate the `WakeSimulation` class with the chosen model.
 4. Call the simulation with the turbine layout, wind conditions, and turbine definition.
 5. Calculate the power and AEP using the `power` and `aep` functions on simulation result object.
@@ -61,6 +61,3 @@ The general workflow is as follows:
 ### Examples
 
 For examples look into the `test/` directory for package usage examples.
-
-
-

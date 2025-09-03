@@ -8,7 +8,7 @@ from flax import serialization
 from flax.struct import field
 
 from ..core import SimulationState
-from .base import WakeModel
+from .base import WakeDeficitModel
 
 
 class WakeDeficitModelFlax(nn.Module):
@@ -111,7 +111,7 @@ def load_rans_models() -> tuple[nn.Module, Any, nn.Module, Any]:
     return deficit_model, deficit_weights, turbulence_model, ti_weights
 
 
-class RANSModel(WakeModel):
+class RANSDeficit(WakeDeficitModel):
     """A RANS surrogate model for wake prediction.
 
     This model uses two pre-trained neural networks to predict the wake deficit
@@ -120,7 +120,7 @@ class RANSModel(WakeModel):
     """
 
     def __init__(self, ambient_ti: float) -> None:
-        """Initializes the RANSModel.
+        """Initializes the RANSDeficit.
 
         Args:
             ambient_ti: The ambient turbulence intensity.

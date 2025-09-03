@@ -23,6 +23,7 @@ python = "<3.14"
 
 [tool.pixi.feature.test.dependencies]
 pytest = "*"
+pytest-xdist = "*"
 py-wake = ">=2.6.12,<3"
 mypy = ">=1.17.1,<2"
 psutil = ">=7.0.0,<8"
@@ -35,9 +36,13 @@ xprof = "*"
 pre-commit = "*"
 ruff = "*"
 
+[tool.pixi.feature.format.tasks]
+format = "pre-commit run --all-files"
+
 [tool.pixi.feature.test.tasks]
-test = "pytest test/"
+test = "pytest test/ -n auto --dist worksteal"
 
 [tool.pixi.environments]
-test = ["test"]
 default = ["test", "format"]
+test = ["test"]
+format = { features = ["format"], no-default-feature = true }

@@ -5,11 +5,11 @@ import jax.numpy as jnp
 from ..core import SimulationState
 
 
-class WakeModel(ABC):
+class WakeDeficitModel(ABC):
     """An abstract base class for wake models."""
 
     def __init__(self) -> None:
-        """Initializes the WakeModel."""
+        """Initializes the WakeDeficitModel."""
         pass
 
     def __call__(self, ws_eff: jnp.ndarray, state: SimulationState) -> jnp.ndarray:
