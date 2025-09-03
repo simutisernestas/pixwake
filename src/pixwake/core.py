@@ -47,7 +47,7 @@ class Turbine:
             The power output(s) of the turbine.
         """
 
-        def _power_single_case(_ws):
+        def _power_single_case(_ws: jnp.ndarray) -> jnp.ndarray:
             return jnp.interp(_ws, self.power_curve.wind_speed, self.power_curve.values)
 
         return jax.vmap(_power_single_case)(ws)
@@ -62,7 +62,7 @@ class Turbine:
             The thrust coefficient(s) of the turbine.
         """
 
-        def _ct_single_case(_ws):
+        def _ct_single_case(_ws: jnp.ndarray) -> jnp.ndarray:
             return jnp.interp(_ws, self.ct_curve.wind_speed, self.ct_curve.values)
 
         return jax.vmap(_ct_single_case)(ws)
