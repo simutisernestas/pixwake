@@ -2,7 +2,7 @@ from typing import Callable
 
 import jax.numpy as jnp
 
-from ..core import SimulationState
+from ..core import SimulationContext
 from ..jax_utils import get_eps
 from .base import WakeDeficitModel
 from .utils import ct2a_madsen
@@ -25,39 +25,35 @@ class NOJDeficit(WakeDeficitModel):
         self.ct2a = ct2a
 
     def compute_deficit(
-        self, ws_eff: jnp.ndarray, state: SimulationState
+        self, ws_eff: jnp.ndarray, ctx: SimulationContext
     ) -> jnp.ndarray:
         """Computes the wake deficit using the NOJ model.
 
         Args:
             ws_eff: An array of effective wind speeds at each turbine.
-            state: The state of the simulation.
+            ctx: The context of the simulation.
 
         Returns:
             An array of updated effective wind speeds at each turbine.
         """
-        x_d, y_d = self.get_downwind_crosswind_distances(state.xs, state.ys, state.wd)
-        wake_rad = (state.turbine.rotor_diameter / 2) + self.k * x_d
+        x_d, y_d = self.get_downwind_crosswind_distances(ctx.xs, ctx.ys, ctx.wd)
+        wake_rad = (ctx.turbine.rotor_diameter / 2) + self.k * x_d
 
         # mask upstream turbines within wake cone
         mask = (x_d > 0) & (jnp.abs(y_d) < wake_rad)
 
-        # interpolate CT curve
-        ct = jnp.interp(
-            ws_eff, state.turbine.ct_curve.wind_speed, state.turbine.ct_curve.values
-        )
+        ct_eff = ctx.turbine.ct(ws_eff)
 
         # wake deficit formulation
-        a_coef = self.ct2a(ct)
+        a_coef = self.ct2a(ct_eff)
         term = (
             2
             * a_coef
-            * ((state.turbine.rotor_diameter / 2) / jnp.maximum(wake_rad, get_eps()))
-            ** 2
+            * ((ctx.turbine.rotor_diameter / 2) / jnp.maximum(wake_rad, get_eps())) ** 2
         )
 
         # combine deficits in quadrature
         deficits = jnp.sqrt(jnp.sum(jnp.where(mask, term**2, 0.0), axis=1) + get_eps())
 
         # new effective speed
-        return jnp.maximum(0.0, state.ws * (1.0 - deficits))
+        return jnp.maximum(0.0, ctx.ws * (1.0 - deficits))

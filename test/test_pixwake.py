@@ -5,7 +5,7 @@ from jax import config as jcfg
 from jax.test_util import check_grads
 
 from pixwake import Curve, Turbine
-from pixwake.core import SimulationState, WakeSimulation, fixed_point
+from pixwake.core import SimulationContext, WakeSimulation, fixed_point
 from pixwake.deficit.noj import NOJDeficit
 
 jcfg.update("jax_enable_x64", True)  # need float64 to match pywake
@@ -80,8 +80,8 @@ def rect_grid_params(nx=3, ny=2):
 def test_wake_step_two_turbines():
     xs, ys, ws, wd, k, turbine = base_params()
     model = NOJDeficit(k=k)
-    state = SimulationState(xs, ys, ws, wd, turbine)
-    result = model.compute_deficit(ws, state)
+    ctx = SimulationContext(xs, ys, ws, wd, turbine)
+    result = model.compute_deficit(ws, ctx)
     expected = jnp.array([10.0, 7.5154347])
     assert jnp.allclose(result, expected, rtol=1e-6)
 
