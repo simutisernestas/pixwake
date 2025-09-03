@@ -12,6 +12,7 @@ requires = ["hatchling"]
 [tool.pixi.workspace]
 channels = ["conda-forge"]
 platforms = ["win-64", "linux-64", "linux-aarch64", "osx-arm64"]
+conda-pypi-map = { conda-forge = "ppypi_map.json" }
 
 [tool.pixi.pypi-dependencies]
 pixwake = { path = ".", editable = true }
@@ -38,6 +39,10 @@ ruff = "*"
 [tool.pixi.feature.test.tasks]
 test = "pytest test/"
 
+[tool.pixi.feature.cuda.target.linux-64.pypi-dependencies]
+jax = { version = "*", extras = ["cuda12"] }
+
 [tool.pixi.environments]
 test = ["test"]
 default = ["test", "format"]
+cuda = ["cuda", "test"]
