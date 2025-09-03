@@ -7,7 +7,7 @@ import jax.numpy as jnp
 from flax import serialization
 from flax.struct import field
 
-from ..core import SimulationState
+from ..core import SimulationContext
 from .base import WakeDeficitModel
 
 
@@ -137,7 +137,7 @@ class RANSDeficit(WakeDeficitModel):
     def compute_deficit(
         self,
         ws_eff: jnp.ndarray,
-        state: SimulationState,
+        state: SimulationContext,
         use_effective: bool = True,
     ) -> jnp.ndarray:
         """Computes the wake deficit using the RANS surrogate model.
@@ -148,7 +148,7 @@ class RANSDeficit(WakeDeficitModel):
 
         Args:
             ws_eff: An array of effective wind speeds at each turbine.
-            state: The state of the simulation.
+            state: The context of the simulation.
             use_effective: A boolean flag to control the deficit calculation.
                 - If True (default), the deficit is calculated as an absolute
                   reduction in wind speed, proportional to the effective wind

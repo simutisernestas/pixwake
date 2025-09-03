@@ -39,8 +39,8 @@ class Turbine:
 
 
 @dataclass
-class SimulationState:
-    """A dataclass to hold the state of a wind farm simulation.
+class SimulationContext:
+    """A dataclass to hold the context of a wind farm simulation.
 
     Attributes:
         xs: An array of x-coordinates for each turbine.
@@ -164,47 +164,47 @@ class WakeSimulation:
         wd = jnp.asarray(wd)
 
         sim_func = self.__sim_call_table[self.mapping_strategy]
-        state = SimulationState(xs, ys, ws, wd, turbine)  # type: ignore
+        state = SimulationContext(xs, ys, ws, wd, turbine)  # type: ignore
         eff_ws = sim_func(state)
         return SimulationResult(effective_ws=eff_ws, turbine=turbine)  # type: ignore
 
     def _simulate_vmap(
         self,
-        state: SimulationState,
+        state: SimulationContext,
     ) -> jnp.ndarray:
         """Simulates multiple wind conditions using jax.vmap."""
 
         # vmap over wind conditions (ws, wd)
         def _single_case(ws: jnp.ndarray, wd: jnp.ndarray) -> jnp.ndarray:
             return self._simulate_single_case(
-                SimulationState(state.xs, state.ys, ws, wd, state.turbine)
+                SimulationContext(state.xs, state.ys, ws, wd, state.turbine)
             )
 
         return jax.vmap(_single_case)(state.ws, state.wd)
 
     def _simulate_map(
         self,
-        state: SimulationState,
+        state: SimulationContext,
     ) -> jnp.ndarray:
         """Simulates multiple wind conditions using jax.lax.map."""
 
         def _single_case(case: tuple[jnp.ndarray, jnp.ndarray]) -> jnp.ndarray:
             ws, wd = case
             return self._simulate_single_case(
-                SimulationState(state.xs, state.ys, ws, wd, state.turbine)
+                SimulationContext(state.xs, state.ys, ws, wd, state.turbine)
             )
 
         return jax.lax.map(_single_case, (state.ws, state.wd))
 
     def _simulate_manual(
         self,
-        state: SimulationState,
+        state: SimulationContext,
     ) -> jnp.ndarray:
         """Simulates multiple wind conditions using a manual loop (for debugging)."""
         return jnp.array(
             [
                 self._simulate_single_case(
-                    SimulationState(state.xs, state.ys, _ws, _wd, state.turbine)
+                    SimulationContext(state.xs, state.ys, _ws, _wd, state.turbine)
                 )
                 for _ws, _wd in zip(state.ws, state.wd)
             ]
@@ -212,7 +212,7 @@ class WakeSimulation:
 
     def _simulate_single_case(
         self,
-        state: SimulationState,
+        state: SimulationContext,
     ) -> jnp.ndarray:
         """Simulates a single wind condition."""
         x0 = jnp.full_like(state.xs, state.ws)
@@ -227,7 +227,7 @@ class WakeSimulation:
 def fixed_point(
     f: Callable,
     x_guess: jnp.ndarray,
-    state: SimulationState,
+    state: SimulationContext,
     tol: float = 1e-6,
     damp: float = 0.5,
 ) -> jnp.ndarray:
@@ -240,7 +240,7 @@ def fixed_point(
     Args:
         f: The function to iterate.
         x_guess: The initial guess for the fixed point.
-        state: The state of the simulation.
+        state: The context of the simulation.
         tol: The tolerance for convergence.
         damp: The damping factor for the updates.
 

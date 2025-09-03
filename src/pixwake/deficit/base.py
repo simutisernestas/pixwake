@@ -2,7 +2,7 @@ from abc import ABC
 
 import jax.numpy as jnp
 
-from ..core import SimulationState
+from ..core import SimulationContext
 
 
 class WakeDeficitModel(ABC):
@@ -12,12 +12,12 @@ class WakeDeficitModel(ABC):
         """Initializes the WakeDeficitModel."""
         pass
 
-    def __call__(self, ws_eff: jnp.ndarray, state: SimulationState) -> jnp.ndarray:
+    def __call__(self, ws_eff: jnp.ndarray, state: SimulationContext) -> jnp.ndarray:
         """A wrapper around the compute_deficit method.
 
         Args:
             ws_eff: An array of effective wind speeds at each turbine.
-            state: The state of the simulation.
+            state: The context of the simulation.
 
         Returns:
             The updated effective wind speeds.
@@ -25,7 +25,7 @@ class WakeDeficitModel(ABC):
         return self.compute_deficit(ws_eff, state)
 
     def compute_deficit(
-        self, ws_eff: jnp.ndarray, state: SimulationState
+        self, ws_eff: jnp.ndarray, state: SimulationContext
     ) -> jnp.ndarray:  # pragma: no cover
         """Computes the wake deficit.
 
@@ -33,7 +33,7 @@ class WakeDeficitModel(ABC):
 
         Args:
             ws_eff: An array of effective wind speeds at each turbine.
-            state: The state of the simulation.
+            state: The context of the simulation.
 
         Raises:
             NotImplementedError: If the method is not implemented by a subclass.

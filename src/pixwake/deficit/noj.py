@@ -2,7 +2,7 @@ from typing import Callable
 
 import jax.numpy as jnp
 
-from ..core import SimulationState
+from ..core import SimulationContext
 from ..jax_utils import get_eps
 from .base import WakeDeficitModel
 from .utils import ct2a_madsen
@@ -25,13 +25,13 @@ class NOJDeficit(WakeDeficitModel):
         self.ct2a = ct2a
 
     def compute_deficit(
-        self, ws_eff: jnp.ndarray, state: SimulationState
+        self, ws_eff: jnp.ndarray, state: SimulationContext
     ) -> jnp.ndarray:
         """Computes the wake deficit using the NOJ model.
 
         Args:
             ws_eff: An array of effective wind speeds at each turbine.
-            state: The state of the simulation.
+            state: The context of the simulation.
 
         Returns:
             An array of updated effective wind speeds at each turbine.
