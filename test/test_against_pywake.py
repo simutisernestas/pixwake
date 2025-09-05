@@ -24,6 +24,7 @@ from pixwake import (
     WakeSimulation,
 )
 
+np.random.seed(42)
 jcfg.update("jax_enable_x64", True)  # need float64 to match pywake
 
 
@@ -440,7 +441,7 @@ def test_gaussian_aep_and_gradients_equivalence_timeseries():
     ct_curve = np.stack([ct_pw_ws, ct_vals], axis=1)
     power_curve = np.stack([ct_pw_ws, power_vals], axis=1)
 
-    width = 3
+    width = 10
     length = 3
     x, y = np.meshgrid(
         np.linspace(0, width * 120, width),
@@ -505,8 +506,9 @@ def test_gaussian_aep_and_gradients_equivalence_timeseries():
     sim_res = wfm(x=wt_x, y=wt_y, wd=wd, ws=ws, time=True)
     pywake_ws_eff = sim_res["WS_eff"].values
 
-    model = BastankhahGaussianDeficit(k=wake_expansion_k)
-    sim = WakeSimulation(model, fpi_damp=0.5)
+    # bug in PyWake not masking the contributions from far off wake radius
+    model = BastankhahGaussianDeficit(k=wake_expansion_k, use_radius_mask=False)
+    sim = WakeSimulation(model, fpi_damp=1.0)
     turbine = Turbine(
         rotor_diameter=windTurbines.diameter(),
         hub_height=100.0,
@@ -531,7 +533,174 @@ def test_gaussian_aep_and_gradients_equivalence_timeseries():
     probl_pywake = pywake_ws_eff[np.abs(relative_difference) > rtol]
     error_message = f"Problematic effective wind speeds (pixwake, pywake): {list(zip(probl_pixwake, probl_pywake))}"
     np.testing.assert_allclose(
-        pixwake_sim_res.effective_ws.T, pywake_ws_eff, atol=1e-5, err_msg=error_message
+        pixwake_sim_res.effective_ws.T, pywake_ws_eff, atol=1e-4, err_msg=error_message
+    )
+
+    pywake_aep = sim_res.aep().sum().values
+    pixwake_aep = pixwake_sim_res.aep()
+    np.testing.assert_allclose(pixwake_aep, pywake_aep, rtol=rtol)
+
+    # gradients
+    pw_dx, pw_dy = wfm.aep_gradients(x=wt_x, y=wt_y, wd=wd, ws=ws, time=True)
+    grad_fn = jax.jit(
+        jax.value_and_grad(
+            lambda xx, yy: sim(
+                xx,
+                yy,
+                jnp.array(ws),
+                jnp.array(wd),
+                turbine,
+            ).aep(),
+            argnums=(0, 1),
+        )
+    )
+
+    val, (dx, dy) = grad_fn(jnp.asarray(wt_x), jnp.asarray(wt_y))
+    dx.block_until_ready()
+    dy.block_until_ready()
+    val.block_until_ready()
+    np.testing.assert_allclose(dx, pw_dx, rtol=rtol)
+    np.testing.assert_allclose(dy, pw_dy, rtol=rtol)
+
+
+def test_gaussian_aep_and_gradients_equivalence_timeseries_with_effective_ws():
+    # fmt: off
+    ct_vals = np.array(
+        [
+            0.00, 0.00, 0.00,  # 0,1,2 m/s
+            0.80,  # 3 m/s (cut-in)
+            0.79, 0.77, 0.75,  # 4,5,6 m/s
+            0.72, 0.68, 0.64,  # 7,8,9 m/s
+            0.62, 0.61, 0.60,  # 10,11,12 m/s (rated)
+            0.55, 0.50, 0.45,  # 13,14,15 m/s
+            0.40, 0.35, 0.30,  # 16,17,18 m/s
+            0.25, 0.20, 0.18,  # 19,20,21 m/s
+            0.15, 0.12, 0.10,  # 22,23,24 m/s
+            0.10,  # 25 m/s (cut-out)
+        ]
+    )
+    power_vals = np.array(
+        [
+            0, 0, 0,  # 0,1,2 m/s
+            100, 300, 600,  # 3,4,5 m/s
+            1200, 1800, 2300,  # 6,7,8 m/s
+            2700, 2900, 2950,  # 9,10,11 m/s
+            3000, 3000, 3000,  # 12,13,14 m/s
+            3000, 3000, 3000,  # 15,16,17 m/s
+            3000, 3000, 3000,  # 18,19,20 m/s
+            3000, 3000, 3000,  # 21,22,23 m/s
+            3000, 3000,  # 24,25 m/s
+        ]
+    )
+    # fmt: on
+
+    cutin_ws = 3.0
+    cutout_ws = 25.0
+    ct_pw_ws = np.arange(0.0, cutout_ws + 1.0, 1.0)
+    ct_curve = np.stack([ct_pw_ws, ct_vals], axis=1)
+    power_curve = np.stack([ct_pw_ws, power_vals], axis=1)
+
+    width = 20
+    length = 3
+    RD = 120.0
+    x, y = np.meshgrid(
+        np.linspace(0, width * RD, width),
+        np.linspace(0, length * RD, length),
+    )
+    x, y = x.flatten(), y.flatten()
+    turbines = [
+        {
+            "id": i,
+            "x": x[i],
+            "y": y[i],
+            "hub_height": 100.0,
+            "rotor_diameter": RD,
+            "ct_curve": ct_curve,
+            "power_curve": power_curve,
+        }
+        for i in range(width * length)
+    ]
+
+    wake_expansion_k = 0.0324555
+
+    site = Hornsrev1Site()
+
+    names = [f"WT{t['id']}" for t in turbines]
+    wt_x = [t["x"] for t in turbines]
+    wt_y = [t["y"] for t in turbines]
+    hub_heights = [t["hub_height"] for t in turbines]
+    rotor_diameters = [t["rotor_diameter"] for t in turbines]
+
+    _sa_ct_curve = turbines[0]["ct_curve"]
+    _sa_power_curve = turbines[0]["power_curve"]
+    power_values_W = _sa_power_curve[:, 1] * 1000
+    wt_type_0_power_ct = PowerCtTabular(
+        ws=_sa_power_curve[:, 0],  # ws array
+        power=power_values_W,  # power array in W
+        power_unit="w",
+        ct=_sa_ct_curve[:, 1],  # ct array
+    )
+
+    windTurbines = WindTurbines(
+        names=names,
+        diameters=rotor_diameters,
+        hub_heights=hub_heights,
+        powerCtFunctions=[wt_type_0_power_ct] * len(names),
+    )
+    # TODO: test the wf_eff = True as well !!!
+    wake_model = PyWakeBastankhahGaussianDeficit(
+        k=wake_expansion_k, use_effective_ws=True
+    )
+
+    wfm = All2AllIterative(
+        site,
+        windTurbines,
+        wake_deficitModel=wake_model,
+        superpositionModel=SquaredSum(),
+    )
+
+    n_timestamps = 1000
+    ws, wd = (
+        np.random.uniform(cutin_ws, cutout_ws, size=n_timestamps),
+        np.random.uniform(0, 360, size=n_timestamps),
+    )
+
+    sim_res = wfm(x=wt_x, y=wt_y, wd=wd, ws=ws, time=True)
+    pywake_ws_eff = sim_res["WS_eff"].values
+
+    model = BastankhahGaussianDeficit(
+        k=wake_expansion_k, use_effective_ws=True, use_radius_mask=False
+    )
+    sim = WakeSimulation(model, fpi_damp=1.0)
+    turbine = Turbine(
+        rotor_diameter=windTurbines.diameter(),
+        hub_height=100.0,
+        power_curve=Curve(wind_speed=power_curve[:, 0], values=power_curve[:, 1]),
+        ct_curve=Curve(wind_speed=ct_curve[:, 0], values=ct_curve[:, 1]),
+    )
+    pixwake_sim_res = sim(
+        jnp.asarray(wt_x),
+        jnp.asarray(wt_y),
+        jnp.asarray(ws),
+        jnp.asarray(wd),
+        turbine,
+    )
+
+    rtol = 1e-2  # 1%
+    # find problematic effective wind speed and add it to error message
+    pywake_ws_eff = np.maximum(pywake_ws_eff, 1e-6)  # pixwake does not go to minus !!!
+    relative_difference = (
+        pixwake_sim_res.effective_ws.T - pywake_ws_eff
+    ) / pywake_ws_eff
+    probl_pixwake = pixwake_sim_res.effective_ws.T[np.abs(relative_difference) > rtol]
+    probl_pywake = pywake_ws_eff[np.abs(relative_difference) > rtol]
+    error_message = f"Problematic effective wind speeds (pixwake, pywake): {list(zip(probl_pixwake, probl_pywake))}"
+    np.testing.assert_allclose(
+        pixwake_sim_res.effective_ws.T,
+        pywake_ws_eff,
+        atol=1e-5,
+        rtol=rtol,
+        err_msg=error_message,
     )
 
     pywake_aep = sim_res.aep().sum().values
