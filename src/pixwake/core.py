@@ -281,7 +281,14 @@ def fixed_point(
         x_damped = damp * x_new + (1 - damp) * x
         return x, x_damped, it + 1
 
+    # TODO: for debugging should implement this version to not trace any objects
+    # carry = (x_guess, f(x_guess, ctx), 0)
+    # while cond_fun(carry):
+    #     carry = body_fun(carry)
+    # _, x_star, it = carry
+
     _, x_star, it = while_loop(cond_fun, body_fun, (x_guess, f(x_guess, ctx), 0))
+    # TODO: remove !
     # jax.debug.print("\nFixed point found after {it} iterations", it=it)
     return x_star
 

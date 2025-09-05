@@ -18,10 +18,11 @@ class BastankhahGaussianDeficit(WakeDeficitModel):
     def __init__(
         self,
         k: float,
-        use_effective_ws: bool = False,
         ceps: float = 0.2,
         ctlim: float = 0.899,
         ct2a: Callable = ct2a_madsen,
+        use_effective_ws: bool = False,
+        use_radius_mask: bool = True,
     ) -> None:
         """Initializes the BastankhahGaussianDeficit model.
 
@@ -36,70 +37,75 @@ class BastankhahGaussianDeficit(WakeDeficitModel):
         self.ceps = ceps
         self.ctlim = ctlim
         self.ct2a = ct2a
+        self.use_radius_mask = use_radius_mask
 
     def compute_deficit(
         self, ws_eff: jnp.ndarray, ctx: SimulationContext
     ) -> jnp.ndarray:
-        """Computes the wake deficit using the Bastankhah-Gaussian model.
-
-        Args:
-            ws_eff: An array of effective wind speeds at each turbine.
-            ctx: The context of the simulation.
-
-        Returns:
-            An array of updated effective wind speeds at each turbine.
-        """
         x_d, y_d = self.get_downwind_crosswind_distances(ctx.xs, ctx.ys, ctx.wd)
 
-        ct_eff = ctx.turbine.ct(ws_eff)
+        # per-source Ct (1d, length n_sources)
+        ct_src = ctx.turbine.ct(ws_eff)
 
-        # Mask for upstream turbines
+        # Mask for upstream turbines (receivers x sources)
         mask = x_d > 0
 
-        # Small epsilon to avoid division by zero and sqrt of negative numbers
         eps = get_eps()
 
-        # According to the PyWake implementation:
-        # beta = 1/2 * (1 + sqrt(1-ct)) / sqrt(1-ct)
+        # beta computed per source (1d)
         sqrt_1_minus_ct = jnp.sqrt(
-            jnp.maximum(eps, 1.0 - jnp.minimum(self.ctlim, ct_eff))
+            jnp.maximum(eps, 1.0 - jnp.minimum(self.ctlim, ct_src))
         )
         beta = 0.5 * (1.0 + sqrt_1_minus_ct) / sqrt_1_minus_ct
 
-        # sigma_sqr = (k * dw / D + ceps * sqrt(beta))**2
-        # In pixwake, D_src is a scalar.
         D_src = ctx.turbine.rotor_diameter
 
-        # x_d is (n_turbines, n_turbines), D_src is a scalar.
+        # epsilon per source (1d); make broadcasting explicit below
         epsilon_ilk = self.ceps * jnp.sqrt(beta)
-        sigma_term = self.k * x_d / D_src + epsilon_ilk
+
+        # sigma_term: x_d has shape (n_receivers, n_sources).
+        # We add epsilon_ilk broadcast along the source axis (columns).
+        sigma_term = self.k * x_d / D_src + epsilon_ilk[None, :]  # shape (R, S)
         sigma_sqr = sigma_term**2
 
-        ct_eff = ct_eff / (8.0 * sigma_sqr + eps)
+        # # according to Niayifar, the wake radius is twice sigma
+        # wake_radius = 2.0 * sigma_term * D_src  # shape (R, S)
+        # radius_mask = jnp.abs(y_d) < wake_radius
 
-        # deficit_centre = ws_ref * 2 * ct2a(ct_eff)
-        # ws_ref is a scalar in the single-case simulation.
-        deficit_centre = jnp.minimum(1.0, 2.0 * self.ct2a(ct_eff))
+        # ct_eff_matrix per (receiver, source): use ct_src broadcast to source axis
+        ct_eff_matrix = ct_src[None, :] / (8.0 * sigma_sqr + eps)  # shape (R, S)
 
-        # sigma_dimensional_sqr = sigma_sqr * D_src**2
+        # deficit centre (fraction) per (receiver, source)
+        deficit_centre = jnp.minimum(1.0, 2.0 * self.ct2a(ct_eff_matrix))
+
         sigma_dimensional_sqr = sigma_sqr * (D_src**2)
 
-        # exponent = -1 / (2 * sigma_dimensional_sqr) * cw**2
         exponent = -1.0 / (2.0 * sigma_dimensional_sqr + eps) * (y_d**2)
 
-        # deficit = deficit_centre * exp(exponent)
-        deficit_matrix = deficit_centre * jnp.exp(exponent)
+        # fraction of the source reference wind speed lost at each receiver
+        deficit_fraction_matrix = deficit_centre * jnp.exp(exponent)  # shape (R, S)
 
-        # Apply mask
-        deficit_matrix = jnp.where(mask, deficit_matrix, 0.0)
+        # get reference wind per source: either per-source effective ws or ambient ws
+        if self.use_effective_ws:
+            ws_ref_sources = ws_eff  # shape (S,)
+        else:
+            ws_ref_sources = jnp.full_like(ws_eff, ctx.ws)  # shape (S,)
 
-        # Combine deficits in quadrature
-        total_deficit = jnp.sqrt(jnp.sum(deficit_matrix**2, axis=1) + eps)
+        # convert fractions to absolute deficits (m/s) using each *source* reference
+        deficit_abs_matrix = deficit_fraction_matrix * ws_ref_sources[None, :]  # (R, S)
 
-        # PyWake uses effective wind speed for the reference wind speed if the
-        # use_effective_ws flag is set. In pixwake, inside the single-case
-        # simulation, ws is a scalar.
-        ws_ref = ws_eff if self.use_effective_ws else ctx.ws
+        if self.use_radius_mask:
+            sigma = jnp.sqrt(sigma_sqr)  # nondimensional sigma
+            wake_radius = 2.0 * sigma * D_src  # dimensional radius
+            inside_wake = jnp.abs(y_d) <= wake_radius
+            mask &= inside_wake
 
-        # New effective wind speed
-        return jnp.maximum(0.0, ws_ref * (1.0 - total_deficit))
+        # apply upstream mask
+        deficit_abs_matrix = jnp.where(mask, deficit_abs_matrix, 0.0)
+
+        # combine absolute deficits in quadrature and subtract from ambient
+        total_abs_deficit = jnp.sqrt(jnp.sum(deficit_abs_matrix**2, axis=1) + eps)
+
+        new_ws = jnp.maximum(0.0, ctx.ws - total_abs_deficit)
+
+        return new_ws
