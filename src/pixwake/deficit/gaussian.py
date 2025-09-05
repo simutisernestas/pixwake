@@ -17,7 +17,7 @@ class BastankhahGaussianDeficit(WakeDeficitModel):
 
     def __init__(
         self,
-        k: float,
+        k: float = 0.0324555,
         ceps: float = 0.2,
         ctlim: float = 0.899,
         ct2a: Callable = ct2a_madsen,
