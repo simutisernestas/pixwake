@@ -78,8 +78,6 @@ class SimulationContext:
         ws: The free-stream wind speed.
         wd: The wind direction.
         turbine: The turbine object used in the simulation.
-        x: An array of x-coordinates for flow map evaluation points (optional).
-        y: An array of y-coordinates for flow map evaluation points (optional).
     """
 
     xs: jnp.ndarray
@@ -87,8 +85,6 @@ class SimulationContext:
     ws: jnp.ndarray
     wd: jnp.ndarray
     turbine: Turbine
-    x: jnp.ndarray | None = None
-    y: jnp.ndarray | None = None
 
 
 @dataclass
@@ -97,16 +93,14 @@ class SimulationResult:
     Attributes:
         effective_ws: Effective wind speeds at each turbine for each wind condition.
         turbine: The turbine object used in the simulation.
-        flow_map_ws: Wind speeds at the evaluation points (optional).
     """
 
     effective_ws: jnp.ndarray
-    turbine: Turbine
-    flow_map_ws: jnp.ndarray | None = None
+    ctx: SimulationContext
 
     def power(self) -> jnp.ndarray:
         """Calculates the power of each turbine for each wind condition."""
-        return self.turbine.power(self.effective_ws)
+        return self.ctx.turbine.power(self.effective_ws)
 
     def aep(self, probabilities: jnp.ndarray | None = None) -> jnp.ndarray:
         """Calculates the Annual Energy Production (AEP) of a wind farm."""
@@ -125,27 +119,6 @@ class SimulationResult:
             turbine_powers * probabilities * hours_in_year * gwh_conversion_factor
         ).sum()
 
-    def plot_flow_map(
-        self,
-        grid_x: jnp.ndarray,
-        grid_y: jnp.ndarray,
-    ) -> None:  # pragma: no cover
-        """Plots the wind farm flow map."""
-        if self.flow_map_ws is None:
-            raise ValueError("Flow map data is not available.")
-
-        import matplotlib.pyplot as plt
-
-        flow_map_ws_grid = self.flow_map_ws.reshape(grid_x.shape)
-
-        plt.figure(figsize=(10, 8))
-        plt.contourf(grid_x, grid_y, flow_map_ws_grid, cmap="viridis")
-        plt.colorbar(label="Wind Speed (m/s)")
-        plt.title("Wind Farm Flow Map")
-        plt.xlabel("x-coordinates")
-        plt.ylabel("y-coordinates")
-        plt.show()
-
 
 class WakeSimulation:
     """The main class for running wind farm wake simulations.
@@ -159,6 +132,7 @@ class WakeSimulation:
     def __init__(
         self,
         model: Any,
+        turbine: Turbine | None = None,  # TODO: !!!
         fpi_damp: float = 0.5,
         fpi_tol: float = 1e-6,
         mapping_strategy: str = "vmap",
@@ -176,6 +150,7 @@ class WakeSimulation:
         self.mapping_strategy = mapping_strategy
         self.fpi_damp = fpi_damp
         self.fpi_tol = fpi_tol
+        self.turbine = turbine
 
         self.__sim_call_table: dict[str, Callable] = {
             "vmap": self._simulate_vmap,
@@ -190,8 +165,6 @@ class WakeSimulation:
         ws: jnp.ndarray,
         wd: jnp.ndarray,
         turbine: Turbine,
-        x: jnp.ndarray | None = None,
-        y: jnp.ndarray | None = None,
     ) -> SimulationResult:
         """Runs the wake simulation.
         Args:
@@ -216,26 +189,35 @@ class WakeSimulation:
         ws = jnp.asarray(ws)
         wd = jnp.asarray(wd)
 
-        ctx = SimulationContext(xs, ys, ws, wd, turbine, x, y)
-
+        ctx = SimulationContext(xs, ys, ws, wd, turbine)
         sim_func = self.__sim_call_table[self.mapping_strategy]
-        eff_ws = sim_func(ctx)
+        return SimulationResult(effective_ws=sim_func(ctx), ctx=ctx)
 
-        if x is not None and y is not None:
-            flow_map_ws = jax.vmap(
-                lambda w, d, e: self.model.compute_deficit(
-                    e,
-                    SimulationContext(xs, ys, w, d, turbine),
-                    xs_r=x,
-                    ys_r=y,
-                )
-            )(ws, wd, eff_ws)
-        else:
-            flow_map_ws = None
+    def flow_map(
+        self,
+        wt_x: jnp.ndarray,
+        wt_y: jnp.ndarray,
+        fm_x: jnp.ndarray | None = None,  # TODO: handle None
+        fm_y: jnp.ndarray | None = None,  # TODO: handle None
+        ws: float | jnp.ndarray = 10.0,
+        wd: float | jnp.ndarray = 270.0,
+    ) -> jnp.ndarray:
+        # TODO: replace with a call to self !
+        ws = jnp.atleast_1d(ws)
+        wd = jnp.atleast_1d(wd)
 
-        return SimulationResult(
-            effective_ws=eff_ws, turbine=turbine, flow_map_ws=flow_map_ws
-        )
+        ctx = SimulationContext(wt_x, wt_y, ws, wd, self.turbine)
+        sim_func = self.__sim_call_table[self.mapping_strategy]
+        effective_ws = sim_func(ctx)
+
+        return jax.vmap(
+            lambda _ws, _wd, _ws_eff: self.model.compute_deficit(
+                _ws_eff,
+                SimulationContext(ctx.xs, ctx.ys, _ws, _wd, ctx.turbine),
+                xs_r=fm_x,
+                ys_r=fm_y,
+            )
+        )(ws, wd, effective_ws)
 
     def _simulate_vmap(
         self,
