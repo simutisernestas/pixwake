@@ -40,9 +40,20 @@ class BastankhahGaussianDeficit(WakeDeficitModel):
         self.use_radius_mask = use_radius_mask
 
     def compute_deficit(
-        self, ws_eff: jnp.ndarray, ctx: SimulationContext
+        self,
+        ws_eff: jnp.ndarray,
+        ctx: SimulationContext,
+        xs_r: jnp.ndarray | None = None,
+        ys_r: jnp.ndarray | None = None,
     ) -> jnp.ndarray:
-        x_d, y_d = self.get_downwind_crosswind_distances(ctx.xs, ctx.ys, ctx.wd)
+        if xs_r is None:
+            xs_r = ctx.xs
+        if ys_r is None:
+            ys_r = ctx.ys
+
+        x_d, y_d = self.get_downwind_crosswind_distances(
+            ctx.xs, ctx.ys, xs_r, ys_r, ctx.wd
+        )
 
         # per-source Ct (1d, length n_sources)
         ct_src = ctx.turbine.ct(ws_eff)
@@ -109,48 +120,3 @@ class BastankhahGaussianDeficit(WakeDeficitModel):
         new_ws = jnp.maximum(0.0, ctx.ws - total_abs_deficit)
 
         return new_ws
-
-    def flow_map(self, ws_eff: jnp.ndarray, ctx: SimulationContext) -> jnp.ndarray:
-        if ctx.x is None or ctx.y is None:
-            raise ValueError("x and y coordinates must be provided for flow map.")
-
-        x_d, y_d = self._get_downwind_crosswind_distances(
-            ctx.xs, ctx.ys, ctx.x, ctx.y, ctx.wd
-        )
-
-        ct_src = ctx.turbine.ct(ws_eff)
-        mask = x_d > 0
-        eps = get_eps()
-
-        sqrt_1_minus_ct = jnp.sqrt(
-            jnp.maximum(eps, 1.0 - jnp.minimum(self.ctlim, ct_src))
-        )
-        beta = 0.5 * (1.0 + sqrt_1_minus_ct) / sqrt_1_minus_ct
-
-        D_src = ctx.turbine.rotor_diameter
-        epsilon_ilk = self.ceps * jnp.sqrt(beta)
-        sigma_term = self.k * x_d / D_src + epsilon_ilk[None, :]
-        sigma_sqr = sigma_term**2
-
-        ct_eff_matrix = ct_src[None, :] / (8.0 * sigma_sqr + eps)
-        deficit_centre = jnp.minimum(1.0, 2.0 * self.ct2a(ct_eff_matrix))
-        sigma_dimensional_sqr = sigma_sqr * (D_src**2)
-        exponent = -1.0 / (2.0 * sigma_dimensional_sqr + eps) * (y_d**2)
-        deficit_fraction_matrix = deficit_centre * jnp.exp(exponent)
-
-        if self.use_effective_ws:
-            ws_ref_sources = ws_eff
-        else:
-            ws_ref_sources = jnp.full_like(ws_eff, ctx.ws)
-
-        deficit_abs_matrix = deficit_fraction_matrix * ws_ref_sources[None, :]
-
-        if self.use_radius_mask:
-            sigma = jnp.sqrt(sigma_sqr)
-            wake_radius = 2.0 * sigma * D_src
-            inside_wake = jnp.abs(y_d) <= wake_radius
-            mask &= inside_wake
-
-        deficit_abs_matrix = jnp.where(mask, deficit_abs_matrix, 0.0)
-        total_abs_deficit = jnp.sqrt(jnp.sum(deficit_abs_matrix**2, axis=1) + eps)
-        return jnp.maximum(0.0, ctx.ws - total_abs_deficit)

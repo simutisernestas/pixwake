@@ -222,28 +222,20 @@ class WakeSimulation:
         eff_ws = sim_func(ctx)
 
         if x is not None and y is not None:
-            flow_map_ws = self._flow_map_vmap(ctx, eff_ws)
+            flow_map_ws = jax.vmap(
+                lambda w, d, e: self.model.compute_deficit(
+                    e,
+                    SimulationContext(xs, ys, w, d, turbine),
+                    xs_r=x,
+                    ys_r=y,
+                )
+            )(ws, wd, eff_ws)
         else:
             flow_map_ws = None
 
         return SimulationResult(
             effective_ws=eff_ws, turbine=turbine, flow_map_ws=flow_map_ws
         )
-
-    def _flow_map_vmap(
-        self,
-        ctx: SimulationContext,
-        eff_ws: jnp.ndarray,
-    ) -> jnp.ndarray:
-        """Calculates the flow map for multiple wind conditions using jax.vmap."""
-
-        def _single_case(ws: jnp.ndarray, wd: jnp.ndarray, eff_ws_case) -> jnp.ndarray:
-            single_ctx = SimulationContext(
-                ctx.xs, ctx.ys, ws, wd, ctx.turbine, ctx.x, ctx.y
-            )
-            return self.model.flow_map(eff_ws_case, single_ctx)
-
-        return jax.vmap(_single_case)(ctx.ws, ctx.wd, eff_ws)
 
     def _simulate_vmap(
         self,

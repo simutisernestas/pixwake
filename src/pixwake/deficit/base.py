@@ -12,20 +12,32 @@ class WakeDeficitModel(ABC):
         """Initializes the WakeDeficitModel."""
         pass
 
-    def __call__(self, ws_eff: jnp.ndarray, ctx: SimulationContext) -> jnp.ndarray:
+    def __call__(
+        self,
+        ws_eff: jnp.ndarray,
+        ctx: SimulationContext,
+        xs_r: jnp.ndarray | None = None,
+        ys_r: jnp.ndarray | None = None,
+    ) -> jnp.ndarray:
         """A wrapper around the compute_deficit method.
 
         Args:
             ws_eff: An array of effective wind speeds at each turbine.
             ctx: The context of the simulation.
+            xs_r: An array of x-coordinates for each receiver point (optional).
+            ys_r: An array of y-coordinates for each receiver point (optional).
 
         Returns:
             The updated effective wind speeds.
         """
-        return self.compute_deficit(ws_eff, ctx)
+        return self.compute_deficit(ws_eff, ctx, xs_r, ys_r)
 
     def compute_deficit(
-        self, ws_eff: jnp.ndarray, ctx: SimulationContext
+        self,
+        ws_eff: jnp.ndarray,
+        ctx: SimulationContext,
+        xs_r: jnp.ndarray | None = None,
+        ys_r: jnp.ndarray | None = None,
     ) -> jnp.ndarray:  # pragma: no cover
         """Computes the wake deficit.
 
@@ -34,14 +46,17 @@ class WakeDeficitModel(ABC):
         Args:
             ws_eff: An array of effective wind speeds at each turbine.
             ctx: The context of the simulation.
+            xs_r: An array of x-coordinates for each receiver point (optional).
+            ys_r: An array of y-coordinates for each receiver point (optional).
+
 
         Raises:
             NotImplementedError: If the method is not implemented by a subclass.
         """
-        _ = (ws_eff, ctx)
+        _ = (ws_eff, ctx, xs_r, ys_r)
         raise NotImplementedError
 
-    def _get_downwind_crosswind_distances(
+    def get_downwind_crosswind_distances(
         self,
         xs_s: jnp.ndarray,
         ys_s: jnp.ndarray,
@@ -69,35 +84,3 @@ class WakeDeficitModel(ABC):
         x_d = -(dx * cos_a + dy * sin_a)
         y_d = dx * sin_a - dy * cos_a
         return x_d, y_d
-
-    def get_downwind_crosswind_distances(
-        self, xs: jnp.ndarray, ys: jnp.ndarray, wd: jnp.ndarray
-    ) -> tuple[jnp.ndarray, jnp.ndarray]:
-        """Calculates the downwind and crosswind distances between turbines.
-
-        Args:
-            xs: An array of x-coordinates for each turbine.
-            ys: An array of y-coordinates for each turbine.
-            wd: The wind direction.
-
-        Returns:
-            A tuple containing the downwind and crosswind distances.
-        """
-        return self._get_downwind_crosswind_distances(xs, ys, xs, ys, wd)
-
-    def flow_map(
-        self, ws_eff: jnp.ndarray, ctx: SimulationContext
-    ) -> jnp.ndarray:  # pragma: no cover
-        """Computes the wind speed on a grid.
-
-        This method must be implemented by subclasses.
-
-        Args:
-            ws_eff: An array of effective wind speeds at each turbine.
-            ctx: The context of the simulation.
-
-        Raises:
-            NotImplementedError: If the method is not implemented by a subclass.
-        """
-        _ = (ws_eff, ctx)
-        raise NotImplementedError

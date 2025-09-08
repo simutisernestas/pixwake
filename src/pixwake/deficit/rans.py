@@ -138,6 +138,8 @@ class RANSDeficit(WakeDeficitModel):
         self,
         ws_eff: jnp.ndarray,
         ctx: SimulationContext,
+        xs_r: jnp.ndarray | None = None,
+        ys_r: jnp.ndarray | None = None,
         use_effective: bool = True,
     ) -> jnp.ndarray:
         """Computes the wake deficit using the RANS surrogate model.
@@ -149,6 +151,8 @@ class RANSDeficit(WakeDeficitModel):
         Args:
             ws_eff: An array of effective wind speeds at each turbine.
             ctx: The context of the simulation.
+            xs_r: An array of x-coordinates for each receiver point (optional).
+            ys_r: An array of y-coordinates for each receiver point (optional).
             use_effective: A boolean flag to control the deficit calculation.
                 - If True (default), the deficit is calculated as an absolute
                   reduction in wind speed, proportional to the effective wind
@@ -159,7 +163,14 @@ class RANSDeficit(WakeDeficitModel):
         Returns:
             An array of updated effective wind speeds at each turbine.
         """
-        x_d, y_d = self.get_downwind_crosswind_distances(ctx.xs, ctx.ys, ctx.wd)
+        if xs_r is None:
+            xs_r = ctx.xs
+        if ys_r is None:
+            ys_r = ctx.ys
+
+        x_d, y_d = self.get_downwind_crosswind_distances(
+            ctx.xs, ctx.ys, xs_r, ys_r, ctx.wd
+        )
         x_d /= ctx.turbine.rotor_diameter
         y_d /= ctx.turbine.rotor_diameter
         ct_eff = ctx.turbine.ct(ws_eff)
@@ -193,45 +204,5 @@ class RANSDeficit(WakeDeficitModel):
         if use_effective:
             deficit *= ws_eff
             return jnp.maximum(0.0, ctx.ws - deficit)  # (N,)
-
-        return jnp.maximum(0.0, ctx.ws * (1.0 - deficit))
-
-    def flow_map(self, ws_eff: jnp.ndarray, ctx: SimulationContext) -> jnp.ndarray:
-        if ctx.x is None or ctx.y is None:
-            raise ValueError("x and y coordinates must be provided for flow map.")
-
-        x_d, y_d = self._get_downwind_crosswind_distances(
-            ctx.xs, ctx.ys, ctx.x, ctx.y, ctx.wd
-        )
-
-        x_d /= ctx.turbine.rotor_diameter
-        y_d /= ctx.turbine.rotor_diameter
-        ct_eff = ctx.turbine.ct(ws_eff)
-
-        in_domain_mask = (x_d < 70) & (x_d > -3) & (jnp.abs(y_d) < 6)
-
-        def _predict(
-            model: nn.Module, params: Any, ti: float | jnp.ndarray
-        ) -> jnp.ndarray:
-            """A helper function to run predictions with the Flax models."""
-            md_input = jnp.stack(
-                [
-                    x_d,
-                    y_d,
-                    jnp.zeros_like(x_d),
-                    jnp.full_like(x_d, ti),
-                    jnp.zeros_like(x_d),
-                    jnp.broadcast_to(ct_eff, x_d.shape),
-                ],
-                axis=-1,
-            ).reshape(-1, 6)
-            nn_out = jnp.array(model.apply(params, md_input)).reshape(x_d.shape)
-            return jnp.where(in_domain_mask, nn_out, 0.0).sum(axis=1)
-
-        effective_ti = self.ambient_ti + _predict(
-            self.turbulence_model, self.ti_weights, self.ambient_ti
-        )
-
-        deficit = _predict(self.deficit_model, self.deficit_weights, effective_ti)
 
         return jnp.maximum(0.0, ctx.ws * (1.0 - deficit))
