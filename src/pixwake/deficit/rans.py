@@ -195,3 +195,43 @@ class RANSDeficit(WakeDeficitModel):
             return jnp.maximum(0.0, ctx.ws - deficit)  # (N,)
 
         return jnp.maximum(0.0, ctx.ws * (1.0 - deficit))
+
+    def flow_map(self, ws_eff: jnp.ndarray, ctx: SimulationContext) -> jnp.ndarray:
+        if ctx.x is None or ctx.y is None:
+            raise ValueError("x and y coordinates must be provided for flow map.")
+
+        x_d, y_d = self._get_downwind_crosswind_distances(
+            ctx.xs, ctx.ys, ctx.x, ctx.y, ctx.wd
+        )
+
+        x_d /= ctx.turbine.rotor_diameter
+        y_d /= ctx.turbine.rotor_diameter
+        ct_eff = ctx.turbine.ct(ws_eff)
+
+        in_domain_mask = (x_d < 70) & (x_d > -3) & (jnp.abs(y_d) < 6)
+
+        def _predict(
+            model: nn.Module, params: Any, ti: float | jnp.ndarray
+        ) -> jnp.ndarray:
+            """A helper function to run predictions with the Flax models."""
+            md_input = jnp.stack(
+                [
+                    x_d,
+                    y_d,
+                    jnp.zeros_like(x_d),
+                    jnp.full_like(x_d, ti),
+                    jnp.zeros_like(x_d),
+                    jnp.broadcast_to(ct_eff, x_d.shape),
+                ],
+                axis=-1,
+            ).reshape(-1, 6)
+            nn_out = jnp.array(model.apply(params, md_input)).reshape(x_d.shape)
+            return jnp.where(in_domain_mask, nn_out, 0.0).sum(axis=1)
+
+        effective_ti = self.ambient_ti + _predict(
+            self.turbulence_model, self.ti_weights, self.ambient_ti
+        )
+
+        deficit = _predict(self.deficit_model, self.deficit_weights, effective_ti)
+
+        return jnp.maximum(0.0, ctx.ws * (1.0 - deficit))

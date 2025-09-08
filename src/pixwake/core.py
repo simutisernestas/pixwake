@@ -78,6 +78,8 @@ class SimulationContext:
         ws: The free-stream wind speed.
         wd: The wind direction.
         turbine: The turbine object used in the simulation.
+        x: An array of x-coordinates for flow map evaluation points (optional).
+        y: An array of y-coordinates for flow map evaluation points (optional).
     """
 
     xs: jnp.ndarray
@@ -85,6 +87,8 @@ class SimulationContext:
     ws: jnp.ndarray
     wd: jnp.ndarray
     turbine: Turbine
+    x: jnp.ndarray | None = None
+    y: jnp.ndarray | None = None
 
 
 @dataclass
@@ -93,10 +97,12 @@ class SimulationResult:
     Attributes:
         effective_ws: Effective wind speeds at each turbine for each wind condition.
         turbine: The turbine object used in the simulation.
+        flow_map_ws: Wind speeds at the evaluation points (optional).
     """
 
     effective_ws: jnp.ndarray
     turbine: Turbine
+    flow_map_ws: jnp.ndarray | None = None
 
     def power(self) -> jnp.ndarray:
         """Calculates the power of each turbine for each wind condition."""
@@ -118,6 +124,27 @@ class SimulationResult:
         return (
             turbine_powers * probabilities * hours_in_year * gwh_conversion_factor
         ).sum()
+
+    def plot_flow_map(
+        self,
+        grid_x: jnp.ndarray,
+        grid_y: jnp.ndarray,
+    ) -> None:  # pragma: no cover
+        """Plots the wind farm flow map."""
+        if self.flow_map_ws is None:
+            raise ValueError("Flow map data is not available.")
+
+        import matplotlib.pyplot as plt
+
+        flow_map_ws_grid = self.flow_map_ws.reshape(grid_x.shape)
+
+        plt.figure(figsize=(10, 8))
+        plt.contourf(grid_x, grid_y, flow_map_ws_grid, cmap="viridis")
+        plt.colorbar(label="Wind Speed (m/s)")
+        plt.title("Wind Farm Flow Map")
+        plt.xlabel("x-coordinates")
+        plt.ylabel("y-coordinates")
+        plt.show()
 
 
 class WakeSimulation:
@@ -163,6 +190,8 @@ class WakeSimulation:
         ws: jnp.ndarray,
         wd: jnp.ndarray,
         turbine: Turbine,
+        x: jnp.ndarray | None = None,
+        y: jnp.ndarray | None = None,
     ) -> SimulationResult:
         """Runs the wake simulation.
         Args:
@@ -171,6 +200,8 @@ class WakeSimulation:
             ws: An array of free-stream wind speeds.
             wd: An array of wind directions.
             turbine: The turbine object to use in the simulation.
+            x: An array of x-coordinates for flow map evaluation points (optional).
+            y: An array of y-coordinates for flow map evaluation points (optional).
         Returns:
             A `SimulationResult` object containing relevant output information.
         """
@@ -185,9 +216,34 @@ class WakeSimulation:
         ws = jnp.asarray(ws)
         wd = jnp.asarray(wd)
 
+        ctx = SimulationContext(xs, ys, ws, wd, turbine, x, y)
+
         sim_func = self.__sim_call_table[self.mapping_strategy]
-        eff_ws = sim_func(SimulationContext(xs, ys, ws, wd, turbine))
-        return SimulationResult(effective_ws=eff_ws, turbine=turbine)
+        eff_ws = sim_func(ctx)
+
+        if x is not None and y is not None:
+            flow_map_ws = self._flow_map_vmap(ctx, eff_ws)
+        else:
+            flow_map_ws = None
+
+        return SimulationResult(
+            effective_ws=eff_ws, turbine=turbine, flow_map_ws=flow_map_ws
+        )
+
+    def _flow_map_vmap(
+        self,
+        ctx: SimulationContext,
+        eff_ws: jnp.ndarray,
+    ) -> jnp.ndarray:
+        """Calculates the flow map for multiple wind conditions using jax.vmap."""
+
+        def _single_case(ws: jnp.ndarray, wd: jnp.ndarray, eff_ws_case) -> jnp.ndarray:
+            single_ctx = SimulationContext(
+                ctx.xs, ctx.ys, ws, wd, ctx.turbine, ctx.x, ctx.y
+            )
+            return self.model.flow_map(eff_ws_case, single_ctx)
+
+        return jax.vmap(_single_case)(ctx.ws, ctx.wd, eff_ws)
 
     def _simulate_vmap(
         self,
@@ -235,7 +291,7 @@ class WakeSimulation:
         ctx: SimulationContext,
     ) -> jnp.ndarray:
         """Simulates a single wind condition."""
-        x0 = jnp.full_like(ctx.xs, ctx.ws)
+        x0 = jnp.full_like(ctx.xs, ctx.ws, dtype=jnp.float64)
         return fixed_point(self.model, x0, ctx, damp=self.fpi_damp, tol=self.fpi_tol)
 
 
