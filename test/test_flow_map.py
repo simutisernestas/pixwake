@@ -1,13 +1,14 @@
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from pixwake.core import Curve, Turbine, WakeSimulation
 from pixwake.deficit import BastankhahGaussianDeficit
 from pixwake.plot import plot_flow_map
 
 
-def test_flow_map():
-    """Test that the flow map is correctly generated and can be plotted."""
+@pytest.fixture
+def sim():
     sim = WakeSimulation(
         BastankhahGaussianDeficit(use_effective_ws=True, use_radius_mask=True),
         turbine=Turbine(
@@ -21,6 +22,11 @@ def test_flow_map():
             ),
         ),
     )
+    return sim
+
+
+def test_flow_map(sim):
+    """Test that the flow map is correctly generated and can be plotted."""
     xs = jnp.array([0, 500, 0, 1000])
     ys = jnp.array([0, 0, 500, 0])
     grid_density = 100
@@ -41,21 +47,8 @@ def test_flow_map():
     plot_flow_map(grid_x, grid_y, flow_map, xs, ys)
 
 
-def test_flow_map_ws_wd_args():
+def test_flow_map_ws_wd_args(sim):
     """Test that the flow map is correctly generated when ws and wd are provided."""
-    sim = WakeSimulation(
-        BastankhahGaussianDeficit(use_effective_ws=True, use_radius_mask=True),
-        turbine=Turbine(
-            rotor_diameter=126.0,
-            hub_height=80.0,
-            power_curve=Curve(
-                wind_speed=jnp.array([4.0, 25.0]), values=jnp.array([0.0, 5000.0])
-            ),
-            ct_curve=Curve(
-                wind_speed=jnp.array([4.0, 25.0]), values=jnp.array([0.8, 0.1])
-            ),
-        ),
-    )
     xs = jnp.array([0, 500, 0, 1000])
     ys = jnp.array([0, 0, 500, 0])
     grid_density = 100
@@ -81,21 +74,9 @@ def test_flow_map_ws_wd_args():
     plot_flow_map(fm_x, fm_y, flow_map[1], xs, ys)
 
 
-def test_flow_map_no_grid():
+def test_flow_map_no_grid(sim):
     """Test that the flow map is correctly generated when no grid is provided."""
-    sim = WakeSimulation(
-        BastankhahGaussianDeficit(use_effective_ws=True, use_radius_mask=True),
-        turbine=Turbine(
-            rotor_diameter=126.0,
-            hub_height=80.0,
-            power_curve=Curve(
-                wind_speed=jnp.array([4.0, 25.0]), values=jnp.array([0.0, 5000.0])
-            ),
-            ct_curve=Curve(
-                wind_speed=jnp.array([4.0, 25.0]), values=jnp.array([0.8, 0.1])
-            ),
-        ),
-    )
+
     xs = jnp.array([0, 500, 0, 1000])
     ys = jnp.array([0, 0, 500, 0])
 

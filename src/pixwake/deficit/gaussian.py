@@ -3,7 +3,7 @@ from typing import Callable
 import jax.numpy as jnp
 
 from ..core import SimulationContext
-from ..jax_utils import get_eps
+from ..jax_utils import get_float_eps
 from .base import WakeDeficitModel
 from .utils import ct2a_madsen
 
@@ -61,7 +61,7 @@ class BastankhahGaussianDeficit(WakeDeficitModel):
         # Mask for upstream turbines (receivers x sources)
         mask = x_d > 0
 
-        eps = get_eps()
+        eps = get_float_eps()
 
         # beta computed per source (1d)
         sqrt_1_minus_ct = jnp.sqrt(

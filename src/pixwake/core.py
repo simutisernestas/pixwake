@@ -7,6 +7,8 @@ from flax.struct import dataclass
 from jax import custom_vjp, vjp
 from jax.lax import while_loop
 
+from pixwake.jax_utils import default_float_type
+
 
 @dataclass
 class Curve:
@@ -286,7 +288,7 @@ class WakeSimulation:
         ctx: SimulationContext,
     ) -> jnp.ndarray:
         """Simulates a single wind condition."""
-        x0 = jnp.full_like(ctx.xs, ctx.ws, dtype=jnp.float64)
+        x0 = jnp.full_like(ctx.xs, ctx.ws, dtype=default_float_type())
         return fixed_point(self.model, x0, ctx, damp=self.fpi_damp, tol=self.fpi_tol)
 
     def _atleast_1d_jax(self, x: jnp.ndarray | float | list) -> jnp.ndarray:

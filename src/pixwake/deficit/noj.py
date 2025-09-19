@@ -3,7 +3,7 @@ from typing import Callable
 import jax.numpy as jnp
 
 from ..core import SimulationContext
-from ..jax_utils import get_eps
+from ..jax_utils import get_float_eps
 from .base import WakeDeficitModel
 from .utils import ct2a_madsen
 
@@ -62,11 +62,17 @@ class NOJDeficit(WakeDeficitModel):
         term = (
             2
             * a_coef
-            * ((ctx.turbine.rotor_diameter / 2) / jnp.maximum(wake_rad, get_eps())) ** 2
+            * (
+                (ctx.turbine.rotor_diameter / 2)
+                / jnp.maximum(wake_rad, get_float_eps())
+            )
+            ** 2
         )
 
         # combine deficits in quadrature
-        deficits = jnp.sqrt(jnp.sum(jnp.where(mask, term**2, 0.0), axis=1) + get_eps())
+        deficits = jnp.sqrt(
+            jnp.sum(jnp.where(mask, term**2, 0.0), axis=1) + get_float_eps()
+        )
 
         # new effective speed
         return jnp.maximum(0.0, ctx.ws * (1.0 - deficits))
