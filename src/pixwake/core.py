@@ -318,7 +318,6 @@ def fixed_point(
     # _, x_star, it = carry
 
     _, x_star, it = while_loop(cond_fun, body_fun, (x_guess, f(x_guess, ctx), 0))
-    # TODO: remove !
     # jax.debug.print("\nFixed point found after {it} iterations", it=it)
     return x_star
 

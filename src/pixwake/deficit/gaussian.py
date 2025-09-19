@@ -79,10 +79,6 @@ class BastankhahGaussianDeficit(WakeDeficitModel):
         sigma_term = self.k * x_d / D_src + epsilon_ilk[None, :]  # shape (R, S)
         sigma_sqr = sigma_term**2
 
-        # # according to Niayifar, the wake radius is twice sigma
-        # wake_radius = 2.0 * sigma_term * D_src  # shape (R, S)
-        # radius_mask = jnp.abs(y_d) < wake_radius
-
         # ct_eff_matrix per (receiver, source): use ct_src broadcast to source axis
         ct_eff_matrix = ct_src[None, :] / (8.0 * sigma_sqr + eps)  # shape (R, S)
 
@@ -105,9 +101,9 @@ class BastankhahGaussianDeficit(WakeDeficitModel):
         # convert fractions to absolute deficits (m/s) using each *source* reference
         deficit_abs_matrix = deficit_fraction_matrix * ws_ref_sources[None, :]  # (R, S)
 
+        # according to Niayifar, the wake radius is twice sigma
         if self.use_radius_mask:
-            sigma = jnp.sqrt(sigma_sqr)  # nondimensional sigma
-            wake_radius = 2.0 * sigma * D_src  # dimensional radius
+            wake_radius = 2.0 * sigma_term * D_src  # dimensional radius
             inside_wake = jnp.abs(y_d) <= wake_radius
             mask &= inside_wake
 

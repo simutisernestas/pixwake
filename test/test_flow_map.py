@@ -23,7 +23,10 @@ def test_flow_map():
     )
     xs = jnp.array([0, 500, 0, 1000])
     ys = jnp.array([0, 0, 500, 0])
-    grid_x, grid_y = np.mgrid[-100:2000:100j, -250:750:100j]
+    grid_density = 100
+    grid_x, grid_y = np.mgrid[
+        -100 : 2000 : grid_density * 1j, -250 : 750 : grid_density * 1j
+    ]
 
     flow_map = sim.flow_map(
         xs,
@@ -36,7 +39,7 @@ def test_flow_map():
     # TODO: test without grid arguments !
 
     assert flow_map is not None
-    assert flow_map.shape == (1, 10000)
+    assert flow_map.shape == (1, grid_density**2)
 
     # TODO: move inside the package!
     plt.figure(figsize=(10, 8))
@@ -44,7 +47,9 @@ def test_flow_map():
         grid_x, grid_y, flow_map.reshape(grid_x.shape), cmap="viridis", levels=100
     )
     plt.colorbar(label="Wind Speed (m/s)")
+    plt.scatter(xs, ys, color="red", marker="^", s=50, label="Turbines")
     plt.title("Wind Farm Flow Map")
     plt.xlabel("x-coordinates")
     plt.ylabel("y-coordinates")
+    plt.legend()
     plt.show()
