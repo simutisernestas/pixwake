@@ -191,10 +191,10 @@ class WakeSimulation:
                 raise ValueError("A turbine must be provided.")
             turbine = self.turbine
 
-        xs = jnp.asarray(xs)
-        ys = jnp.asarray(ys)
-        ws = jnp.asarray(ws)
-        wd = jnp.asarray(wd)
+        xs = self._atleast_1d_jax(xs)
+        ys = self._atleast_1d_jax(ys)
+        ws = self._atleast_1d_jax(ws)
+        wd = self._atleast_1d_jax(wd)
 
         ctx = SimulationContext(xs, ys, ws, wd, turbine)
         sim_func = self.__sim_call_table[self.mapping_strategy]
@@ -209,9 +209,10 @@ class WakeSimulation:
         ws: float | jnp.ndarray = 10.0,
         wd: float | jnp.ndarray = 270.0,
         turbine: Turbine | None = None,
-    ) -> jnp.ndarray:
-        ws = jnp.atleast_1d(ws)
-        wd = jnp.atleast_1d(wd)
+    ) -> tuple[jnp.ndarray, tuple[jnp.ndarray, jnp.ndarray]]:
+        """Generates a flow map for the wind farm."""
+        ws = self._atleast_1d_jax(ws)
+        wd = self._atleast_1d_jax(wd)
 
         if turbine is None:
             if self.turbine is None:
@@ -219,13 +220,13 @@ class WakeSimulation:
             turbine = self.turbine
 
         if fm_x is None or fm_y is None:
-            # TODO: make this more robust
             grid_res = 100
             x_min, x_max = jnp.min(wt_x) - 200, jnp.max(wt_x) + 200
             y_min, y_max = jnp.min(wt_y) - 200, jnp.max(wt_y) + 200
-            grid_x, grid_y = jnp.mgrid[
-                x_min : x_max : grid_res * 1j, y_min : y_max : grid_res * 1j
-            ]
+            grid_x, grid_y = jnp.meshgrid(
+                jnp.linspace(x_min, x_max, grid_res),
+                jnp.linspace(y_min, y_max, grid_res),
+            )
             fm_x, fm_y = grid_x.ravel(), grid_y.ravel()
 
         result = self(wt_x, wt_y, ws, wd, turbine)
@@ -237,7 +238,7 @@ class WakeSimulation:
                 xs_r=fm_x,
                 ys_r=fm_y,
             )
-        )(ws, wd, result.effective_ws)
+        )(ws, wd, result.effective_ws), (fm_x, fm_y)
 
     def _simulate_vmap(
         self,
@@ -287,6 +288,9 @@ class WakeSimulation:
         """Simulates a single wind condition."""
         x0 = jnp.full_like(ctx.xs, ctx.ws, dtype=jnp.float64)
         return fixed_point(self.model, x0, ctx, damp=self.fpi_damp, tol=self.fpi_tol)
+
+    def _atleast_1d_jax(self, x: jnp.ndarray | float | list) -> jnp.ndarray:
+        return jnp.atleast_1d(jnp.asarray(x))
 
 
 @partial(

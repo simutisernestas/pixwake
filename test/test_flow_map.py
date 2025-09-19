@@ -28,7 +28,7 @@ def test_flow_map():
         -100 : 2000 : grid_density * 1j, -250 : 750 : grid_density * 1j
     ]
 
-    flow_map = sim.flow_map(
+    flow_map, _ = sim.flow_map(
         xs,
         ys,
         fm_x=grid_x.ravel(),
@@ -63,7 +63,7 @@ def test_flow_map_ws_wd_args():
         -100 : 2000 : grid_density * 1j, -250 : 750 : grid_density * 1j
     ]
 
-    flow_map = sim.flow_map(
+    flow_map, (fm_x, fm_y) = sim.flow_map(
         xs,
         ys,
         fm_x=grid_x.ravel(),
@@ -74,6 +74,11 @@ def test_flow_map_ws_wd_args():
 
     assert flow_map is not None
     assert flow_map.shape == (2, grid_density**2)
+    assert fm_x.shape == (grid_density**2,)
+    assert fm_y.shape == (grid_density**2,)
+
+    plot_flow_map(fm_x, fm_y, flow_map[0], xs, ys)
+    plot_flow_map(fm_x, fm_y, flow_map[1], xs, ys)
 
 
 def test_flow_map_no_grid():
@@ -94,10 +99,12 @@ def test_flow_map_no_grid():
     xs = jnp.array([0, 500, 0, 1000])
     ys = jnp.array([0, 0, 500, 0])
 
-    flow_map = sim.flow_map(
+    flow_map, (fm_x, fm_y) = sim.flow_map(
         xs,
         ys,
     )
 
     assert flow_map is not None
     assert flow_map.shape == (1, 100**2)
+
+    plot_flow_map(fm_x, fm_y, flow_map[0], xs, ys)
