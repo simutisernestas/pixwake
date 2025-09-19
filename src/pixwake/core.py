@@ -132,7 +132,7 @@ class WakeSimulation:
     def __init__(
         self,
         model: Any,
-        turbine: Turbine | None = None,  # TODO: !!!
+        turbine: Turbine | None = None,
         fpi_damp: float = 0.5,
         fpi_tol: float = 1e-6,
         mapping_strategy: str = "vmap",
@@ -141,6 +141,7 @@ class WakeSimulation:
 
         Args:
             model: The wake model to use for the simulation.
+            turbine: An optional default turbine to use for simulations.
             fpi_damp: The damping factor for the fixed-point iteration.
             fpi_tol: The tolerance for the fixed-point iteration.
             mapping_strategy: The strategy to use for mapping over multiple
@@ -164,7 +165,7 @@ class WakeSimulation:
         ys: jnp.ndarray,
         ws: jnp.ndarray,
         wd: jnp.ndarray,
-        turbine: Turbine,
+        turbine: Turbine | None = None,
     ) -> SimulationResult:
         """Runs the wake simulation.
         Args:
@@ -172,7 +173,8 @@ class WakeSimulation:
             ys: An array of y-coordinates for each turbine.
             ws: An array of free-stream wind speeds.
             wd: An array of wind directions.
-            turbine: The turbine object to use in the simulation.
+            turbine: The turbine object to use in the simulation. If not
+                provided, the default turbine will be used.
             x: An array of x-coordinates for flow map evaluation points (optional).
             y: An array of y-coordinates for flow map evaluation points (optional).
         Returns:
@@ -183,6 +185,11 @@ class WakeSimulation:
                 f"Invalid mapping strategy: {self.mapping_strategy}. "
                 f"Valid options are: {self.__sim_call_table.keys()}"
             )
+
+        if turbine is None:
+            if self.turbine is None:
+                raise ValueError("A turbine must be provided.")
+            turbine = self.turbine
 
         xs = jnp.asarray(xs)
         ys = jnp.asarray(ys)
@@ -197,27 +204,40 @@ class WakeSimulation:
         self,
         wt_x: jnp.ndarray,
         wt_y: jnp.ndarray,
-        fm_x: jnp.ndarray | None = None,  # TODO: handle None
-        fm_y: jnp.ndarray | None = None,  # TODO: handle None
+        fm_x: jnp.ndarray | None = None,
+        fm_y: jnp.ndarray | None = None,
         ws: float | jnp.ndarray = 10.0,
         wd: float | jnp.ndarray = 270.0,
+        turbine: Turbine | None = None,
     ) -> jnp.ndarray:
-        # TODO: replace with a call to self !
         ws = jnp.atleast_1d(ws)
         wd = jnp.atleast_1d(wd)
 
-        ctx = SimulationContext(wt_x, wt_y, ws, wd, self.turbine)
-        sim_func = self.__sim_call_table[self.mapping_strategy]
-        effective_ws = sim_func(ctx)
+        if turbine is None:
+            if self.turbine is None:
+                raise ValueError("A turbine must be provided.")
+            turbine = self.turbine
+
+        if fm_x is None or fm_y is None:
+            # TODO: make this more robust
+            grid_res = 100
+            x_min, x_max = jnp.min(wt_x) - 200, jnp.max(wt_x) + 200
+            y_min, y_max = jnp.min(wt_y) - 200, jnp.max(wt_y) + 200
+            grid_x, grid_y = jnp.mgrid[
+                x_min : x_max : grid_res * 1j, y_min : y_max : grid_res * 1j
+            ]
+            fm_x, fm_y = grid_x.ravel(), grid_y.ravel()
+
+        result = self(wt_x, wt_y, ws, wd, turbine)
 
         return jax.vmap(
             lambda _ws, _wd, _ws_eff: self.model.compute_deficit(
                 _ws_eff,
-                SimulationContext(ctx.xs, ctx.ys, _ws, _wd, ctx.turbine),
+                SimulationContext(result.ctx.xs, result.ctx.ys, _ws, _wd, turbine),
                 xs_r=fm_x,
                 ys_r=fm_y,
             )
-        )(ws, wd, effective_ws)
+        )(ws, wd, result.effective_ws)
 
     def _simulate_vmap(
         self,
