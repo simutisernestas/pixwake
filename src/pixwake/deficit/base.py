@@ -12,20 +12,32 @@ class WakeDeficitModel(ABC):
         """Initializes the WakeDeficitModel."""
         pass
 
-    def __call__(self, ws_eff: jnp.ndarray, ctx: SimulationContext) -> jnp.ndarray:
+    def __call__(
+        self,
+        ws_eff: jnp.ndarray,
+        ctx: SimulationContext,
+        xs_r: jnp.ndarray | None = None,
+        ys_r: jnp.ndarray | None = None,
+    ) -> jnp.ndarray:
         """A wrapper around the compute_deficit method.
 
         Args:
             ws_eff: An array of effective wind speeds at each turbine.
             ctx: The context of the simulation.
+            xs_r: An array of x-coordinates for each receiver point (optional).
+            ys_r: An array of y-coordinates for each receiver point (optional).
 
         Returns:
             The updated effective wind speeds.
         """
-        return self.compute_deficit(ws_eff, ctx)
+        return self.compute_deficit(ws_eff, ctx, xs_r, ys_r)
 
     def compute_deficit(
-        self, ws_eff: jnp.ndarray, ctx: SimulationContext
+        self,
+        ws_eff: jnp.ndarray,
+        ctx: SimulationContext,
+        xs_r: jnp.ndarray | None = None,
+        ys_r: jnp.ndarray | None = None,
     ) -> jnp.ndarray:  # pragma: no cover
         """Computes the wake deficit.
 
@@ -34,28 +46,38 @@ class WakeDeficitModel(ABC):
         Args:
             ws_eff: An array of effective wind speeds at each turbine.
             ctx: The context of the simulation.
+            xs_r: An array of x-coordinates for each receiver point (optional).
+            ys_r: An array of y-coordinates for each receiver point (optional).
+
 
         Raises:
             NotImplementedError: If the method is not implemented by a subclass.
         """
-        _ = (ws_eff, ctx)
+        _ = (ws_eff, ctx, xs_r, ys_r)
         raise NotImplementedError
 
     def get_downwind_crosswind_distances(
-        self, xs: jnp.ndarray, ys: jnp.ndarray, wd: jnp.ndarray
+        self,
+        xs_s: jnp.ndarray,
+        ys_s: jnp.ndarray,
+        xs_r: jnp.ndarray,
+        ys_r: jnp.ndarray,
+        wd: jnp.ndarray,
     ) -> tuple[jnp.ndarray, jnp.ndarray]:
-        """Calculates the downwind and crosswind distances between turbines.
+        """Calculates the downwind and crosswind distances between points.
 
         Args:
-            xs: An array of x-coordinates for each turbine.
-            ys: An array of y-coordinates for each turbine.
+            xs_s: An array of x-coordinates for each source point.
+            ys_s: An array of y-coordinates for each source point.
+            xs_r: An array of x-coordinates for each receiver point.
+            ys_r: An array of y-coordinates for each receiver point.
             wd: The wind direction.
 
         Returns:
             A tuple containing the downwind and crosswind distances.
         """
-        dx = xs[:, None] - xs[None, :]
-        dy = ys[:, None] - ys[None, :]
+        dx = xs_r[:, None] - xs_s[None, :]
+        dy = ys_r[:, None] - ys_s[None, :]
         wd_rad = jnp.deg2rad((270.0 - wd + 180.0) % 360.0)
         cos_a = jnp.cos(wd_rad)
         sin_a = jnp.sin(wd_rad)

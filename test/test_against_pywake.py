@@ -487,7 +487,6 @@ def test_gaussian_aep_and_gradients_equivalence_timeseries():
         hub_heights=hub_heights,
         powerCtFunctions=[wt_type_0_power_ct] * len(names),
     )
-    # TODO: test the wf_eff = True as well !!!
     wake_model = PyWakeBastankhahGaussianDeficit(k=wake_expansion_k)
 
     wfm = All2AllIterative(
@@ -647,7 +646,6 @@ def test_gaussian_aep_and_gradients_equivalence_timeseries_with_effective_ws():
         hub_heights=hub_heights,
         powerCtFunctions=[wt_type_0_power_ct] * len(names),
     )
-    # TODO: test the wf_eff = True as well !!!
     wake_model = PyWakeBastankhahGaussianDeficit(
         k=wake_expansion_k, use_effective_ws=True
     )
