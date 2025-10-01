@@ -509,7 +509,7 @@ def test_gaussian_aep_and_gradients_equivalence_timeseries():
     model = BastankhahGaussianDeficit(k=wake_expansion_k, use_radius_mask=False)
     sim = WakeSimulation(model, fpi_damp=1.0)
     turbine = Turbine(
-        rotor_diameter=windTurbines.diameter(),
+        rotor_diameter=windTurbines.diameter().item(),
         hub_height=100.0,
         power_curve=Curve(wind_speed=power_curve[:, 0], values=power_curve[:, 1]),
         ct_curve=Curve(wind_speed=ct_curve[:, 0], values=ct_curve[:, 1]),
@@ -671,7 +671,7 @@ def test_gaussian_aep_and_gradients_equivalence_timeseries_with_effective_ws():
     )
     sim = WakeSimulation(model, fpi_damp=1.0)
     turbine = Turbine(
-        rotor_diameter=windTurbines.diameter(),
+        rotor_diameter=windTurbines.diameter().item(),
         hub_height=100.0,
         power_curve=Curve(wind_speed=power_curve[:, 0], values=power_curve[:, 1]),
         ct_curve=Curve(wind_speed=ct_curve[:, 0], values=ct_curve[:, 1]),

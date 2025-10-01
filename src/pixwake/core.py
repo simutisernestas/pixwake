@@ -157,7 +157,7 @@ class WakeSimulation:
 
         self.__sim_call_table: dict[str, Callable] = {
             "vmap": self._simulate_vmap,
-            "map": self._simulate_map,
+            "map": self._simulate_map,  # more memory efficient than vmap
             "_manual": self._simulate_manual,  # debug/profile purposes only
         }
 
