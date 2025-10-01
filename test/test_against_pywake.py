@@ -141,19 +141,18 @@ def test_noj_aep_and_gradients_equivalence_timeseries():
     )
 
     model = NOJDeficit(k=wake_expansion_k)
-    sim = WakeSimulation(model, fpi_damp=1.0)
     turbine = Turbine(
         rotor_diameter=windTurbines.diameter(),
         hub_height=100.0,
         power_curve=Curve(wind_speed=power_curve[:, 0], values=power_curve[:, 1]),
         ct_curve=Curve(wind_speed=ct_curve[:, 0], values=ct_curve[:, 1]),
     )
+    sim = WakeSimulation(model, turbine, fpi_damp=1.0)
     pixwake_sim_res = sim(
         jnp.asarray(wt_x),
         jnp.asarray(wt_y),
         jnp.asarray(ws),
         jnp.asarray(wd),
-        turbine,
     )
     rtol = 1e-3
     np.testing.assert_allclose(pixwake_sim_res.effective_ws.T, pywake_ws_eff, rtol=rtol)
@@ -170,7 +169,6 @@ def test_noj_aep_and_gradients_equivalence_timeseries():
                 yy,
                 ws,
                 wd,
-                turbine,
             ).aep(),
             argnums=(0, 1),
         )
@@ -334,19 +332,18 @@ def test_noj_aep_and_gradients_equivalence_with_site_frequencies():
     pix_wd, pix_ws = pix_wd.flatten(), pix_ws.flatten()
 
     model = NOJDeficit(k=wake_expansion_k)
-    sim = WakeSimulation(model, fpi_damp=1.0, mapping_strategy="map")
     turbine = Turbine(
         rotor_diameter=windTurbines.diameter(),
         hub_height=100.0,
         power_curve=Curve(wind_speed=power_curve[:, 0], values=power_curve[:, 1]),
         ct_curve=Curve(wind_speed=ct_curve[:, 0], values=ct_curve[:, 1]),
     )
+    sim = WakeSimulation(model, turbine, fpi_damp=1.0, mapping_strategy="map")
     pixwake_sim_res = sim(
         jnp.asarray(wt_x),
         jnp.asarray(wt_y),
         pix_ws,
         pix_wd,
-        turbine,
     )  # transpose to match pywake shape
 
     np.testing.assert_allclose(
@@ -376,7 +373,6 @@ def test_noj_aep_and_gradients_equivalence_with_site_frequencies():
                 yy,
                 pix_ws,
                 pix_wd,
-                turbine,
             ).aep(probabilities=pix_probs),
             argnums=(0, 1),
         )
@@ -507,19 +503,18 @@ def test_gaussian_aep_and_gradients_equivalence_timeseries():
 
     # bug in PyWake not masking the contributions from far off wake radius
     model = BastankhahGaussianDeficit(k=wake_expansion_k, use_radius_mask=False)
-    sim = WakeSimulation(model, fpi_damp=1.0)
     turbine = Turbine(
         rotor_diameter=windTurbines.diameter().item(),
         hub_height=100.0,
         power_curve=Curve(wind_speed=power_curve[:, 0], values=power_curve[:, 1]),
         ct_curve=Curve(wind_speed=ct_curve[:, 0], values=ct_curve[:, 1]),
     )
+    sim = WakeSimulation(model, turbine, fpi_damp=1.0)
     pixwake_sim_res = sim(
         jnp.asarray(wt_x),
         jnp.asarray(wt_y),
         jnp.asarray(ws),
         jnp.asarray(wd),
-        turbine,
     )
 
     rtol = 1e-2  # 1%
@@ -548,7 +543,6 @@ def test_gaussian_aep_and_gradients_equivalence_timeseries():
                 yy,
                 jnp.array(ws),
                 jnp.array(wd),
-                turbine,
             ).aep(),
             argnums=(0, 1),
         )
@@ -669,19 +663,18 @@ def test_gaussian_aep_and_gradients_equivalence_timeseries_with_effective_ws():
     model = BastankhahGaussianDeficit(
         k=wake_expansion_k, use_effective_ws=True, use_radius_mask=False
     )
-    sim = WakeSimulation(model, fpi_damp=1.0)
     turbine = Turbine(
         rotor_diameter=windTurbines.diameter().item(),
         hub_height=100.0,
         power_curve=Curve(wind_speed=power_curve[:, 0], values=power_curve[:, 1]),
         ct_curve=Curve(wind_speed=ct_curve[:, 0], values=ct_curve[:, 1]),
     )
+    sim = WakeSimulation(model, turbine, fpi_damp=1.0)
     pixwake_sim_res = sim(
         jnp.asarray(wt_x),
         jnp.asarray(wt_y),
         jnp.asarray(ws),
         jnp.asarray(wd),
-        turbine,
     )
 
     rtol = 1e-2  # 1%
@@ -714,7 +707,6 @@ def test_gaussian_aep_and_gradients_equivalence_timeseries_with_effective_ws():
                 yy,
                 jnp.array(ws),
                 jnp.array(wd),
-                turbine,
             ).aep(),
             argnums=(0, 1),
         )

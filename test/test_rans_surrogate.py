@@ -44,10 +44,12 @@ def test_rans_surrogate_aep():
     )
 
     model = RANSDeficit(ambient_ti=0.1)
-    sim = WakeSimulation(model, mapping_strategy="map", fpi_damp=0.8, fpi_tol=1e-3)
+    sim = WakeSimulation(
+        model, turbine, mapping_strategy="map", fpi_damp=0.8, fpi_tol=1e-3
+    )
 
     def aep(xx, yy):
-        return sim(xx, yy, WSS, WDS, turbine).aep()
+        return sim(xx, yy, WSS, WDS).aep()
 
     aep_and_grad = jax.jit(jax.value_and_grad(aep, argnums=(0, 1)))
 
@@ -88,7 +90,7 @@ def test_rans_surrogate_gradients():
     )
 
     model = RANSDeficit(ambient_ti=0.1)
-    simulation = WakeSimulation(model, fpi_damp=0.8, fpi_tol=1e-3)
+    simulation = WakeSimulation(model, turbine, fpi_damp=0.8, fpi_tol=1e-3)
 
     def sim(x, y):
         return simulation(
@@ -96,7 +98,6 @@ def test_rans_surrogate_gradients():
             y,
             jnp.full_like(x, ws),
             jnp.full_like(x, wd),
-            turbine,
         ).effective_ws.sum()
 
     check_grads(sim, (xs, ys), order=1, modes=["rev"], atol=1e-2, rtol=1e-2, eps=10)
