@@ -111,9 +111,7 @@ def test_simulate_case_gradients_and_jit():
     sim = WakeSimulation(model, turbine)
 
     def f(xx, yy):
-        return sim(
-            xx, yy, jnp.full_like(xx, ws), jnp.full_like(xx, wd)
-        ).effective_ws
+        return sim(xx, yy, jnp.full_like(xx, ws), jnp.full_like(xx, wd)).effective_ws
 
     check_grads(f, (xs, ys), order=1, modes=["rev"], atol=1e-2, rtol=1e-2)
 

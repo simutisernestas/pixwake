@@ -221,9 +221,7 @@ class WakeSimulation:
         return jax.vmap(
             lambda _ws, _wd, _ws_eff: self.model.compute_deficit(
                 _ws_eff,
-                SimulationContext(
-                    result.ctx.xs, result.ctx.ys, _ws, _wd, self.turbine
-                ),
+                SimulationContext(result.ctx.xs, result.ctx.ys, _ws, _wd, self.turbine),
                 xs_r=fm_x,
                 ys_r=fm_y,
             )
