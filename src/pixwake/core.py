@@ -134,13 +134,12 @@ class WakeSimulation:
     def __init__(
         self,
         model: Any,
-        turbine: Turbine | None = None,
+        turbine: Turbine,
         fpi_damp: float = 0.5,
         fpi_tol: float = 1e-6,
         mapping_strategy: str = "vmap",
     ) -> None:
         """Initializes the WakeSimulation.
-
         Args:
             model: The wake model to use for the simulation.
             turbine: An optional default turbine to use for simulations.
@@ -167,7 +166,6 @@ class WakeSimulation:
         ys: jnp.ndarray,
         ws: jnp.ndarray,
         wd: jnp.ndarray,
-        turbine: Turbine | None = None,
     ) -> SimulationResult:
         """Runs the wake simulation.
         Args:
@@ -175,8 +173,6 @@ class WakeSimulation:
             ys: An array of y-coordinates for each turbine.
             ws: An array of free-stream wind speeds.
             wd: An array of wind directions.
-            turbine: The turbine object to use in the simulation. If not
-                provided, the default turbine will be used.
             x: An array of x-coordinates for flow map evaluation points (optional).
             y: An array of y-coordinates for flow map evaluation points (optional).
         Returns:
@@ -188,17 +184,12 @@ class WakeSimulation:
                 f"Valid options are: {self.__sim_call_table.keys()}"
             )
 
-        if turbine is None:
-            if self.turbine is None:
-                raise ValueError("A turbine must be provided.")
-            turbine = self.turbine
-
         xs = self._atleast_1d_jax(xs)
         ys = self._atleast_1d_jax(ys)
         ws = self._atleast_1d_jax(ws)
         wd = self._atleast_1d_jax(wd)
 
-        ctx = SimulationContext(xs, ys, ws, wd, turbine)
+        ctx = SimulationContext(xs, ys, ws, wd, self.turbine)
         sim_func = self.__sim_call_table[self.mapping_strategy]
         return SimulationResult(effective_ws=sim_func(ctx), ctx=ctx)
 
@@ -210,16 +201,10 @@ class WakeSimulation:
         fm_y: jnp.ndarray | None = None,
         ws: float | jnp.ndarray = 10.0,
         wd: float | jnp.ndarray = 270.0,
-        turbine: Turbine | None = None,
     ) -> tuple[jnp.ndarray, tuple[jnp.ndarray, jnp.ndarray]]:
         """Generates a flow map for the wind farm."""
         ws = self._atleast_1d_jax(ws)
         wd = self._atleast_1d_jax(wd)
-
-        if turbine is None:
-            if self.turbine is None:
-                raise ValueError("A turbine must be provided.")
-            turbine = self.turbine
 
         if fm_x is None or fm_y is None:
             grid_res = 100
@@ -231,12 +216,14 @@ class WakeSimulation:
             )
             fm_x, fm_y = grid_x.ravel(), grid_y.ravel()
 
-        result = self(wt_x, wt_y, ws, wd, turbine)
+        result = self(wt_x, wt_y, ws, wd)
 
         return jax.vmap(
             lambda _ws, _wd, _ws_eff: self.model.compute_deficit(
                 _ws_eff,
-                SimulationContext(result.ctx.xs, result.ctx.ys, _ws, _wd, turbine),
+                SimulationContext(
+                    result.ctx.xs, result.ctx.ys, _ws, _wd, self.turbine
+                ),
                 xs_r=fm_x,
                 ys_r=fm_y,
             )

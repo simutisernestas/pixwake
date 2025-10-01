@@ -99,8 +99,8 @@ def test_wake_step_two_turbines():
 def test_simulate_case_two_turbines():
     xs, ys, ws, wd, k, turbine = base_params()
     model = NOJDeficit(k=k)
-    sim = WakeSimulation(model)
-    result = sim(xs, ys, ws, jnp.full_like(ws, wd), turbine)
+    sim = WakeSimulation(model, turbine)
+    result = sim(xs, ys, ws, jnp.full_like(ws, wd))
     expected = jnp.array([10.0, 7.5154343])
     assert jnp.allclose(result.effective_ws, expected, rtol=1e-6)
 
@@ -108,11 +108,11 @@ def test_simulate_case_two_turbines():
 def test_simulate_case_gradients_and_jit():
     xs, ys, ws, wd, k, turbine = rect_grid_params()
     model = NOJDeficit(k=k)
-    sim = WakeSimulation(model)
+    sim = WakeSimulation(model, turbine)
 
     def f(xx, yy):
         return sim(
-            xx, yy, jnp.full_like(xx, ws), jnp.full_like(xx, wd), turbine
+            xx, yy, jnp.full_like(xx, ws), jnp.full_like(xx, wd)
         ).effective_ws
 
     check_grads(f, (xs, ys), order=1, modes=["rev"], atol=1e-2, rtol=1e-2)
@@ -126,10 +126,10 @@ def test_batched_simulate_case_jit():
     ws_b = jnp.stack([jnp.full_like(xs, ws), jnp.full_like(xs, ws + 2.0)])
     wd_b = jnp.stack([jnp.full_like(xs, wd), jnp.full_like(xs, wd)])
     model = NOJDeficit(k=k)
-    sim = WakeSimulation(model)
-    expected = sim(xs, ys, ws_b, wd_b, turbine).effective_ws
+    sim = WakeSimulation(model, turbine)
+    expected = sim(xs, ys, ws_b, wd_b).effective_ws
     jitted = jax.jit(sim)
-    result = jitted(xs, ys, ws_b, wd_b, turbine).effective_ws
+    result = jitted(xs, ys, ws_b, wd_b).effective_ws
     assert jnp.allclose(result, expected, rtol=1e-6)
 
 
@@ -138,8 +138,8 @@ def test_single_turbine():
     xs, ys = jnp.atleast_1d(xs[0]), jnp.atleast_1d(ys[0])
     ws = jnp.atleast_1d(ws[0])
     model = NOJDeficit(k=k)
-    sim = WakeSimulation(model)
-    result = sim(xs, ys, ws, jnp.atleast_1d(wd), turbine)
+    sim = WakeSimulation(model, turbine)
+    result = sim(xs, ys, ws, jnp.atleast_1d(wd))
     assert jnp.allclose(result.effective_ws, ws, rtol=1e-6)
 
 
@@ -147,8 +147,8 @@ def test_zero_wind_speed():
     xs, ys, _, wd, k, turbine = base_params()
     ws = jnp.array([0.0, 0.0])
     model = NOJDeficit(k=k)
-    sim = WakeSimulation(model)
-    result = sim(xs, ys, ws, jnp.full_like(ws, wd), turbine)
+    sim = WakeSimulation(model, turbine)
+    result = sim(xs, ys, ws, jnp.full_like(ws, wd))
     assert jnp.allclose(
         result.effective_ws,
         jnp.zeros_like(result.effective_ws),
@@ -160,8 +160,8 @@ def test_wind_speed_outside_ct_curve():
     xs, ys, _, wd, k, turbine = base_params()
     ws = jnp.array([100.0, 100.0])  # Way outside the curve
     model = NOJDeficit(k=k)
-    sim = WakeSimulation(model)
-    result = sim(xs, ys, ws, jnp.full_like(ws, wd), turbine)
+    sim = WakeSimulation(model, turbine)
+    result = sim(xs, ys, ws, jnp.full_like(ws, wd))
     # The model should still produce a result, likely with the max Ct value
     assert jnp.isfinite(result.effective_ws).all()
 
@@ -172,8 +172,8 @@ def test_identical_turbine_locations():
     ys = jnp.array([0.0, 0.0])
     ws = jnp.array([10.0, 10.0])
     model = NOJDeficit(k=k)
-    sim = WakeSimulation(model)
-    result = sim(xs, ys, ws, jnp.full_like(ws, wd), turbine).effective_ws
+    sim = WakeSimulation(model, turbine)
+    result = sim(xs, ys, ws, jnp.full_like(ws, wd)).effective_ws
     # Deficit should be very high for the second turbine
     assert result[0, 0] > result[0, 1]
 
@@ -181,7 +181,6 @@ def test_identical_turbine_locations():
 def test_numpy_inputs():
     xs, ys, ws, wd, k, turbine = base_params()
     model = NOJDeficit(k=k)
-    sim = WakeSimulation(model)
 
     # Use numpy arrays instead of jax arrays
     xs_np = np.array(xs)
@@ -199,8 +198,8 @@ def test_numpy_inputs():
         power_curve=Curve(wind_speed=power_curve_list[0], values=power_curve_list[1]),
         ct_curve=Curve(wind_speed=ct_curve_list[0], values=ct_curve_list[1]),
     )
-
-    result = sim(xs_np, ys_np, ws_np, wd_np, turbine_np)
+    sim = WakeSimulation(model, turbine_np)
+    result = sim(xs_np, ys_np, ws_np, wd_np)
     expected = jnp.array([10.0, 7.5154343])
     assert jnp.allclose(result.effective_ws, expected, rtol=1e-6)
 
@@ -209,15 +208,15 @@ def test_invalid_mapping_strategy():
     xs, ys, ws, wd, k, turbine = base_params()
     model = NOJDeficit(k=k)
     with pytest.raises(ValueError):
-        sim = WakeSimulation(model, mapping_strategy="invalid_strategy")
-        sim(xs, ys, ws, jnp.full_like(ws, wd), turbine)
+        sim = WakeSimulation(model, turbine, mapping_strategy="invalid_strategy")
+        sim(xs, ys, ws, jnp.full_like(ws, wd))
 
 
 def test_simulation_result_power_method():
     xs, ys, ws, wd, k, turbine = base_params()
     model = NOJDeficit(k=k)
-    sim = WakeSimulation(model)
-    result = sim(xs, ys, ws, jnp.full_like(ws, wd), turbine)
+    sim = WakeSimulation(model, turbine)
+    result = sim(xs, ys, ws, jnp.full_like(ws, wd))
     power = result.power()
     expected_power = turbine.power(result.effective_ws)
     assert jnp.allclose(power, expected_power, rtol=1e-6)
