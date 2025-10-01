@@ -2,7 +2,7 @@ import jax.numpy as jnp
 import pytest
 
 from pixwake import Curve, Turbine
-from pixwake.core import SimulationResult
+from pixwake.core import SimulationContext, SimulationResult
 
 
 @pytest.fixture
@@ -22,7 +22,14 @@ def simulation_result():
         ct_curve=ct_curve,
     )
     effective_wind_speed = jnp.array([[10.0, 12.0], [8.0, 6.0]])
-    return SimulationResult(effective_ws=effective_wind_speed, turbine=turbine)
+    ctx = SimulationContext(
+        xs=jnp.array([0]),
+        ys=jnp.array([0]),
+        ws=jnp.array([0]),
+        wd=jnp.array([0]),
+        turbine=turbine,
+    )
+    return SimulationResult(effective_ws=effective_wind_speed, ctx=ctx)
 
 
 def test_power(simulation_result):

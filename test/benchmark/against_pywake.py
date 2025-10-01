@@ -8,7 +8,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import psutil
-from jax import config as jcfg
 from py_wake.deficit_models.gaussian import (
     BastankhahGaussianDeficit as PyWakeBastankhahGaussianDeficit,
 )
@@ -186,7 +185,6 @@ def run_benchmark(n_turbines_list, spacings_list):
     ct_curve = Curve(wind_speed=ct_pw_ws, values=ct_vals)
     rotor_diameter = 120.0
     hub_height = 100.0
-    wake_expansion_k = 0.1
     results = []
 
     for spacing in spacings_list:
@@ -204,7 +202,9 @@ def run_benchmark(n_turbines_list, spacings_list):
                 ct_curve=ct_curve,
             )
             pixwake_model = BastankhahGaussianDeficit(use_effective_ws=True)
-            pixwake_sim = WakeSimulation(pixwake_model, fpi_damp=1.0)
+            pixwake_sim = WakeSimulation(
+                pixwake_model, fpi_damp=1.0, mapping_strategy="map"
+            )
 
             pywake_power_ct = PowerCtTabular(
                 ws=ct_pw_ws, power=power_vals * 1000, power_unit="w", ct=ct_vals

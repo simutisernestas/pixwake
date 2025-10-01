@@ -3,7 +3,7 @@ from typing import Callable
 import jax.numpy as jnp
 
 from ..core import SimulationContext
-from ..jax_utils import get_eps
+from ..jax_utils import get_float_eps
 from .base import WakeDeficitModel
 from .utils import ct2a_madsen
 
@@ -40,9 +40,20 @@ class BastankhahGaussianDeficit(WakeDeficitModel):
         self.use_radius_mask = use_radius_mask
 
     def compute_deficit(
-        self, ws_eff: jnp.ndarray, ctx: SimulationContext
+        self,
+        ws_eff: jnp.ndarray,
+        ctx: SimulationContext,
+        xs_r: jnp.ndarray | None = None,
+        ys_r: jnp.ndarray | None = None,
     ) -> jnp.ndarray:
-        x_d, y_d = self.get_downwind_crosswind_distances(ctx.xs, ctx.ys, ctx.wd)
+        if xs_r is None:
+            xs_r = ctx.xs
+        if ys_r is None:
+            ys_r = ctx.ys
+
+        x_d, y_d = self.get_downwind_crosswind_distances(
+            ctx.xs, ctx.ys, xs_r, ys_r, ctx.wd
+        )
 
         # per-source Ct (1d, length n_sources)
         ct_src = ctx.turbine.ct(ws_eff)
@@ -50,7 +61,7 @@ class BastankhahGaussianDeficit(WakeDeficitModel):
         # Mask for upstream turbines (receivers x sources)
         mask = x_d > 0
 
-        eps = get_eps()
+        eps = get_float_eps()
 
         # beta computed per source (1d)
         sqrt_1_minus_ct = jnp.sqrt(
@@ -67,10 +78,6 @@ class BastankhahGaussianDeficit(WakeDeficitModel):
         # We add epsilon_ilk broadcast along the source axis (columns).
         sigma_term = self.k * x_d / D_src + epsilon_ilk[None, :]  # shape (R, S)
         sigma_sqr = sigma_term**2
-
-        # # according to Niayifar, the wake radius is twice sigma
-        # wake_radius = 2.0 * sigma_term * D_src  # shape (R, S)
-        # radius_mask = jnp.abs(y_d) < wake_radius
 
         # ct_eff_matrix per (receiver, source): use ct_src broadcast to source axis
         ct_eff_matrix = ct_src[None, :] / (8.0 * sigma_sqr + eps)  # shape (R, S)
@@ -94,9 +101,9 @@ class BastankhahGaussianDeficit(WakeDeficitModel):
         # convert fractions to absolute deficits (m/s) using each *source* reference
         deficit_abs_matrix = deficit_fraction_matrix * ws_ref_sources[None, :]  # (R, S)
 
+        # according to Niayifar, the wake radius is twice sigma
         if self.use_radius_mask:
-            sigma = jnp.sqrt(sigma_sqr)  # nondimensional sigma
-            wake_radius = 2.0 * sigma * D_src  # dimensional radius
+            wake_radius = 2.0 * sigma_term * D_src  # dimensional radius
             inside_wake = jnp.abs(y_d) <= wake_radius
             mask &= inside_wake
 

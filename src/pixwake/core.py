@@ -7,6 +7,8 @@ from flax.struct import dataclass
 from jax import custom_vjp, vjp
 from jax.lax import while_loop
 
+from pixwake.jax_utils import default_float_type
+
 
 @dataclass
 class Curve:
@@ -96,11 +98,11 @@ class SimulationResult:
     """
 
     effective_ws: jnp.ndarray
-    turbine: Turbine
+    ctx: SimulationContext
 
     def power(self) -> jnp.ndarray:
         """Calculates the power of each turbine for each wind condition."""
-        return self.turbine.power(self.effective_ws)
+        return self.ctx.turbine.power(self.effective_ws)
 
     def aep(self, probabilities: jnp.ndarray | None = None) -> jnp.ndarray:
         """Calculates the Annual Energy Production (AEP) of a wind farm."""
@@ -132,6 +134,7 @@ class WakeSimulation:
     def __init__(
         self,
         model: Any,
+        turbine: Turbine | None = None,
         fpi_damp: float = 0.5,
         fpi_tol: float = 1e-6,
         mapping_strategy: str = "vmap",
@@ -140,6 +143,7 @@ class WakeSimulation:
 
         Args:
             model: The wake model to use for the simulation.
+            turbine: An optional default turbine to use for simulations.
             fpi_damp: The damping factor for the fixed-point iteration.
             fpi_tol: The tolerance for the fixed-point iteration.
             mapping_strategy: The strategy to use for mapping over multiple
@@ -149,10 +153,11 @@ class WakeSimulation:
         self.mapping_strategy = mapping_strategy
         self.fpi_damp = fpi_damp
         self.fpi_tol = fpi_tol
+        self.turbine = turbine
 
         self.__sim_call_table: dict[str, Callable] = {
             "vmap": self._simulate_vmap,
-            "map": self._simulate_map,
+            "map": self._simulate_map,  # more memory efficient than vmap
             "_manual": self._simulate_manual,  # debug/profile purposes only
         }
 
@@ -162,7 +167,7 @@ class WakeSimulation:
         ys: jnp.ndarray,
         ws: jnp.ndarray,
         wd: jnp.ndarray,
-        turbine: Turbine,
+        turbine: Turbine | None = None,
     ) -> SimulationResult:
         """Runs the wake simulation.
         Args:
@@ -170,7 +175,10 @@ class WakeSimulation:
             ys: An array of y-coordinates for each turbine.
             ws: An array of free-stream wind speeds.
             wd: An array of wind directions.
-            turbine: The turbine object to use in the simulation.
+            turbine: The turbine object to use in the simulation. If not
+                provided, the default turbine will be used.
+            x: An array of x-coordinates for flow map evaluation points (optional).
+            y: An array of y-coordinates for flow map evaluation points (optional).
         Returns:
             A `SimulationResult` object containing relevant output information.
         """
@@ -180,14 +188,59 @@ class WakeSimulation:
                 f"Valid options are: {self.__sim_call_table.keys()}"
             )
 
-        xs = jnp.asarray(xs)
-        ys = jnp.asarray(ys)
-        ws = jnp.asarray(ws)
-        wd = jnp.asarray(wd)
+        if turbine is None:
+            if self.turbine is None:
+                raise ValueError("A turbine must be provided.")
+            turbine = self.turbine
 
+        xs = self._atleast_1d_jax(xs)
+        ys = self._atleast_1d_jax(ys)
+        ws = self._atleast_1d_jax(ws)
+        wd = self._atleast_1d_jax(wd)
+
+        ctx = SimulationContext(xs, ys, ws, wd, turbine)
         sim_func = self.__sim_call_table[self.mapping_strategy]
-        eff_ws = sim_func(SimulationContext(xs, ys, ws, wd, turbine))
-        return SimulationResult(effective_ws=eff_ws, turbine=turbine)
+        return SimulationResult(effective_ws=sim_func(ctx), ctx=ctx)
+
+    def flow_map(
+        self,
+        wt_x: jnp.ndarray,
+        wt_y: jnp.ndarray,
+        fm_x: jnp.ndarray | None = None,
+        fm_y: jnp.ndarray | None = None,
+        ws: float | jnp.ndarray = 10.0,
+        wd: float | jnp.ndarray = 270.0,
+        turbine: Turbine | None = None,
+    ) -> tuple[jnp.ndarray, tuple[jnp.ndarray, jnp.ndarray]]:
+        """Generates a flow map for the wind farm."""
+        ws = self._atleast_1d_jax(ws)
+        wd = self._atleast_1d_jax(wd)
+
+        if turbine is None:
+            if self.turbine is None:
+                raise ValueError("A turbine must be provided.")
+            turbine = self.turbine
+
+        if fm_x is None or fm_y is None:
+            grid_res = 100
+            x_min, x_max = jnp.min(wt_x) - 200, jnp.max(wt_x) + 200
+            y_min, y_max = jnp.min(wt_y) - 200, jnp.max(wt_y) + 200
+            grid_x, grid_y = jnp.meshgrid(
+                jnp.linspace(x_min, x_max, grid_res),
+                jnp.linspace(y_min, y_max, grid_res),
+            )
+            fm_x, fm_y = grid_x.ravel(), grid_y.ravel()
+
+        result = self(wt_x, wt_y, ws, wd, turbine)
+
+        return jax.vmap(
+            lambda _ws, _wd, _ws_eff: self.model.compute_deficit(
+                _ws_eff,
+                SimulationContext(result.ctx.xs, result.ctx.ys, _ws, _wd, turbine),
+                xs_r=fm_x,
+                ys_r=fm_y,
+            )
+        )(ws, wd, result.effective_ws), (fm_x, fm_y)
 
     def _simulate_vmap(
         self,
@@ -235,8 +288,11 @@ class WakeSimulation:
         ctx: SimulationContext,
     ) -> jnp.ndarray:
         """Simulates a single wind condition."""
-        x0 = jnp.full_like(ctx.xs, ctx.ws)
+        x0 = jnp.full_like(ctx.xs, ctx.ws, dtype=default_float_type())
         return fixed_point(self.model, x0, ctx, damp=self.fpi_damp, tol=self.fpi_tol)
+
+    def _atleast_1d_jax(self, x: jnp.ndarray | float | list) -> jnp.ndarray:
+        return jnp.atleast_1d(jnp.asarray(x))
 
 
 @partial(
@@ -288,7 +344,6 @@ def fixed_point(
     # _, x_star, it = carry
 
     _, x_star, it = while_loop(cond_fun, body_fun, (x_guess, f(x_guess, ctx), 0))
-    # TODO: remove !
     # jax.debug.print("\nFixed point found after {it} iterations", it=it)
     return x_star
 

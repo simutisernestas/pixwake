@@ -138,6 +138,8 @@ class RANSDeficit(WakeDeficitModel):
         self,
         ws_eff: jnp.ndarray,
         ctx: SimulationContext,
+        xs_r: jnp.ndarray | None = None,
+        ys_r: jnp.ndarray | None = None,
         use_effective: bool = True,
     ) -> jnp.ndarray:
         """Computes the wake deficit using the RANS surrogate model.
@@ -149,6 +151,8 @@ class RANSDeficit(WakeDeficitModel):
         Args:
             ws_eff: An array of effective wind speeds at each turbine.
             ctx: The context of the simulation.
+            xs_r: An array of x-coordinates for each receiver point (optional).
+            ys_r: An array of y-coordinates for each receiver point (optional).
             use_effective: A boolean flag to control the deficit calculation.
                 - If True (default), the deficit is calculated as an absolute
                   reduction in wind speed, proportional to the effective wind
@@ -159,7 +163,14 @@ class RANSDeficit(WakeDeficitModel):
         Returns:
             An array of updated effective wind speeds at each turbine.
         """
-        x_d, y_d = self.get_downwind_crosswind_distances(ctx.xs, ctx.ys, ctx.wd)
+        if xs_r is None:
+            xs_r = ctx.xs
+        if ys_r is None:
+            ys_r = ctx.ys
+
+        x_d, y_d = self.get_downwind_crosswind_distances(
+            ctx.xs, ctx.ys, xs_r, ys_r, ctx.wd
+        )
         x_d /= ctx.turbine.rotor_diameter
         y_d /= ctx.turbine.rotor_diameter
         ct_eff = ctx.turbine.ct(ws_eff)
