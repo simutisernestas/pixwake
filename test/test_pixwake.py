@@ -218,3 +218,28 @@ def test_simulation_result_power_method():
     power = result.power()
     expected_power = turbine.power(result.effective_ws)
     assert jnp.allclose(power, expected_power, rtol=1e-6)
+
+
+def test_wake_simulation_manual_mapping_strategy():
+    """Test that WakeSimulation runs with the manual mapping strategy."""
+    model = NOJDeficit(k=0.1)
+    power_curve = Curve(
+        wind_speed=jnp.asarray([0.0, 10.0]), values=jnp.asarray([0.0, 1000.0])
+    )
+    ct_curve = Curve(
+        wind_speed=jnp.asarray([0.0, 10.0]), values=jnp.asarray([0.8, 0.8])
+    )
+    turbine = Turbine(
+        rotor_diameter=120.0,
+        hub_height=100.0,
+        power_curve=power_curve,
+        ct_curve=ct_curve,
+    )
+    sim = WakeSimulation(model, turbine=turbine, mapping_strategy="_manual")
+
+    sim(
+        jnp.asarray([0.0, 1000.0]),
+        jnp.asarray([0.0, 0.0]),
+        jnp.asarray([10.0, 12.0]),
+        jnp.asarray([270.0, 270.0]),
+    )

@@ -8020,7 +8020,7 @@ packages:
 - pypi: ./
   name: pixwake
   version: 0.1.0
-  sha256: 284366936832e81d2caa0a08faf46700ae59b442ac5fa70ab39a387be6cd9877
+  sha256: cfd86619b0984d09347d2b1c592c3a17e6194badb5c4d3400ee92c8c9bf402bf
   requires_dist:
   - jax
   - flax

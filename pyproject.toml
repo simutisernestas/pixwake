@@ -52,3 +52,7 @@ default = ["test", "format"]
 test = ["test"]
 format = { features = ["format"], no-default-feature = true }
 cuda = ["cuda", "test"]
+
+[tool.coverage.report]
+fail_under = 95
+precision = 2
