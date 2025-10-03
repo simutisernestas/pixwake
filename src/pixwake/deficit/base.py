@@ -1,4 +1,4 @@
-from abc import ABC
+from abc import ABC, abstractmethod
 
 import jax.numpy as jnp
 
@@ -32,6 +32,7 @@ class WakeDeficitModel(ABC):
         """
         return self.compute_deficit(ws_eff, ctx, xs_r, ys_r)
 
+    @abstractmethod
     def compute_deficit(
         self,
         ws_eff: jnp.ndarray,
@@ -53,7 +54,6 @@ class WakeDeficitModel(ABC):
         Raises:
             NotImplementedError: If the method is not implemented by a subclass.
         """
-        _ = (ws_eff, ctx, xs_r, ys_r)
         raise NotImplementedError
 
     def get_downwind_crosswind_distances(

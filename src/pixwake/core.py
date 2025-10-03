@@ -79,6 +79,7 @@ class SimulationContext:
         ys: An array of y-coordinates for each turbine.
         ws: The free-stream wind speed.
         wd: The wind direction.
+        ti: The turbulence intensity.
         turbine: The turbine object used in the simulation.
     """
 
@@ -87,6 +88,7 @@ class SimulationContext:
     ws: jnp.ndarray
     wd: jnp.ndarray
     turbine: Turbine
+    ti: jnp.ndarray | None = None
 
 
 @dataclass
@@ -166,6 +168,7 @@ class WakeSimulation:
         ys: jnp.ndarray,
         ws: jnp.ndarray,
         wd: jnp.ndarray,
+        ti: jnp.ndarray | float | None = None,
     ) -> SimulationResult:
         """Runs the wake simulation.
         Args:
@@ -188,8 +191,17 @@ class WakeSimulation:
         ys = self._atleast_1d_jax(ys)
         ws = self._atleast_1d_jax(ws)
         wd = self._atleast_1d_jax(wd)
+        if ti is not None:
+            ti = self._atleast_1d_jax(ti)
+            if ti.size == 1:
+                ti = jnp.full_like(ws, ti)
+            if ti.shape != ws.shape:
+                raise ValueError(
+                    f"Turbulence intensity shape {ti.shape} "
+                    f"does not match wind speed shape {ws.shape}."
+                )
 
-        ctx = SimulationContext(xs, ys, ws, wd, self.turbine)
+        ctx = SimulationContext(xs, ys, ws, wd, self.turbine, ti)
         sim_func = self.__sim_call_table[self.mapping_strategy]
         return SimulationResult(effective_ws=sim_func(ctx), ctx=ctx)
 
@@ -199,12 +211,22 @@ class WakeSimulation:
         wt_y: jnp.ndarray,
         fm_x: jnp.ndarray | None = None,
         fm_y: jnp.ndarray | None = None,
-        ws: float | jnp.ndarray = 10.0,
-        wd: float | jnp.ndarray = 270.0,
+        ws: jnp.ndarray | float = 10.0,
+        wd: jnp.ndarray | float = 270.0,
+        ti: jnp.ndarray | float | None = None,
     ) -> tuple[jnp.ndarray, tuple[jnp.ndarray, jnp.ndarray]]:
         """Generates a flow map for the wind farm."""
         ws = self._atleast_1d_jax(ws)
         wd = self._atleast_1d_jax(wd)
+        if ti is not None:
+            ti = self._atleast_1d_jax(ti)
+            if ti.size == 1:
+                ti = jnp.full_like(ws, ti)
+            if ti.shape != ws.shape:
+                raise ValueError(
+                    f"Turbulence intensity shape {ti.shape} "
+                    f"does not match wind speed shape {ws.shape}."
+                )
 
         if fm_x is None or fm_y is None:
             grid_res = 100
@@ -216,16 +238,18 @@ class WakeSimulation:
             )
             fm_x, fm_y = grid_x.ravel(), grid_y.ravel()
 
-        result = self(wt_x, wt_y, ws, wd)
+        result = self(wt_x, wt_y, ws, wd, ti)
 
         return jax.vmap(
-            lambda _ws, _wd, _ws_eff: self.model.compute_deficit(
+            lambda _ws, _wd, _ws_eff, _ti: self.model.compute_deficit(
                 _ws_eff,
-                SimulationContext(result.ctx.xs, result.ctx.ys, _ws, _wd, self.turbine),
+                SimulationContext(
+                    result.ctx.xs, result.ctx.ys, _ws, _wd, self.turbine, _ti
+                ),
                 xs_r=fm_x,
                 ys_r=fm_y,
             )
-        )(ws, wd, result.effective_ws), (fm_x, fm_y)
+        )(ws, wd, result.effective_ws, ti), (fm_x, fm_y)
 
     def _simulate_vmap(
         self,
@@ -233,12 +257,15 @@ class WakeSimulation:
     ) -> jnp.ndarray:
         """Simulates multiple wind conditions using jax.vmap."""
 
-        def _single_case(ws: jnp.ndarray, wd: jnp.ndarray) -> jnp.ndarray:
+        def _single_case(
+            ws: jnp.ndarray, wd: jnp.ndarray, ti: jnp.ndarray | None
+        ) -> jnp.ndarray:
             return self._simulate_single_case(
-                SimulationContext(ctx.xs, ctx.ys, ws, wd, ctx.turbine)
+                SimulationContext(ctx.xs, ctx.ys, ws, wd, ctx.turbine, ti)
             )
 
-        return jax.vmap(_single_case)(ctx.ws, ctx.wd)
+        # TODO: probably should investigate the in_axes argument here
+        return jax.vmap(_single_case)(ctx.ws, ctx.wd, ctx.ti)
 
     def _simulate_map(
         self,
@@ -246,27 +273,34 @@ class WakeSimulation:
     ) -> jnp.ndarray:
         """Simulates multiple wind conditions using jax.lax.map."""
 
-        def _single_case(case: tuple[jnp.ndarray, jnp.ndarray]) -> jnp.ndarray:
-            ws, wd = case
+        def _single_case(
+            case: tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray | None],
+        ) -> jnp.ndarray:
+            ws, wd, ti = case
             return self._simulate_single_case(
-                SimulationContext(ctx.xs, ctx.ys, ws, wd, ctx.turbine)
+                SimulationContext(ctx.xs, ctx.ys, ws, wd, ctx.turbine, ti)
             )
 
-        return jax.lax.map(_single_case, (ctx.ws, ctx.wd))
+        return jax.lax.map(_single_case, (ctx.ws, ctx.wd, ctx.ti))
 
     def _simulate_manual(
         self,
         ctx: SimulationContext,
     ) -> jnp.ndarray:
         """Simulates multiple wind conditions using a manual loop (for debugging)."""
-        return jnp.array(
-            [
+
+        out = jnp.zeros((ctx.ws.size, ctx.xs.size))
+        for i in range(ctx.ws.size):
+            _ws = ctx.ws[i]
+            _wd = ctx.wd[i]
+            _ti = None if ctx.ti is None else ctx.ti[i]
+
+            out = out.at[i].set(
                 self._simulate_single_case(
-                    SimulationContext(ctx.xs, ctx.ys, _ws, _wd, ctx.turbine)
+                    SimulationContext(ctx.xs, ctx.ys, _ws, _wd, ctx.turbine, _ti)
                 )
-                for _ws, _wd in zip(ctx.ws, ctx.wd)
-            ]
-        )
+            )
+        return out
 
     def _simulate_single_case(
         self,

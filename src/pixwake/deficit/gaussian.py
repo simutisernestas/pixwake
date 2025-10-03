@@ -76,7 +76,9 @@ class BastankhahGaussianDeficit(WakeDeficitModel):
 
         # sigma_term: x_d has shape (n_receivers, n_sources).
         # We add epsilon_ilk broadcast along the source axis (columns).
-        sigma_term = self.k * x_d / D_src + epsilon_ilk[None, :]  # shape (R, S)
+        sigma_term = (
+            self.wake_expansion_coefficient(ctx.ti) * x_d / D_src + epsilon_ilk[None, :]
+        )  # shape (R, S)
         sigma_sqr = sigma_term**2
 
         # ct_eff_matrix per (receiver, source): use ct_src broadcast to source axis
@@ -116,3 +118,34 @@ class BastankhahGaussianDeficit(WakeDeficitModel):
         new_ws = jnp.maximum(0.0, ctx.ws - total_abs_deficit)
 
         return new_ws
+
+    def wake_expansion_coefficient(self, ti: jnp.ndarray | None = None) -> float:
+        """Returns the wake expansion coefficient."""
+        _ = ti  # ignored
+        return self.k
+
+
+class NiayifarGaussianDeficit(BastankhahGaussianDeficit):
+    """A Niayifar-Gaussian wake model.
+
+    Amin Niayifar and Fernando Porté-Agel
+    Analytical Modeling of Wind Farms: A New Approach for Power Prediction
+    Energies 2016, 9, 741; doi:10.3390/en9090741
+    """
+
+    def __init__(
+        self,
+        a: tuple = (0.38, 4e-3),
+        use_effective_ti: bool = False,  # TODO:
+        **kwargs,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.a = a
+        self.use_effective_ti = use_effective_ti
+
+    def wake_expansion_coefficient(self, ti: jnp.ndarray | None = None) -> float:
+        """Calculates the wake expansion coefficient based on turbulence intensity."""
+        if ti is None:  # TODO: should throw much earlier
+            raise ValueError("Turbulence intensity must be provided.")
+        a0, a1 = self.a
+        return a0 * ti + a1

@@ -27,7 +27,7 @@ class CrespoHernandez(TurbulenceModel):
     """
 
     c: list[float] = field(default_factory=lambda: [0.73, 0.8325, -0.0325, -0.32])
-    ct2a: callable = ct2a_madsen
+    ct2a: callable = ct2a_madsen  # TODO: repeated from deficit models...
 
     def calc_added_turbulence(
         self,
@@ -37,7 +37,7 @@ class CrespoHernandez(TurbulenceModel):
         cw: jnp.ndarray,
         ti_amb: jnp.ndarray,
         wake_radius: jnp.ndarray,
-        ct: jnp.ndarray,  # TODO:
+        ct: jnp.ndarray,  # TODO: only added to match py_wake...
     ) -> jnp.ndarray:
         """
         Calculates the added turbulence intensity (TI) using the Crespo-Hernandez model.
@@ -88,67 +88,3 @@ class CrespoHernandez(TurbulenceModel):
         )
 
         return ti_add_filtered
-
-
-if __name__ == "__main__":
-    turbulence_model = CrespoHernandez()
-
-    from pixwake.core import Curve, Turbine
-
-    # redundant basically for the turbulence compute; could just pass in CT array ?
-    turbine = Turbine(
-        rotor_diameter=8.0,
-        hub_height=10.0,
-        ct_curve=Curve(jnp.array([0, 25]), jnp.array([8 / 9, 0])),
-        power_curve=Curve(jnp.array([0, 25]), jnp.array([0, 1])),
-    )
-    ctx = SimulationContext(
-        xs=jnp.array([0.0, 200.0]),
-        ys=jnp.array([0.0, 0.0]),
-        ws=jnp.array([8.0, 8.0]),
-        wd=jnp.array([0.0, 0.0]),
-        turbine=turbine,
-    )
-
-    from py_wake.turbulence_models import CrespoHernandez as PyWakeCrespo
-
-    py_wake_model = PyWakeCrespo()
-
-    n_turbines = 2
-    import numpy as np
-
-    # Define inputs similar to the PyWake call
-    dw_ijlk = np.ones((n_turbines, n_turbines, 1, 1))
-    cw_ijlk = np.ones((n_turbines, n_turbines, 1, 1))
-    D_src_il = np.ones((n_turbines, 1)) * 8.0
-    ct_ilk = np.ones((n_turbines, 1, 1)) * 8.0 / 9.0
-    TI_ilk = np.ones((n_turbines, 1, 1)) * 0.1
-    wake_radius_ijlk = np.ones((n_turbines, n_turbines, 1, 1)) * 4.0
-
-    pywake_ti_res = py_wake_model.calc_added_turbulence(
-        dw_ijlk=dw_ijlk,
-        cw_ijlk=cw_ijlk,
-        D_src_il=D_src_il,
-        ct_ilk=ct_ilk,
-        TI_ilk=TI_ilk,
-        D_dst_ijl=None,
-        wake_radius_ijlk=wake_radius_ijlk,
-    ).squeeze()
-
-    # Convert inputs to JAX arrays
-    dw = jnp.array(dw_ijlk[:, :, 0, 0])
-    cw = jnp.array(cw_ijlk[:, :, 0, 0])
-    ti_amb = jnp.array(TI_ilk[:, 0, 0])
-    wake_radius = jnp.array(wake_radius_ijlk[:, :, 0, 0])
-
-    pixwake_ti_res = turbulence_model.calc_added_turbulence(
-        ctx,
-        ws_eff=jnp.array([0.1]),
-        dw=dw,
-        cw=cw,
-        ti_amb=ti_amb,
-        wake_radius=wake_radius,
-        ct=jnp.array([8.0 / 9.0, 8.0 / 9.0]),
-    )
-
-    np.testing.assert_allclose(pixwake_ti_res, pywake_ti_res, rtol=1e-5, atol=1e-5)

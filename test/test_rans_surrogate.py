@@ -6,7 +6,8 @@ import numpy as onp
 from jax.test_util import check_grads
 from py_wake.examples.data.dtu10mw import DTU10MW
 
-from pixwake import Curve, RANSDeficit, Turbine, WakeSimulation
+from pixwake import Curve, Turbine, WakeSimulation
+from pixwake.deficit import RANSDeficit
 
 
 def get_rans_dependencies():

@@ -8,6 +8,8 @@ def plot_flow_map(
     flow_map_data: jnp.ndarray,
     wt_x: jnp.ndarray | None = None,
     wt_y: jnp.ndarray | None = None,
+    show=True,
+    ax=None,  # TODO:
 ) -> None:
     """Plots a wind farm flow map.
 
@@ -39,4 +41,5 @@ def plot_flow_map(
     plt.title("Wind Farm Flow Map")
     plt.xlabel("x-coordinates")
     plt.ylabel("y-coordinates")
-    plt.show()
+    if show:
+        plt.show()
