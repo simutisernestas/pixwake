@@ -295,11 +295,11 @@ class WakeSimulation:
             _wd = ctx.wd[i]
             _ti = None if ctx.ti is None else ctx.ti[i]
 
-            out = out.at[i].set(
-                self._simulate_single_case(
-                    SimulationContext(ctx.xs, ctx.ys, _ws, _wd, ctx.turbine, _ti)
-                )
+            # out = out.at[i].set(
+            return self._simulate_single_case(
+                SimulationContext(ctx.xs, ctx.ys, _ws, _wd, ctx.turbine, _ti)
             )
+            # )
         return out
 
     def _simulate_single_case(
@@ -426,19 +426,20 @@ def fixed_point_debug(
     max_iter = max(20, len(jnp.atleast_1d(x_guess)))
 
     def cond_fun(carry: tuple) -> bool:
-        x_prev, x, it = carry
+        x_prev, (x, ti_eff), it = carry
         tol_cond = jnp.max(jnp.abs(x_prev - x)) > tol
         iter_cond = it < max_iter
         return bool(tol_cond and iter_cond)
 
     def body_fun(carry: tuple) -> tuple:
-        _, x, it = carry
-        x_new = f(x, ctx)
+        _, (x, ti_eff), it = carry
+        x_new, ti_eff = f(x, ctx, ti_eff=ti_eff)
         x_damped = damp * x_new + (1 - damp) * x
-        return x, x_damped, it + 1
+        return x, (x_damped, ti_eff), it + 1
 
     carry = (x_guess, f(x_guess, ctx), 0)
     while cond_fun(carry):
         carry = body_fun(carry)
-    _, x_star, _ = carry
-    return x_star
+    _, (x_star, ti_eff), _ = carry
+
+    return x_star, ti_eff

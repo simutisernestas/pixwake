@@ -849,3 +849,9 @@ def test_gaussian_aep_and_gradients_equivalence_timeseries_with_wake_expansion_b
     val.block_until_ready()
     np.testing.assert_allclose(dx, pw_dx, rtol=rtol)
     np.testing.assert_allclose(dy, pw_dy, rtol=rtol)
+
+
+def test_effective_ti_gaussian_aep_and_gradients_equivalence_timeseries_with_wake_expansion_based_on_ti(
+    ct_vals, power_vals
+):
+    raise NotImplementedError("TODO:!!!")

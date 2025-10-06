@@ -44,14 +44,15 @@ class SqrMaxSum(Superposition):
         ambient : jax.numpy.ndarray
             Ambient quantity.
         added : jax.numpy.ndarray
-            Added quantity from wake effects.
+            Added quantity from wake effects. Shape (n_receivers, n_sources).
 
         Returns
         -------
         jax.numpy.ndarray
-            Effective quantity.
+            Effective quantity for each receiver.
         """
-        return jnp.sqrt(ambient**2 + jnp.max(added, 0) ** 2)
+        # Take the max contribution from all sources (axis=1) for each receiver
+        return jnp.sqrt(ambient**2 + jnp.max(added, axis=1) ** 2)
 
 
 @dataclass

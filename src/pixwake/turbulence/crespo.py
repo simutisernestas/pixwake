@@ -36,7 +36,7 @@ class CrespoHernandez(TurbulenceModel):
         ws_eff: jnp.ndarray,
         dw: jnp.ndarray,
         cw: jnp.ndarray,
-        ti_amb: jnp.ndarray,
+        ti_eff: jnp.ndarray,
         wake_radius: jnp.ndarray,
         ct: jnp.ndarray,  # TODO: only added to match py_wake...
     ) -> jnp.ndarray:
@@ -77,7 +77,7 @@ class CrespoHernandez(TurbulenceModel):
         ti_add = (
             self.c[0]
             * a[None, :] ** self.c[1]
-            * ti_amb[None, :] ** self.c[2]
+            * ti_eff[None, :] ** self.c[2]
             * (dw_gt0 / ctx.turbine.rotor_diameter) ** self.c[3]
         )
 

@@ -1,4 +1,5 @@
-from typing import Callable
+from dataclasses import replace
+from typing import Any, Callable
 
 import jax.numpy as jnp
 
@@ -23,6 +24,7 @@ class BastankhahGaussianDeficit(WakeDeficitModel):
         ct2a: Callable = ct2a_madsen,
         use_effective_ws: bool = False,
         use_radius_mask: bool = True,
+        turbulence_model: Any | None = None,
     ) -> None:
         """Initializes the BastankhahGaussianDeficit model.
 
@@ -30,6 +32,7 @@ class BastankhahGaussianDeficit(WakeDeficitModel):
             k: The wake expansion coefficient.
             use_effective_ws: A boolean indicating whether to use the effective
                               wind speed in the deficit calculation.
+            turbulence_model: An optional turbulence model for computing effective TI.
         """
         super().__init__()
         self.k = k
@@ -38,6 +41,7 @@ class BastankhahGaussianDeficit(WakeDeficitModel):
         self.ctlim = ctlim
         self.ct2a = ct2a
         self.use_radius_mask = use_radius_mask
+        self.turbulence_model = turbulence_model
 
     def compute_deficit(
         self,
@@ -45,6 +49,7 @@ class BastankhahGaussianDeficit(WakeDeficitModel):
         ctx: SimulationContext,
         xs_r: jnp.ndarray | None = None,
         ys_r: jnp.ndarray | None = None,
+        ti_eff: jnp.ndarray | None = None,
     ) -> jnp.ndarray:
         if xs_r is None:
             xs_r = ctx.xs
@@ -74,10 +79,19 @@ class BastankhahGaussianDeficit(WakeDeficitModel):
         # epsilon per source (1d); make broadcasting explicit below
         epsilon_ilk = self.ceps * jnp.sqrt(beta)
 
+        # Use ti_eff if provided (for effective TI mode), otherwise use ambient ti
+        ti_for_expansion = ti_eff if ti_eff is not None else ctx.ti
+
         # sigma_term: x_d has shape (n_receivers, n_sources).
         # We add epsilon_ilk broadcast along the source axis (columns).
+        # k can be scalar or per-source array
+        k_expansion = self.wake_expansion_coefficient(ti_for_expansion)
+        # Ensure k_expansion is broadcastable: if it's an array (ndim > 0), add None for receiver dim
+        k_expansion_arr = jnp.asarray(k_expansion)
+        if jnp.ndim(k_expansion_arr) > 0:
+            k_expansion_arr = k_expansion_arr[None, :]  # shape (1, S)
         sigma_term = (
-            self.wake_expansion_coefficient(ctx.ti) * x_d / D_src + epsilon_ilk[None, :]
+            k_expansion_arr * x_d / D_src + epsilon_ilk[None, :]
         )  # shape (R, S)
         sigma_sqr = sigma_term**2
 
@@ -119,7 +133,9 @@ class BastankhahGaussianDeficit(WakeDeficitModel):
 
         return new_ws
 
-    def wake_expansion_coefficient(self, ti: jnp.ndarray | None = None) -> float:
+    def wake_expansion_coefficient(
+        self, ti: jnp.ndarray | None = None
+    ) -> jnp.ndarray | float:
         """Returns the wake expansion coefficient."""
         _ = ti  # ignored
         return self.k
@@ -136,16 +152,97 @@ class NiayifarGaussianDeficit(BastankhahGaussianDeficit):
     def __init__(
         self,
         a: tuple = (0.38, 4e-3),
-        use_effective_ti: bool = False,  # TODO:
+        use_effective_ti: bool = False,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self.a = a
         self.use_effective_ti = use_effective_ti
 
-    def wake_expansion_coefficient(self, ti: jnp.ndarray | None = None) -> float:
+    def compute_deficit(
+        self,
+        ws_eff: jnp.ndarray,
+        ctx: SimulationContext,
+        xs_r: jnp.ndarray | None = None,
+        ys_r: jnp.ndarray | None = None,
+        ti_eff: jnp.ndarray | None = None,
+    ) -> jnp.ndarray:
+        """Computes the wake deficit with optional effective TI calculation."""
+        # If use_effective_ti is enabled and turbulence model is provided,
+        # compute the effective TI
+        if self.use_effective_ti and self.turbulence_model is not None:
+            if ctx.ti is None:
+                raise ValueError(
+                    "Ambient TI must be provided when use_effective_ti=True"
+                )
+
+            if ti_eff is None:
+                ti_eff = jnp.full_like(ws_eff, ctx.ti)
+
+            # ctx = replace(ctx, ti_amb=ctx.ti)
+            # Compute effective TI using the turbulence model
+            ti_eff = self._compute_effective_ti(ws_eff, ctx, ti_eff)
+
+        # Call parent's compute_deficit with ti_eff
+        return super().compute_deficit(ws_eff, ctx, xs_r, ys_r, ti_eff), ti_eff
+
+    def _compute_effective_ti(
+        self,
+        ws_eff: jnp.ndarray,
+        ctx: SimulationContext,
+        ti_eff: jnp.ndarray | None = None,
+    ) -> jnp.ndarray:
+        """Computes the effective turbulence intensity at each turbine."""
+        assert ctx.ti is not None, "TI must be provided"
+        assert self.turbulence_model is not None, "Turbulence model must be provided"
+
+        # Get downwind and crosswind distances between turbines
+        x_d, y_d = self.get_downwind_crosswind_distances(
+            ctx.xs, ctx.ys, ctx.xs, ctx.ys, ctx.wd
+        )
+
+        # Compute CT for each turbine
+        ct_src = ctx.turbine.ct(ws_eff)
+
+        # Compute wake radius using current TI (start with ambient)
+        # For the Niayifar model, wake radius is 2*sigma
+        D_src = ctx.turbine.rotor_diameter
+        eps = get_float_eps()
+
+        # beta computed per source (1d)
+        sqrt_1_minus_ct = jnp.sqrt(
+            jnp.maximum(eps, 1.0 - jnp.minimum(self.ctlim, ct_src))
+        )
+        beta = 0.5 * (1.0 + sqrt_1_minus_ct) / sqrt_1_minus_ct
+        epsilon_ilk = self.ceps * jnp.sqrt(beta)
+
+        # Use ambient TI for initial wake radius calculation
+        # TODO: This could be iterative, but PyWake seems to use ambient TI here
+        k_amb = self.wake_expansion_coefficient(ctx.ti)
+        sigma_term = k_amb * x_d / D_src + epsilon_ilk[None, :]
+        wake_radius = 2.0 * sigma_term * D_src
+
+        # Compute added turbulence using the turbulence model
+        ti_amb_array = jnp.full_like(ws_eff, ctx.ti)
+        ti_add = self.turbulence_model.calc_added_turbulence(
+            ctx=ctx,
+            ws_eff=ws_eff,
+            dw=x_d,
+            cw=y_d,
+            ti_eff=ti_eff,
+            wake_radius=wake_radius,
+            ct=ct_src,
+        )
+
+        # Compute effective TI using superposition
+        return self.turbulence_model.superposition_model(ti_amb_array, ti_add)
+
+    def wake_expansion_coefficient(
+        self, ti: jnp.ndarray | None = None
+    ) -> jnp.ndarray | float:
         """Calculates the wake expansion coefficient based on turbulence intensity."""
-        if ti is None:  # TODO: should throw much earlier
+        if ti is None:
             raise ValueError("Turbulence intensity must be provided.")
         a0, a1 = self.a
+        # ti can be a scalar or array, ensure we handle both
         return a0 * ti + a1

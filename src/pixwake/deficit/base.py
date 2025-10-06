@@ -18,6 +18,7 @@ class WakeDeficitModel(ABC):
         ctx: SimulationContext,
         xs_r: jnp.ndarray | None = None,
         ys_r: jnp.ndarray | None = None,
+        ti_eff: jnp.ndarray | None = None,
     ) -> jnp.ndarray:
         """A wrapper around the compute_deficit method.
 
@@ -30,7 +31,7 @@ class WakeDeficitModel(ABC):
         Returns:
             The updated effective wind speeds.
         """
-        return self.compute_deficit(ws_eff, ctx, xs_r, ys_r)
+        return self.compute_deficit(ws_eff, ctx, xs_r, ys_r, ti_eff=ti_eff)
 
     @abstractmethod
     def compute_deficit(
@@ -39,6 +40,7 @@ class WakeDeficitModel(ABC):
         ctx: SimulationContext,
         xs_r: jnp.ndarray | None = None,
         ys_r: jnp.ndarray | None = None,
+        ti_eff: jnp.ndarray | None = None,
     ) -> jnp.ndarray:  # pragma: no cover
         """Computes the wake deficit.
 
