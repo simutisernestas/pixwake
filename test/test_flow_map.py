@@ -1,4 +1,5 @@
 import jax.numpy as jnp
+import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 
@@ -106,3 +107,27 @@ def test_flow_map_no_grid_with_ti(sim):
     assert flow_map is not None
     assert flow_map.shape == (1, 100**2)
     plot_flow_map(fm_x, fm_y, flow_map[0], xs, ys, show=False)
+
+
+def test_flow_map_plotting_with_ax_passing(sim):
+    """Test that the flow map can be plotted when an axes is provided."""
+    xs = jnp.array([0, 500, 0, 1000])
+    ys = jnp.array([0, 0, 500, 0])
+    grid_density = 100
+    grid_x, grid_y = np.mgrid[
+        -100 : 2000 : grid_density * 1j, -250 : 750 : grid_density * 1j
+    ]
+
+    flow_map, _ = sim.flow_map(
+        xs,
+        ys,
+        fm_x=grid_x.ravel(),
+        fm_y=grid_y.ravel(),
+    )
+
+    assert flow_map is not None
+    assert flow_map.shape == (1, grid_density**2)
+
+    fig, ax = plt.subplots(figsize=(10, 8))
+    plot_flow_map(grid_x, grid_y, flow_map, xs, ys, show=False, ax=ax)
+    plt.close(fig)

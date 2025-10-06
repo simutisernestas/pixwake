@@ -1,5 +1,7 @@
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
+from matplotlib.axes import Axes
+from matplotlib.figure import Figure, SubFigure
 
 
 def plot_flow_map(
@@ -8,17 +10,21 @@ def plot_flow_map(
     flow_map_data: jnp.ndarray,
     wt_x: jnp.ndarray | None = None,
     wt_y: jnp.ndarray | None = None,
-    show=True,
-    ax=None,  # TODO:
-) -> None:
+    show: bool = True,
+    ax: Axes | None = None,
+) -> Axes:
     """Plots a wind farm flow map.
-
     Args:
         grid_x: The x-coordinates of the grid.
         grid_y: The y-coordinates of the grid.
         flow_map_data: The wind speed data for the flow map.
         wt_x: The x-coordinates of the turbines (optional).
         wt_y: The y-coordinates of the turbines (optional).
+        show: If True, calls `plt.show()`. Only has an effect if `ax` is None.
+        ax: An optional matplotlib axes to plot on. If not provided, a new
+            figure and axes are created.
+    Returns:
+        The axes on which the flow map was plotted.
     """
     if grid_x.ndim != 2 or grid_y.ndim != 2:
         side_length = int(jnp.sqrt(grid_x.shape[0]))
@@ -28,18 +34,33 @@ def plot_flow_map(
         grid_x = grid_x.reshape((side_length, side_length))
         grid_y = grid_y.reshape((side_length, side_length))
 
-    plt.figure(figsize=(10, 8))
-    plt.contourf(
-        grid_x, grid_y, flow_map_data.reshape(grid_x.shape), cmap="viridis", levels=100
+    fig: Figure | SubFigure | None
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(10, 8))
+        show_plot = show
+    else:
+        fig = ax.get_figure()
+        show_plot = False
+
+    contour = ax.contourf(
+        grid_x,
+        grid_y,
+        flow_map_data.reshape(grid_x.shape),
+        cmap="viridis",
+        levels=100,
     )
-    plt.colorbar(label="Wind Speed (m/s)")
+    if fig is not None:
+        fig.colorbar(contour, ax=ax, label="Wind Speed (m/s)")
 
     if wt_x is not None and wt_y is not None:
-        plt.scatter(wt_x, wt_y, color="red", marker="^", s=50, label="Turbines")
-        plt.legend()
+        ax.scatter(wt_x, wt_y, color="red", marker="^", s=50, label="Turbines")
+        ax.legend()
 
-    plt.title("Wind Farm Flow Map")
-    plt.xlabel("x-coordinates")
-    plt.ylabel("y-coordinates")
-    if show:
+    ax.set_title("Wind Farm Flow Map")
+    ax.set_xlabel("x-coordinates")
+    ax.set_ylabel("y-coordinates")
+
+    if show_plot:
         plt.show()
+
+    return ax
