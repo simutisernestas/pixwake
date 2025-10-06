@@ -3,8 +3,9 @@ from dataclasses import dataclass, field
 import jax.numpy as jnp
 
 from pixwake.core import SimulationContext
-from pixwake.deficit.utils import ct2a_madsen
 from pixwake.turbulence.base import TurbulenceModel
+
+from ..utils import ct2a_madsen
 
 
 @dataclass

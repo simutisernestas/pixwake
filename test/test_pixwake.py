@@ -7,7 +7,11 @@ from jax.test_util import check_grads
 
 from pixwake import Curve, Turbine
 from pixwake.core import SimulationContext, WakeSimulation, fixed_point
-from pixwake.deficit import NiayifarGaussianDeficit, NOJDeficit
+from pixwake.deficit import (
+    BastankhahGaussianDeficit,
+    NiayifarGaussianDeficit,
+    NOJDeficit,
+)
 
 jcfg.update("jax_enable_x64", True)  # need float64 to match pywake
 
@@ -245,53 +249,38 @@ def test_wake_simulation_manual_mapping_strategy():
     )
 
 
-def test_mapping_strategies_give_same_results():
-    """Test that different mapping strategies give the same results."""
-    xs, ys, ws, wd, _, turbine = rect_grid_params(nx=5, ny=4)
-    model = NiayifarGaussianDeficit()
-
-    mapping_methods = getattr(
-        WakeSimulation(model, turbine), "_WakeSimulation__sim_call_table"
-    ).keys()
-
-    results = []
-    for map_strategy in mapping_methods:
-        sim = WakeSimulation(model, turbine, mapping_strategy=map_strategy)
-        res = sim(xs, ys, jnp.full_like(xs, ws), jnp.full_like(xs, wd), 0.1)
-        results.append(res.effective_ws)
-
-    for i in range(len(results)):
-        for j in range(i + 1, len(results)):
-            assert jnp.allclose(results[i], results[j], rtol=1e-6)
-
-
-def test_mapping_strategies_give_same_results_noj():
-    """Test that different mapping strategies give the same results."""
-    xs, ys, ws, wd, k, turbine = rect_grid_params(nx=5, ny=4)
-    model = NOJDeficit(k=k)
-
-    mapping_methods = getattr(
-        WakeSimulation(model, turbine), "_WakeSimulation__sim_call_table"
-    ).keys()
-
-    results = []
-    for map_strategy in mapping_methods:
-        sim = WakeSimulation(model, turbine, mapping_strategy=map_strategy)
-        res = sim(xs, ys, jnp.full_like(xs, ws), jnp.full_like(xs, wd))
-        results.append(res.effective_ws)
-
-    for i in range(len(results)):
-        for j in range(i + 1, len(results)):
-            assert jnp.allclose(results[i], results[j], rtol=1e-6)
-
-
-"""TODO: should cover mapping strategy and different models;
-maybe a matrix because some of them have different inputs ???:
-
-@pytest.fixture(
-    params=[
-        (BastankhahGaussianDeficit(use_effective_ws=True, use_radius_mask=True),),
-        (NiayifarGaussianDeficit(use_effective_ws=True, use_radius_mask=True),),
-    ]
+@pytest.mark.parametrize(
+    "model,requires_ti",
+    [
+        (NOJDeficit(k=0.05), False),
+        (BastankhahGaussianDeficit(), False),
+        (NiayifarGaussianDeficit(), True),
+    ],
 )
-"""
+def test_mapping_strategies_give_same_results(model, requires_ti):
+    """Test that different mapping strategies give the same results for various models."""
+    xs, ys, ws, wd, _, turbine = rect_grid_params(nx=5, ny=4)
+
+    mapping_methods = getattr(
+        WakeSimulation(model, turbine), "_WakeSimulation__sim_call_table"
+    ).keys()
+
+    results = []
+    for map_strategy in mapping_methods:
+        sim = WakeSimulation(model, turbine, mapping_strategy=map_strategy)
+
+        sim_args = {
+            "xs": xs,
+            "ys": ys,
+            "ws": jnp.full_like(xs, ws),
+            "wd": jnp.full_like(xs, wd),
+        }
+        if requires_ti:
+            sim_args["ti"] = 0.1
+
+        res = sim(**sim_args)
+        results.append(res.effective_ws)
+
+    for i in range(len(results)):
+        for j in range(i + 1, len(results)):
+            assert jnp.allclose(results[i], results[j], rtol=1e-6)

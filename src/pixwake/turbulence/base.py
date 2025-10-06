@@ -10,7 +10,7 @@ class Superposition:
     """Base class for superposition models."""
 
     @abstractmethod
-    def __call__(self, ambient, added):
+    def __call__(self, ambient: jnp.ndarray, added: jnp.ndarray) -> jnp.ndarray:
         """
         Calculates the effective quantity by combining the ambient and added.
 
@@ -34,7 +34,7 @@ class Superposition:
 class SqrMaxSum(Superposition):
     """Square root of the sum of squares superposition model."""
 
-    def __call__(self, ambient, added):
+    def __call__(self, ambient: jnp.ndarray, added: jnp.ndarray) -> jnp.ndarray:
         """
         Calculates the effective quantity as the square root of the
         sum of the squares of the ambient and added.

@@ -4,8 +4,8 @@ import jax.numpy as jnp
 
 from ..core import SimulationContext
 from ..jax_utils import get_float_eps
+from ..utils import ct2a_madsen
 from .base import WakeDeficitModel
-from .utils import ct2a_madsen
 
 
 class BastankhahGaussianDeficit(WakeDeficitModel):
