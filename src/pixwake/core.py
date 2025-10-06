@@ -264,7 +264,7 @@ class WakeSimulation:
                 SimulationContext(ctx.xs, ctx.ys, ws, wd, ctx.turbine, ti)
             )
 
-        # TODO: probably should investigate the in_axes argument here
+        # TODO: in_axes=(0, 0, 0) ??? should benchmark
         return jax.vmap(_single_case)(ctx.ws, ctx.wd, ctx.ti)
 
     def _simulate_map(
@@ -308,6 +308,12 @@ class WakeSimulation:
     ) -> jnp.ndarray:
         """Simulates a single wind condition."""
         x0 = jnp.full_like(ctx.xs, ctx.ws, dtype=default_float_type())
+
+        if self.mapping_strategy == "_manual":
+            return fixed_point_debug(
+                self.model, x0, ctx, damp=self.fpi_damp, tol=self.fpi_tol
+            )
+
         return fixed_point(self.model, x0, ctx, damp=self.fpi_damp, tol=self.fpi_tol)
 
     def _atleast_1d_jax(self, x: jnp.ndarray | float | list) -> jnp.ndarray:
@@ -356,12 +362,6 @@ def fixed_point(
         x_damped = damp * x_new + (1 - damp) * x
         return x, x_damped, it + 1
 
-    # TODO: for debugging should implement this version to not trace any objects
-    # carry = (x_guess, f(x_guess, ctx), 0)
-    # while cond_fun(carry):
-    #     carry = body_fun(carry)
-    # _, x_star, it = carry
-
     _, x_star, it = while_loop(cond_fun, body_fun, (x_guess, f(x_guess, ctx), 0))
     # jax.debug.print("\nFixed point found after {it} iterations", it=it)
     return x_star
@@ -400,3 +400,45 @@ def fixed_point_rev(
 
 
 fixed_point.defvjp(fixed_point_fwd, fixed_point_rev)
+
+
+def fixed_point_debug(
+    f: Callable,
+    x_guess: jnp.ndarray,
+    ctx: SimulationContext,
+    tol: float = 1e-6,
+    damp: float = 0.5,
+) -> jnp.ndarray:
+    """Finds the fixed point of a function using iterative updates.
+    This function is for debugging purposes only and is not JAX-transformable.
+    It uses a standard Python while loop instead of `jax.lax.while_loop`.
+
+    Args:
+        f: The function to iterate.
+        x_guess: The initial guess for the fixed point.
+        ctx: The context of the simulation.
+        tol: The tolerance for convergence.
+        damp: The damping factor for the updates.
+
+    Returns:
+        The fixed point of the function.
+    """
+    max_iter = max(20, len(jnp.atleast_1d(x_guess)))
+
+    def cond_fun(carry: tuple) -> bool:
+        x_prev, x, it = carry
+        tol_cond = jnp.max(jnp.abs(x_prev - x)) > tol
+        iter_cond = it < max_iter
+        return bool(tol_cond and iter_cond)
+
+    def body_fun(carry: tuple) -> tuple:
+        _, x, it = carry
+        x_new = f(x, ctx)
+        x_damped = damp * x_new + (1 - damp) * x
+        return x, x_damped, it + 1
+
+    carry = (x_guess, f(x_guess, ctx), 0)
+    while cond_fun(carry):
+        carry = body_fun(carry)
+    _, x_star, _ = carry
+    return x_star
