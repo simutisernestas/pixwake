@@ -122,21 +122,18 @@ wfm = All2AllIterative(
     turbulenceModel=PyWakeCrespoHernandez(rotorAvgModel=None),
 )
 
-# np.random.seed(42)
-
-# 5 test cases
-while True:
+for _ in range(20):
     n_test = 1
     ws = np.random.uniform(cutin_ws, cutout_ws, size=n_test)
     wd = np.random.uniform(0, 360, size=n_test)
 
-    print("=" * 80)
-    print("PyWake")
-    print("=" * 80)
+    # print("=" * 80)
+    # print("PyWake")
+    # print("=" * 80)
     sim_res = wfm(x=x, y=y, wd=wd, ws=ws, time=True, TI=0.1, WS_eff=0)
     pywake_ws_eff = sim_res["WS_eff"].values
-    print("Shape:", pywake_ws_eff.shape)
-    print("WS_eff:\n", pywake_ws_eff)
+    # print("Shape:", pywake_ws_eff.shape)
+    # print("WS_eff:\n", pywake_ws_eff)
 
     # pixwake
     model = NiayifarGaussianDeficit(
@@ -157,36 +154,36 @@ while True:
     )
     sim = WakeSimulation(model, turbine, fpi_damp=0.5, mapping_strategy="_manual")
 
-    print("\n" + "=" * 80)
-    print("Pixwake")
-    print("=" * 80)
+    # print("\n" + "=" * 80)
+    # print("Pixwake")
+    # print("=" * 80)
     pixwake_sim_res = sim(
         jnp.asarray(x), jnp.asarray(y), jnp.asarray(ws), jnp.asarray(wd), 0.1
     )
     ws_eff, ti_eff = pixwake_sim_res.effective_ws
-    print(ws_eff, ti_eff)
+    # print(ws_eff, ti_eff)
 
     # print("Shape:", pixwake_sim_res.effective_ws.T.shape)
     # print("WS_eff:\n", pixwake_sim_res.effective_ws.T)
 
-    print("\n" + "=" * 80)
-    print("Comparison")
-    print("=" * 80)
+    # print("\n" + "=" * 80)
+    # print("Comparison")
+    # print("=" * 80)
     diff = pywake_ws_eff - ws_eff.reshape(pywake_ws_eff.shape)
-    print("Difference:\n", diff)
-    print(f"Max abs diff: {np.abs(diff).max():.6f}")
-    print(f"Mean abs diff: {np.abs(diff).mean():.6f}")
+    # print("Difference:\n", diff)
+    # print(f"Max abs diff: {np.abs(diff).max():.6f}")
+    # print(f"Mean abs diff: {np.abs(diff).mean():.6f}")
     rel_diff = diff / np.maximum(pywake_ws_eff, 1e-6)
 
     max_rel_diff = np.abs(rel_diff).max() * 100
     if max_rel_diff > 1.0:
-        print(f"Max rel diff: {max_rel_diff:.6f} %")
-        print(ti_eff)
-        print(sim_res["TI_eff"].values.T)
-        break
+        # print(f"Max rel diff: {max_rel_diff:.6f} %")
+        # print(ti_eff)
+        # print(sim_res["TI_eff"].values.T)
+        raise Exception(f"Max rel diff: {max_rel_diff:.6f} %")
 
-    print(f"Max rel diff: {np.abs(rel_diff).max() * 100:.6f} %")
-    print(f"Mismatched (>1% rel): {(np.abs(rel_diff) > 0.01).sum()} / {rel_diff.size}")
+    # print(f"Max rel diff: {np.abs(rel_diff).max() * 100:.6f} %")
+    # print(f"Mismatched (>1% rel): {(np.abs(rel_diff) > 0.01).sum()} / {rel_diff.size}")
 
     # print(pixwake_sim_res.ctx.ti)
     # print(sim_res["TI_eff"].values.T)
