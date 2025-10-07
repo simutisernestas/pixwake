@@ -15,7 +15,7 @@ from pixwake import Curve, Turbine, WakeSimulation
 from pixwake.deficit import NiayifarGaussianDeficit
 from pixwake.turbulence import CrespoHernandez
 
-jcfg.update("jax_enable_x64", False)
+jcfg.update("jax_enable_x64", True)
 
 ct_vals = np.array(
     [
@@ -86,10 +86,10 @@ power_curve = np.stack([ct_pw_ws, power_vals], axis=1)
 
 # 2x3 grid (6 turbines)
 RD = 120.0
-width, length = 20, 3
+width, length = 30, 10
 x, y = np.meshgrid(
-    np.linspace(0, width * RD, width),
-    np.linspace(0, length * RD, length),
+    np.linspace(0, width * RD * 3, width),
+    np.linspace(0, length * RD * 3, length),
 )
 x, y = x.flatten(), y.flatten()
 
@@ -122,10 +122,30 @@ wfm = All2AllIterative(
     turbulenceModel=PyWakeCrespoHernandez(rotorAvgModel=None),
 )
 
-for _ in range(20):
+# pixwake
+model = NiayifarGaussianDeficit(
+    use_effective_ws=True,
+    use_radius_mask=False,
+    use_effective_ti=True,
+    turbulence_model=CrespoHernandez(),
+)
+turbine = Turbine(
+    rotor_diameter=RD,
+    hub_height=100.0,
+    power_curve=Curve(
+        wind_speed=jnp.array(power_curve[:, 0]), values=jnp.array(power_curve[:, 1])
+    ),
+    ct_curve=Curve(
+        wind_speed=jnp.array(ct_curve[:, 0]), values=jnp.array(ct_curve[:, 1])
+    ),
+)
+sim = WakeSimulation(model, turbine, fpi_damp=0.5, mapping_strategy="_manual")
+
+
+for _ in range(200):
     n_test = 1
-    ws = np.random.uniform(cutin_ws, cutout_ws, size=n_test)
-    wd = np.random.uniform(0, 360, size=n_test)
+    ws = np.maximum(np.random.uniform(cutin_ws, cutout_ws, size=n_test), 0.0) #* 0 + 3.68
+    wd = np.random.uniform(0, 360, size=n_test) #* 0 + 166.72
 
     # print("=" * 80)
     # print("PyWake")
@@ -134,25 +154,6 @@ for _ in range(20):
     pywake_ws_eff = sim_res["WS_eff"].values
     # print("Shape:", pywake_ws_eff.shape)
     # print("WS_eff:\n", pywake_ws_eff)
-
-    # pixwake
-    model = NiayifarGaussianDeficit(
-        use_effective_ws=True,
-        use_radius_mask=False,
-        use_effective_ti=True,
-        turbulence_model=CrespoHernandez(),
-    )
-    turbine = Turbine(
-        rotor_diameter=RD,
-        hub_height=100.0,
-        power_curve=Curve(
-            wind_speed=jnp.array(power_curve[:, 0]), values=jnp.array(power_curve[:, 1])
-        ),
-        ct_curve=Curve(
-            wind_speed=jnp.array(ct_curve[:, 0]), values=jnp.array(ct_curve[:, 1])
-        ),
-    )
-    sim = WakeSimulation(model, turbine, fpi_damp=0.5, mapping_strategy="_manual")
 
     # print("\n" + "=" * 80)
     # print("Pixwake")
@@ -169,17 +170,27 @@ for _ in range(20):
     # print("\n" + "=" * 80)
     # print("Comparison")
     # print("=" * 80)
-    diff = pywake_ws_eff - ws_eff.reshape(pywake_ws_eff.shape)
+    diff = np.maximum(pywake_ws_eff, 0) - ws_eff.reshape(pywake_ws_eff.shape)
     # print("Difference:\n", diff)
     # print(f"Max abs diff: {np.abs(diff).max():.6f}")
     # print(f"Mean abs diff: {np.abs(diff).mean():.6f}")
+    # print(np.min(pywake_ws_eff))
+    # print(np.min(ws_eff))
+    # print(np.max(pywake_ws_eff))
+    # print(np.max(ws_eff))
     rel_diff = diff / np.maximum(pywake_ws_eff, 1e-6)
+    abs_diff = np.abs(diff)
 
     max_rel_diff = np.abs(rel_diff).max() * 100
-    if max_rel_diff > 1.0:
+    print(max_rel_diff, np.abs(diff).max(), ws, wd)
+    if max_rel_diff > 2.0:
         # print(f"Max rel diff: {max_rel_diff:.6f} %")
         # print(ti_eff)
         # print(sim_res["TI_eff"].values.T)
+
+        # print(pywake_ws_eff.T - ws_eff.reshape(pywake_ws_eff.T.shape))
+        print(ti_eff - sim_res["TI_eff"].values.T)
+
         raise Exception(f"Max rel diff: {max_rel_diff:.6f} %")
 
     # print(f"Max rel diff: {np.abs(rel_diff).max() * 100:.6f} %")

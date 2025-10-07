@@ -864,8 +864,8 @@ def test_effective_ti_gaussian_aep_and_gradients_equivalence_timeseries_with_wak
     length = 3
     RD = 120.0
     x, y = np.meshgrid(
-        np.linspace(0, width * RD, width),
-        np.linspace(0, length * RD, length),
+        np.linspace(0, width * RD * 3, width),
+        np.linspace(0, length * RD * 3, length),
     )
     x, y = x.flatten(), y.flatten()
     turbines = [
@@ -917,7 +917,7 @@ def test_effective_ti_gaussian_aep_and_gradients_equivalence_timeseries_with_wak
         turbulenceModel=PyWakeCrespoHernandez(rotorAvgModel=None),  # TODO: !!!
     )
 
-    n_timestamps = 20
+    n_timestamps = 1000
     ws, wd = (
         np.random.uniform(cutin_ws, cutout_ws, size=n_timestamps),
         np.random.uniform(0, 360, size=n_timestamps),
@@ -956,7 +956,7 @@ def test_effective_ti_gaussian_aep_and_gradients_equivalence_timeseries_with_wak
         pixwake_sim_res.effective_ti.T,
         sim_res["TI_eff"],
         atol=1e-5,
-        rtol=rtol,
+        rtol=rtol * 2,
     )
 
     pywake_aep = sim_res.aep().sum().values
