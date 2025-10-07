@@ -24,7 +24,6 @@ class BastankhahGaussianDeficit(WakeDeficitModel):
         ct2a: Callable = ct2a_madsen,
         use_effective_ws: bool = False,
         use_radius_mask: bool = True,
-        turbulence_model: Any | None = None,
     ) -> None:
         """Initializes the BastankhahGaussianDeficit model.
 
@@ -32,7 +31,6 @@ class BastankhahGaussianDeficit(WakeDeficitModel):
             k: The wake expansion coefficient.
             use_effective_ws: A boolean indicating whether to use the effective
                               wind speed in the deficit calculation.
-            turbulence_model: An optional turbulence model for computing effective TI.
         """
         super().__init__()
         self.k = k
@@ -41,7 +39,6 @@ class BastankhahGaussianDeficit(WakeDeficitModel):
         self.ctlim = ctlim
         self.ct2a = ct2a
         self.use_radius_mask = use_radius_mask
-        self.turbulence_model = turbulence_model
 
     def compute_deficit(
         self,
@@ -153,11 +150,13 @@ class NiayifarGaussianDeficit(BastankhahGaussianDeficit):
         self,
         a: tuple = (0.38, 4e-3),
         use_effective_ti: bool = False,
+        turbulence_model: Any | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self.a = a
         self.use_effective_ti = use_effective_ti
+        self.turbulence_model = turbulence_model
 
     def compute_deficit(
         self,
@@ -166,25 +165,25 @@ class NiayifarGaussianDeficit(BastankhahGaussianDeficit):
         xs_r: jnp.ndarray | None = None,
         ys_r: jnp.ndarray | None = None,
         ti_eff: jnp.ndarray | None = None,
-    ) -> jnp.ndarray:
+    ) -> jnp.ndarray | tuple:
         """Computes the wake deficit with optional effective TI calculation."""
-        # If use_effective_ti is enabled and turbulence model is provided,
-        # compute the effective TI
-        if self.use_effective_ti and self.turbulence_model is not None:
-            if ctx.ti is None:
-                raise ValueError(
-                    "Ambient TI must be provided when use_effective_ti=True"
-                )
+        if not self.use_effective_ti:
+            return super().compute_deficit(ws_eff, ctx, xs_r, ys_r, ti_eff)
 
-            if ti_eff is None:
-                ti_eff = jnp.full_like(ws_eff, ctx.ti)
+        if self.turbulence_model is None:
+            raise ValueError(
+                "A turbulence model must be provided when use_effective_ti=True"
+            )
+        if ctx.ti is None:
+            raise ValueError("Ambient TI must be provided when use_effective_ti=True")
 
-            # ctx = replace(ctx, ti_amb=ctx.ti)
-            # Compute effective TI using the turbulence model
-            ti_eff = self._compute_effective_ti(ws_eff, ctx, ti_eff)
+        if ti_eff is None:
+            ti_eff = jnp.full_like(ws_eff, ctx.ti)
 
-        # Call parent's compute_deficit with ti_eff
-        return super().compute_deficit(ws_eff, ctx, xs_r, ys_r, ti_eff), ti_eff
+        new_ti_eff = self._compute_effective_ti(ws_eff, ctx, ti_eff)
+        new_ws_eff = super().compute_deficit(ws_eff, ctx, xs_r, ys_r, new_ti_eff)
+
+        return new_ws_eff, new_ti_eff
 
     def _compute_effective_ti(
         self,

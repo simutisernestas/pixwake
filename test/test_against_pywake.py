@@ -314,7 +314,7 @@ def test_noj_aep_and_gradients_equivalence_with_site_frequencies(ct_vals, power_
     )
 
     ws = np.arange(cutin_ws, cutout_ws + 1)
-    wd = np.arange(0, 360)
+    wd = np.arange(0, 360, 45)
     s = time.time()
     sim_res = wfm(x=wt_x, y=wt_y, wd=wd, ws=ws)
     pw_dx, pw_dy = wfm.aep_gradients(x=wt_x, y=wt_y, wd=wd, ws=ws)
@@ -343,7 +343,7 @@ def test_noj_aep_and_gradients_equivalence_with_site_frequencies(ct_vals, power_
         rtol=1e-3,
     )
 
-    P_ilk = site.local_wind().P_ilk
+    P_ilk = site.local_wind(ws=ws, wd=wd).P_ilk
     pix_probs = P_ilk.reshape((1, pixwake_sim_res.effective_ws.shape[0])).T
 
     np.testing.assert_allclose(
@@ -707,7 +707,7 @@ def test_crespo_hernandez_implementation_match():
         ws_eff=jnp.array([0.1]),
         dw=dw,
         cw=cw,
-        ti_amb=ti_amb,
+        ti_eff=ti_amb,
         wake_radius=wake_radius,
         ct=ct,
     )

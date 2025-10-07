@@ -30,6 +30,7 @@ class NOJDeficit(WakeDeficitModel):
         ctx: SimulationContext,
         xs_r: jnp.ndarray | None = None,
         ys_r: jnp.ndarray | None = None,
+        ti_eff: jnp.ndarray | None = None,
     ) -> jnp.ndarray:
         """Computes the wake deficit using the NOJ model.
 
@@ -38,6 +39,7 @@ class NOJDeficit(WakeDeficitModel):
             ctx: The context of the simulation.
             xs_r: An array of x-coordinates for each receiver point (optional).
             ys_r: An array of y-coordinates for each receiver point (optional).
+            ti_eff: An array of effective turbulence intensities (optional, not used).
 
         Returns:
             An array of updated effective wind speeds at each turbine.

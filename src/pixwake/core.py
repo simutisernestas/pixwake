@@ -96,11 +96,13 @@ class SimulationResult:
     """A dataclass to hold the results of a wind farm simulation.
     Attributes:
         effective_ws: Effective wind speeds at each turbine for each wind condition.
-        turbine: The turbine object used in the simulation.
+        ctx: The context of the simulation.
+        effective_ti: Effective turbulence intensity at each turbine for each wind condition.
     """
 
     effective_ws: jnp.ndarray
     ctx: SimulationContext
+    effective_ti: jnp.ndarray | None = None
 
     def power(self) -> jnp.ndarray:
         """Calculates the power of each turbine for each wind condition."""
@@ -203,7 +205,14 @@ class WakeSimulation:
 
         ctx = SimulationContext(xs, ys, ws, wd, self.turbine, ti)
         sim_func = self.__sim_call_table[self.mapping_strategy]
-        return SimulationResult(effective_ws=sim_func(ctx), ctx=ctx)
+
+        sim_result = sim_func(ctx)
+        if isinstance(sim_result, tuple) and len(sim_result) == 2:
+            ws_eff, ti_eff = sim_result
+        else:
+            ws_eff, ti_eff = sim_result, None
+
+        return SimulationResult(effective_ws=ws_eff, effective_ti=ti_eff, ctx=ctx)
 
     def flow_map(
         self,
@@ -248,8 +257,9 @@ class WakeSimulation:
                 ),
                 xs_r=fm_x,
                 ys_r=fm_y,
+                ti_eff=_ti,
             )
-        )(ws, wd, result.effective_ws, ti), (fm_x, fm_y)
+        )(ws, wd, result.effective_ws, result.effective_ti), (fm_x, fm_y)
 
     def _simulate_vmap(
         self,
@@ -264,7 +274,6 @@ class WakeSimulation:
                 SimulationContext(ctx.xs, ctx.ys, ws, wd, ctx.turbine, ti)
             )
 
-        # TODO: in_axes=(0, 0, 0) ??? should benchmark
         return jax.vmap(_single_case)(ctx.ws, ctx.wd, ctx.ti)
 
     def _simulate_map(
@@ -288,33 +297,66 @@ class WakeSimulation:
         ctx: SimulationContext,
     ) -> jnp.ndarray:
         """Simulates multiple wind conditions using a manual loop (for debugging)."""
+        # Pre-allocate output arrays
+        n_cases = ctx.ws.size
+        n_turbines = ctx.xs.size
+        ws_out = jnp.zeros((n_cases, n_turbines))
+        ti_out = (
+            jnp.zeros((n_cases, n_turbines))
+            if getattr(self.model, "use_effective_ti", False)
+            else None
+        )
 
-        out = jnp.zeros((ctx.ws.size, ctx.xs.size))
-        for i in range(ctx.ws.size):
+        for i in range(n_cases):
             _ws = ctx.ws[i]
             _wd = ctx.wd[i]
             _ti = None if ctx.ti is None else ctx.ti[i]
 
-            # out = out.at[i].set(
-            return self._simulate_single_case(
+            result = self._simulate_single_case(
                 SimulationContext(ctx.xs, ctx.ys, _ws, _wd, ctx.turbine, _ti)
             )
-            # )
-        return out
+
+            if isinstance(result, tuple):
+                ws_eff, ti_eff = result
+                ws_out = ws_out.at[i].set(ws_eff)
+                if ti_out is not None:
+                    ti_out = ti_out.at[i].set(ti_eff)
+            else:
+                ws_out = ws_out.at[i].set(result)
+
+        return (ws_out, ti_out) if ti_out is not None else ws_out
 
     def _simulate_single_case(
         self,
         ctx: SimulationContext,
-    ) -> jnp.ndarray:
+    ) -> jnp.ndarray | tuple[jnp.ndarray, jnp.ndarray]:
         """Simulates a single wind condition."""
-        x0 = jnp.full_like(ctx.xs, ctx.ws, dtype=default_float_type())
+        ws_guess = jnp.full_like(ctx.xs, ctx.ws, dtype=default_float_type())
+
+        use_ti = getattr(self.model, "use_effective_ti", False)
+        if use_ti:
+            ti_guess = ctx.ti
+            if ti_guess is None:
+                # try to get it from the model itself
+                if hasattr(self.model, "ambient_ti"):
+                    ti_guess = jnp.full_like(ws_guess, self.model.ambient_ti)
+                else:
+                    raise ValueError(
+                        "Turbulence intensity `ti` must be provided for this model, "
+                        "either in the simulation call or as `ambient_ti` in the model."
+                    )
+            x_guess = (ws_guess, ti_guess)
+        else:
+            x_guess = ws_guess
 
         if self.mapping_strategy == "_manual":
             return fixed_point_debug(
-                self.model, x0, ctx, damp=self.fpi_damp, tol=self.fpi_tol
+                self.model, x_guess, ctx, damp=self.fpi_damp, tol=self.fpi_tol
             )
 
-        return fixed_point(self.model, x0, ctx, damp=self.fpi_damp, tol=self.fpi_tol)
+        return fixed_point(
+            self.model, x_guess, ctx, damp=self.fpi_damp, tol=self.fpi_tol
+        )
 
     def _atleast_1d_jax(self, x: jnp.ndarray | float | list) -> jnp.ndarray:
         return jnp.atleast_1d(jnp.asarray(x))
@@ -327,11 +369,11 @@ class WakeSimulation:
 )
 def fixed_point(
     f: Callable,
-    x_guess: jnp.ndarray,
+    x_guess: jnp.ndarray | tuple,
     ctx: SimulationContext,
     tol: float = 1e-6,
     damp: float = 0.5,
-) -> jnp.ndarray:
+) -> jnp.ndarray | tuple:
     """Finds the fixed point of a function using iterative updates.
 
     This function is used to solve for the stable effective wind speeds in the
@@ -340,7 +382,7 @@ def fixed_point(
 
     Args:
         f: The function to iterate.
-        x_guess: The initial guess for the fixed point.
+        x_guess: The initial guess for the fixed point. Can be a single array or a pytree.
         ctx: The context of the simulation.
         tol: The tolerance for convergence.
         damp: The damping factor for the updates.
@@ -348,55 +390,52 @@ def fixed_point(
     Returns:
         The fixed point of the function.
     """
-    max_iter = max(20, len(jnp.atleast_1d(x_guess)))
+    max_iter = max(20, len(jnp.atleast_1d(jax.tree.leaves(x_guess)[0])))
 
     def cond_fun(carry: tuple) -> jnp.ndarray:
         x_prev, x, it = carry
-        tol_cond = jnp.max(jnp.abs(x_prev - x)) > tol
+        ws_prev = x_prev[0] if isinstance(x_prev, tuple) else x_prev
+        ws = x[0] if isinstance(x, tuple) else x
+        tol_cond = jnp.max(jnp.abs(ws_prev - ws)) > tol
         iter_cond = it < max_iter
         return jnp.logical_and(tol_cond, iter_cond)
 
     def body_fun(carry: tuple) -> tuple:
         _, x, it = carry
         x_new = f(x, ctx)
-        x_damped = damp * x_new + (1 - damp) * x
+        x_damped = jax.tree.map(lambda n, o: damp * n + (1 - damp) * o, x_new, x)
         return x, x_damped, it + 1
 
     _, x_star, it = while_loop(cond_fun, body_fun, (x_guess, f(x_guess, ctx), 0))
-    # jax.debug.print("\nFixed point found after {it} iterations", it=it)
     return x_star
 
 
 def fixed_point_fwd(
     f: Callable,
-    x_guess: jnp.ndarray,
+    x_guess: jnp.ndarray | tuple,
     ctx: Any,
     tol: float,
     damp: float,
-) -> tuple[jnp.ndarray, tuple]:
+) -> tuple[jnp.ndarray | tuple, tuple]:
     x_star = fixed_point(f, x_guess, ctx, tol=tol, damp=damp)
     return x_star, (ctx, x_star)
 
 
 def fixed_point_rev(
-    f: Callable, tol: float, damp: float, res: tuple, x_star_bar: jnp.ndarray
-) -> tuple[jnp.ndarray, Any]:
+    f: Callable, tol: float, damp: float, res: tuple, x_star_bar: jnp.ndarray | tuple
+) -> tuple[jnp.ndarray | tuple, Any]:
     ctx, x_star = res
-    # vjp wrt a at the fixed point
     _, vjp_a = vjp(lambda s: f(x_star, s), ctx)
 
-    # run a second fixed-point solve in reverse
-    a_bar_sum = vjp_a(
-        fixed_point(
-            lambda u, v: v + vjp(lambda x: f(x, ctx), x_star)[1](u)[0],
-            x_star_bar,
-            x_star_bar,
-            tol=tol,
-            damp=damp,
-        )
-    )[0]
-    # fixed_point’s x_guess gets no gradient
-    return jnp.zeros_like(x_star), a_bar_sum
+    inner_f = lambda v, _: jax.tree.map(
+        jnp.add,
+        vjp(lambda x: f(x, ctx), x_star)[1](v)[0],
+        x_star_bar,
+    )
+
+    a_bar_sum = vjp_a(fixed_point(inner_f, x_star_bar, None, tol=tol, damp=damp))[0]
+
+    return jax.tree.map(jnp.zeros_like, x_star), a_bar_sum
 
 
 fixed_point.defvjp(fixed_point_fwd, fixed_point_rev)
@@ -404,11 +443,11 @@ fixed_point.defvjp(fixed_point_fwd, fixed_point_rev)
 
 def fixed_point_debug(
     f: Callable,
-    x_guess: jnp.ndarray,
+    x_guess: jnp.ndarray | tuple,
     ctx: SimulationContext,
     tol: float = 1e-6,
     damp: float = 0.5,
-) -> jnp.ndarray:
+) -> jnp.ndarray | tuple:
     """Finds the fixed point of a function using iterative updates.
     This function is for debugging purposes only and is not JAX-transformable.
     It uses a standard Python while loop instead of `jax.lax.while_loop`.
@@ -423,23 +462,22 @@ def fixed_point_debug(
     Returns:
         The fixed point of the function.
     """
-    max_iter = max(20, len(jnp.atleast_1d(x_guess)))
+    max_iter = max(20, len(jnp.atleast_1d(jax.tree.leaves(x_guess)[0])))
 
-    def cond_fun(carry: tuple) -> bool:
-        x_prev, (x, ti_eff), it = carry
-        tol_cond = jnp.max(jnp.abs(x_prev - x)) > tol
-        iter_cond = it < max_iter
-        return bool(tol_cond and iter_cond)
+    it = 0
+    x_prev = x_guess
+    x = f(x_guess, ctx)
 
-    def body_fun(carry: tuple) -> tuple:
-        _, (x, ti_eff), it = carry
-        x_new, ti_eff = f(x, ctx, ti_eff=ti_eff)
-        x_damped = damp * x_new + (1 - damp) * x
-        return x, (x_damped, ti_eff), it + 1
+    ws_prev = x_prev[0] if isinstance(x_prev, tuple) else x_prev
+    ws = x[0] if isinstance(x, tuple) else x
 
-    carry = (x_guess, f(x_guess, ctx), 0)
-    while cond_fun(carry):
-        carry = body_fun(carry)
-    _, (x_star, ti_eff), _ = carry
+    while jnp.max(jnp.abs(ws - ws_prev)) > tol and it < max_iter:
+        x_prev = x
+        x_new = f(x, ctx)
+        x = jax.tree.map(lambda n, o: damp * n + (1 - damp) * o, x_new, x)
 
-    return x_star, ti_eff
+        ws_prev = x_prev[0] if isinstance(x_prev, tuple) else x_prev
+        ws = x[0] if isinstance(x, tuple) else x
+        it += 1
+
+    return x

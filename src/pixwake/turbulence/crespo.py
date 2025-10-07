@@ -28,7 +28,7 @@ class CrespoHernandez(TurbulenceModel):
     """
 
     c: list[float] = field(default_factory=lambda: [0.73, 0.8325, -0.0325, -0.32])
-    ct2a: callable = ct2a_madsen  # TODO: repeated from deficit models...
+    ct2a: callable = ct2a_madsen
 
     def calc_added_turbulence(
         self,
@@ -38,7 +38,7 @@ class CrespoHernandez(TurbulenceModel):
         cw: jnp.ndarray,
         ti_eff: jnp.ndarray,
         wake_radius: jnp.ndarray,
-        ct: jnp.ndarray,  # TODO: only added to match py_wake...
+        ct: jnp.ndarray,
     ) -> jnp.ndarray:
         """
         Calculates the added turbulence intensity (TI) using the Crespo-Hernandez model.
@@ -53,8 +53,12 @@ class CrespoHernandez(TurbulenceModel):
             The downwind distance between all pairs of turbines.
         cw : jnp.ndarray
             The crosswind distance between all pairs of turbines.
-        ti_amb : jnp.ndarray
-            The ambient turbulence intensity at each source turbine.
+        ti_eff : jnp.ndarray
+            The effective turbulence intensity at each source turbine.
+        wake_radius : jnp.ndarray
+            The wake radius for each turbine pair.
+        ct : jnp.ndarray
+            The thrust coefficient for each source turbine.
 
         Returns
         -------

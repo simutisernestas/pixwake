@@ -61,41 +61,6 @@ class TurbulenceModel:
 
     superposition_model: Superposition = field(default_factory=SqrMaxSum)
 
-    def __call__(
-        self,
-        ctx: SimulationContext,
-        ws_eff: jnp.ndarray,
-        dw: jnp.ndarray,
-        cw: jnp.ndarray,
-        ti_eff: jnp.ndarray,
-        ti_amb: jnp.ndarray,
-    ) -> jnp.ndarray:
-        """
-        Calculates the total turbulence by combining ambient and added turbulence.
-
-        Parameters
-        ----------
-        ctx : SimulationContext
-            The simulation context.
-        ws_eff : jnp.ndarray
-            The effective wind speed at each turbine.
-        dw : jnp.ndarray
-            The downwind distance between all pairs of turbines.
-        cw : jnp.ndarray
-            The crosswind distance between all pairs of turbines.
-        ti_eff : jnp.ndarray
-            The effective turbulence intensity at each source turbine.
-        ti_amb : jnp.ndarray
-            The ambient turbulence intensity.
-
-        Returns
-        -------
-        jnp.ndarray
-            The total turbulence intensity at each turbine.
-        """
-        ti_add = self.calc_added_turbulence(ctx, ws_eff, dw, cw, ti_eff)
-        return self.superposition_model(ti_amb, ti_add)
-
     @abstractmethod
     def calc_added_turbulence(
         self,
@@ -104,6 +69,8 @@ class TurbulenceModel:
         dw: jnp.ndarray,
         cw: jnp.ndarray,
         ti_eff: jnp.ndarray,
+        wake_radius: jnp.ndarray,
+        ct: jnp.ndarray,
     ) -> jnp.ndarray:
         """
         Calculates the added turbulence intensity (TI).
@@ -123,6 +90,10 @@ class TurbulenceModel:
             The crosswind distance between all pairs of turbines.
         ti_eff : jnp.ndarray
             The effective turbulence intensity at each source turbine.
+        wake_radius : jnp.ndarray
+            The wake radius for each turbine pair.
+        ct : jnp.ndarray
+            The thrust coefficient for each source turbine.
 
         Returns
         -------
