@@ -335,16 +335,17 @@ class WakeSimulation:
 
         use_ti = getattr(self.model, "use_effective_ti", False)
         if use_ti:
-            ti_guess = ctx.ti
-            if ti_guess is None:
+            ti_val = ctx.ti
+            if ti_val is None:
                 # try to get it from the model itself
                 if hasattr(self.model, "ambient_ti"):
-                    ti_guess = jnp.full_like(ws_guess, self.model.ambient_ti)
+                    ti_val = self.model.ambient_ti
                 else:
                     raise ValueError(
                         "Turbulence intensity `ti` must be provided for this model, "
                         "either in the simulation call or as `ambient_ti` in the model."
                     )
+            ti_guess = jnp.full_like(ws_guess, ti_val)
             x_guess = (ws_guess, ti_guess)
         else:
             x_guess = ws_guess

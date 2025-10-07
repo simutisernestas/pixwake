@@ -215,10 +215,9 @@ class NiayifarGaussianDeficit(BastankhahGaussianDeficit):
         beta = 0.5 * (1.0 + sqrt_1_minus_ct) / sqrt_1_minus_ct
         epsilon_ilk = self.ceps * jnp.sqrt(beta)
 
-        # Use ambient TI for initial wake radius calculation
-        # TODO: This could be iterative, but PyWake seems to use ambient TI here
-        k_amb = self.wake_expansion_coefficient(ctx.ti)
-        sigma_term = k_amb * x_d / D_src + epsilon_ilk[None, :]
+        # Use effective TI for wake radius calculation
+        k_eff = self.wake_expansion_coefficient(ti_eff)
+        sigma_term = k_eff[None, :] * x_d / D_src + epsilon_ilk[None, :]
         wake_radius = 2.0 * sigma_term * D_src
 
         # Compute added turbulence using the turbulence model
