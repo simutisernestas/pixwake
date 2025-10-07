@@ -854,4 +854,133 @@ def test_gaussian_aep_and_gradients_equivalence_timeseries_with_wake_expansion_b
 def test_effective_ti_gaussian_aep_and_gradients_equivalence_timeseries_with_wake_expansion_based_on_ti(
     ct_vals, power_vals
 ):
-    raise NotImplementedError("TODO:!!!")
+    cutin_ws = 3.0
+    cutout_ws = 25.0
+    ct_pw_ws = np.arange(0.0, cutout_ws + 1.0, 1.0)
+    ct_curve = np.stack([ct_pw_ws, ct_vals], axis=1)
+    power_curve = np.stack([ct_pw_ws, power_vals], axis=1)
+
+    width = 3
+    length = 3
+    RD = 120.0
+    x, y = np.meshgrid(
+        np.linspace(0, width * RD, width),
+        np.linspace(0, length * RD, length),
+    )
+    x, y = x.flatten(), y.flatten()
+    turbines = [
+        {
+            "id": i,
+            "x": x[i],
+            "y": y[i],
+            "hub_height": 100.0,
+            "rotor_diameter": RD,
+            "ct_curve": ct_curve,
+            "power_curve": power_curve,
+        }
+        for i in range(width * length)
+    ]
+
+    site = Hornsrev1Site()
+
+    names = [f"WT{t['id']}" for t in turbines]
+    wt_x = [t["x"] for t in turbines]
+    wt_y = [t["y"] for t in turbines]
+    hub_heights = [t["hub_height"] for t in turbines]
+    rotor_diameters = [t["rotor_diameter"] for t in turbines]
+
+    _sa_ct_curve = turbines[0]["ct_curve"]
+    _sa_power_curve = turbines[0]["power_curve"]
+    power_values_W = _sa_power_curve[:, 1] * 1000
+    wt_type_0_power_ct = PowerCtTabular(
+        ws=_sa_power_curve[:, 0],  # ws array
+        power=power_values_W,  # power array in W
+        power_unit="w",
+        ct=_sa_ct_curve[:, 1],  # ct array
+    )
+
+    windTurbines = WindTurbines(
+        names=names,
+        diameters=rotor_diameters,
+        hub_heights=hub_heights,
+        powerCtFunctions=[wt_type_0_power_ct] * len(names),
+    )
+    wake_model = PyWakeNiayifarGaussianDeficit(
+        use_effective_ws=True, use_effective_ti=True
+    )
+
+    wfm = All2AllIterative(
+        site,
+        windTurbines,
+        wake_deficitModel=wake_model,
+        superpositionModel=SquaredSum(),
+        turbulenceModel=PyWakeCrespoHernandez(rotorAvgModel=None),  # TODO: !!!
+    )
+
+    n_timestamps = 20
+    ws, wd = (
+        np.random.uniform(cutin_ws, cutout_ws, size=n_timestamps),
+        np.random.uniform(0, 360, size=n_timestamps),
+    )
+
+    sim_res = wfm(x=wt_x, y=wt_y, wd=wd, ws=ws, time=True, TI=0.1, WS_eff=0)
+    pywake_ws_eff = sim_res["WS_eff"].values
+
+    model = NiayifarGaussianDeficit(
+        use_effective_ws=True,
+        use_radius_mask=False,
+        use_effective_ti=True,
+        turbulence_model=CrespoHernandez(),
+    )
+    turbine = Turbine(
+        rotor_diameter=windTurbines.diameter().item(),
+        hub_height=100.0,
+        power_curve=Curve(wind_speed=power_curve[:, 0], values=power_curve[:, 1]),
+        ct_curve=Curve(wind_speed=ct_curve[:, 0], values=ct_curve[:, 1]),
+    )
+    sim = WakeSimulation(model, turbine, fpi_damp=0.5, mapping_strategy="map")
+    pixwake_sim_res = sim(
+        jnp.asarray(wt_x), jnp.asarray(wt_y), jnp.asarray(ws), jnp.asarray(wd), 0.1
+    )
+
+    rtol = 1e-2  # 1%
+    # find problematic effective wind speed and add it to error message
+    pywake_ws_eff = np.maximum(pywake_ws_eff, 1e-6)  # pixwake does not go to minus !!!
+    np.testing.assert_allclose(
+        pixwake_sim_res.effective_ws.T,
+        pywake_ws_eff,
+        atol=1e-5,
+        rtol=rtol,
+    )
+    np.testing.assert_allclose(
+        pixwake_sim_res.effective_ti.T,
+        sim_res["TI_eff"],
+        atol=1e-5,
+        rtol=rtol,
+    )
+
+    pywake_aep = sim_res.aep().sum().values
+    pixwake_aep = pixwake_sim_res.aep()
+    np.testing.assert_allclose(pixwake_aep, pywake_aep, rtol=rtol)
+
+    # gradients
+    pw_dx, pw_dy = wfm.aep_gradients(x=wt_x, y=wt_y, wd=wd, ws=ws, time=True)
+    grad_fn = jax.jit(
+        jax.value_and_grad(
+            lambda xx, yy: sim(
+                xx,
+                yy,
+                jnp.array(ws),
+                jnp.array(wd),
+                0.1,
+            ).aep(),
+            argnums=(0, 1),
+        )
+    )
+
+    val, (dx, dy) = grad_fn(jnp.asarray(wt_x), jnp.asarray(wt_y))
+    dx.block_until_ready()
+    dy.block_until_ready()
+    val.block_until_ready()
+    np.testing.assert_allclose(dx, pw_dx, rtol=rtol)
+    np.testing.assert_allclose(dy, pw_dy, rtol=rtol)
