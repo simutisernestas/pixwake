@@ -733,8 +733,8 @@ def test_gaussian_aep_and_gradients_equivalence_timeseries_with_wake_expansion_b
     length = 3
     RD = 120.0
     x, y = np.meshgrid(
-        np.linspace(0, width * RD, width),
-        np.linspace(0, length * RD, length),
+        np.linspace(0, width * RD * 3, width),
+        np.linspace(0, length * RD * 3, length),
     )
     x, y = x.flatten(), y.flatten()
     turbines = [
@@ -783,7 +783,6 @@ def test_gaussian_aep_and_gradients_equivalence_timeseries_with_wake_expansion_b
         windTurbines,
         wake_deficitModel=wake_model,
         superpositionModel=SquaredSum(),
-        turbulenceModel=PyWakeCrespoHernandez(),
     )
 
     n_timestamps = 1000
@@ -860,8 +859,8 @@ def test_effective_ti_gaussian_aep_and_gradients_equivalence_timeseries_with_wak
     ct_curve = np.stack([ct_pw_ws, ct_vals], axis=1)
     power_curve = np.stack([ct_pw_ws, power_vals], axis=1)
 
-    width = 3
-    length = 3
+    width = 9
+    length = 9
     RD = 120.0
     x, y = np.meshgrid(
         np.linspace(0, width * RD * 3, width),
@@ -956,7 +955,7 @@ def test_effective_ti_gaussian_aep_and_gradients_equivalence_timeseries_with_wak
         pixwake_sim_res.effective_ti.T,
         sim_res["TI_eff"],
         atol=1e-5,
-        rtol=rtol * 2,
+        rtol=rtol,
     )
 
     pywake_aep = sim_res.aep().sum().values

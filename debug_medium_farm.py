@@ -181,15 +181,16 @@ for _ in range(200):
     rel_diff = diff / np.maximum(pywake_ws_eff, 1e-6)
     abs_diff = np.abs(diff)
 
+    print(np.max(ti_eff - sim_res["TI_eff"].values.T))
+
     max_rel_diff = np.abs(rel_diff).max() * 100
-    print(max_rel_diff, np.abs(diff).max(), ws, wd)
+    # print(max_rel_diff, np.abs(diff).max(), ws, wd)
     if max_rel_diff > 2.0:
         # print(f"Max rel diff: {max_rel_diff:.6f} %")
         # print(ti_eff)
         # print(sim_res["TI_eff"].values.T)
 
         # print(pywake_ws_eff.T - ws_eff.reshape(pywake_ws_eff.T.shape))
-        print(ti_eff - sim_res["TI_eff"].values.T)
 
         raise Exception(f"Max rel diff: {max_rel_diff:.6f} %")
 
