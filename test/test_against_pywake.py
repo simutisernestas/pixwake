@@ -961,7 +961,7 @@ def test_effective_ti_gaussian_aep_and_gradients_equivalence_timeseries_with_wak
 
     pywake_aep = sim_res.aep().sum().values
     pixwake_aep = pixwake_sim_res.aep()
-    np.testing.assert_allclose(pixwake_aep, pywake_aep, rtol=rtol)
+    np.testing.assert_allclose(pixwake_aep, pywake_aep, rtol=rtol / 10)
 
     # gradients
     pw_dx, pw_dy = wfm.aep_gradients(x=wt_x, y=wt_y, wd=wd, ws=ws, time=True)
