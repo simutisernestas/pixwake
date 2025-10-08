@@ -198,13 +198,18 @@ class RANSDeficit(WakeDeficitModel):
             nn_out = jnp.array(model.apply(params, md_input)).reshape(x_d.shape)
             return jnp.where(in_domain_mask, nn_out, 0.0).sum(axis=1)
 
+        ti_input: float | jnp.ndarray | None
         ti_input = ti_eff if ti_eff is not None else ctx.ti
         if ti_input is None:
             ti_input = self.ambient_ti
 
         added_ti = _predict(self.turbulence_model, self.ti_weights, ti_input)
 
-        ambient_ti_base = ctx.ti if ctx.ti is not None else self.ambient_ti
+        ambient_ti_base: float | jnp.ndarray
+        if ctx.ti is not None:
+            ambient_ti_base = ctx.ti
+        else:
+            ambient_ti_base = self.ambient_ti
         new_effective_ti = ambient_ti_base + added_ti
 
         deficit = _predict(self.deficit_model, self.deficit_weights, ti_input)

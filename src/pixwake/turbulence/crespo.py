@@ -74,6 +74,7 @@ class CrespoHernandez(TurbulenceModel):
         # Apply Crespo-Hernandez formula using AMBIENT TI
         c0, c1, c2, c3 = self.c
         ti_ambient = ctx.ti  # scalar
+        assert ti_ambient is not None
         ti_added = (
             c0
             * induction_factor[None, :] ** c1

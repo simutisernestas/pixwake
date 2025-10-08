@@ -1,4 +1,4 @@
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 import jax.numpy as jnp
 
@@ -55,7 +55,7 @@ class BastankhahGaussianDeficit(WakeDeficitModel):
         xs_r: jnp.ndarray | None = None,
         ys_r: jnp.ndarray | None = None,
         ti_eff: jnp.ndarray | None = None,
-    ) -> jnp.ndarray:
+    ) -> jnp.ndarray | tuple[jnp.ndarray, jnp.ndarray]:
         """Compute wake deficits at receiver locations.
 
         Args:
@@ -203,7 +203,7 @@ class NiayifarGaussianDeficit(BastankhahGaussianDeficit):
         a: tuple[float, float] = (0.38, 4e-3),
         use_effective_ti: bool = False,
         turbulence_model: Any | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         """Initialize the Niayifar-Gaussian wake deficit model.
 
@@ -257,8 +257,9 @@ class NiayifarGaussianDeficit(BastankhahGaussianDeficit):
         ti_eff_updated = self._compute_effective_ti(ws_eff, ctx, ti_eff)
 
         # Compute wind speeds using updated TI for wake expansion
-        ws_eff_updated = super().compute_deficit(
-            ws_eff, ctx, xs_r, ys_r, ti_eff_updated
+        ws_eff_updated = cast(
+            jnp.ndarray,
+            super().compute_deficit(ws_eff, ctx, xs_r, ys_r, ti_eff_updated),
         )
 
         return ws_eff_updated, ti_eff_updated

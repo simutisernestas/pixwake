@@ -264,12 +264,12 @@ class WakeSimulation:
     def _simulate_vmap(
         self,
         ctx: SimulationContext,
-    ) -> jnp.ndarray:
+    ) -> jnp.ndarray | tuple[jnp.ndarray, jnp.ndarray]:
         """Simulates multiple wind conditions using jax.vmap."""
 
         def _single_case(
             ws: jnp.ndarray, wd: jnp.ndarray, ti: jnp.ndarray | None
-        ) -> jnp.ndarray:
+        ) -> jnp.ndarray | tuple[jnp.ndarray, jnp.ndarray]:
             return self._simulate_single_case(
                 SimulationContext(ctx.xs, ctx.ys, ws, wd, ctx.turbine, ti)
             )
@@ -279,12 +279,12 @@ class WakeSimulation:
     def _simulate_map(
         self,
         ctx: SimulationContext,
-    ) -> jnp.ndarray:
+    ) -> jnp.ndarray | tuple[jnp.ndarray, jnp.ndarray]:
         """Simulates multiple wind conditions using jax.lax.map."""
 
         def _single_case(
             case: tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray | None],
-        ) -> jnp.ndarray:
+        ) -> jnp.ndarray | tuple[jnp.ndarray, jnp.ndarray]:
             ws, wd, ti = case
             return self._simulate_single_case(
                 SimulationContext(ctx.xs, ctx.ys, ws, wd, ctx.turbine, ti)
@@ -295,7 +295,7 @@ class WakeSimulation:
     def _simulate_manual(
         self,
         ctx: SimulationContext,
-    ) -> jnp.ndarray:
+    ) -> jnp.ndarray | tuple[jnp.ndarray, jnp.ndarray]:
         """Simulates multiple wind conditions using a manual loop (for debugging)."""
         # Pre-allocate output arrays
         n_cases = ctx.ws.size
@@ -332,7 +332,7 @@ class WakeSimulation:
     ) -> jnp.ndarray | tuple[jnp.ndarray, jnp.ndarray]:
         """Simulates a single wind condition."""
         ws_guess = jnp.full_like(ctx.xs, ctx.ws, dtype=default_float_type())
-
+        x_guess: jnp.ndarray | tuple[jnp.ndarray, jnp.ndarray]
         use_ti = getattr(self.model, "use_effective_ti", False)
         if use_ti:
             ti_val = ctx.ti
@@ -371,7 +371,7 @@ class WakeSimulation:
 def fixed_point(
     f: Callable,
     x_guess: jnp.ndarray | tuple,
-    ctx: SimulationContext,
+    ctx: Any,
     tol: float = 1e-6,
     damp: float = 0.5,
 ) -> jnp.ndarray | tuple:
@@ -428,7 +428,11 @@ def fixed_point_rev(
     ctx, x_star = res
     _, vjp_a = vjp(lambda s: f(x_star, s), ctx)
 
-    def _inner_f(v, _):
+    def _inner_f(
+        v: jnp.ndarray | tuple,
+        _: Any,
+    ) -> jnp.ndarray | tuple:
+        """Helper function for the reverse-mode differentiation of the fixed point."""
         return jax.tree.map(
             jnp.add,
             vjp(lambda x: f(x, ctx), x_star)[1](v)[0],
@@ -445,7 +449,7 @@ fixed_point.defvjp(fixed_point_fwd, fixed_point_rev)
 def fixed_point_debug(
     f: Callable,
     x_guess: jnp.ndarray | tuple,
-    ctx: SimulationContext,
+    ctx: Any,
     tol: float = 1e-6,
     damp: float = 0.5,
 ) -> jnp.ndarray | tuple:
