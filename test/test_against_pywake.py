@@ -807,7 +807,9 @@ def test_gaussian_aep_and_gradients_equivalence_timeseries_with_wake_expansion_b
         jnp.asarray(wt_x), jnp.asarray(wt_y), jnp.asarray(ws), jnp.asarray(wd), 0.1
     )
 
-    rtol = 1e-2  # 1%
+    rtol = 1e-3  # 0.1%
+    atol = 1e-6
+    tols = dict(rtol=rtol, atol=atol)
     # find problematic effective wind speed and add it to error message
     pywake_ws_eff = np.maximum(pywake_ws_eff, 1e-6)  # pixwake does not go to minus !!!
     relative_difference = (
@@ -817,16 +819,12 @@ def test_gaussian_aep_and_gradients_equivalence_timeseries_with_wake_expansion_b
     probl_pywake = pywake_ws_eff[np.abs(relative_difference) > rtol]
     error_message = f"Problematic effective wind speeds (pixwake, pywake): {list(zip(probl_pixwake, probl_pywake))}"
     np.testing.assert_allclose(
-        pixwake_sim_res.effective_ws.T,
-        pywake_ws_eff,
-        atol=1e-5,
-        rtol=rtol,
-        err_msg=error_message,
+        pixwake_sim_res.effective_ws.T, pywake_ws_eff, err_msg=error_message, **tols
     )
 
     pywake_aep = sim_res.aep().sum().values
     pixwake_aep = pixwake_sim_res.aep()
-    np.testing.assert_allclose(pixwake_aep, pywake_aep, rtol=rtol)
+    np.testing.assert_allclose(pixwake_aep, pywake_aep, **tols)
 
     # gradients
     pw_dx, pw_dy = wfm.aep_gradients(x=wt_x, y=wt_y, wd=wd, ws=ws, time=True)
@@ -847,8 +845,8 @@ def test_gaussian_aep_and_gradients_equivalence_timeseries_with_wake_expansion_b
     dx.block_until_ready()
     dy.block_until_ready()
     val.block_until_ready()
-    np.testing.assert_allclose(dx, pw_dx, rtol=rtol)
-    np.testing.assert_allclose(dy, pw_dy, rtol=rtol)
+    np.testing.assert_allclose(dx, pw_dx, **tols)
+    np.testing.assert_allclose(dy, pw_dy, **tols)
 
 
 def test_effective_ti_gaussian_aep_and_gradients_equivalence_timeseries_with_wake_expansion_based_on_ti(
@@ -862,7 +860,7 @@ def test_effective_ti_gaussian_aep_and_gradients_equivalence_timeseries_with_wak
 
     RD = 120.0
     HH = 100.0
-    width, length = 9, 9
+    width, length = 20, 3
     x, y = np.meshgrid(
         np.linspace(0, width * RD * 3, width),
         np.linspace(0, length * RD * 3, length),
@@ -920,33 +918,54 @@ def test_effective_ti_gaussian_aep_and_gradients_equivalence_timeseries_with_wak
     # pywake call
     sim_res = wfm(x=x, y=y, wd=wd, ws=ws, time=True, TI=0.1, WS_eff=0)
     # pixwake call
-    sim = WakeSimulation(model, turbine, fpi_damp=0.5, mapping_strategy="map")
-
-    # pywake_ws_eff = sim_res["WS_eff"].values
+    sim = WakeSimulation(model, turbine, fpi_damp=1.0, mapping_strategy="map")
 
     pixwake_sim_res = sim(
         jnp.asarray(x), jnp.asarray(y), jnp.asarray(ws), jnp.asarray(wd), 0.1
     )
-    # ws_eff, ti_eff = pixwake_sim_res.effective_ws, pixwake_sim_res.effective_ti
-    # diff = np.maximum(pywake_ws_eff, 0) - ws_eff.T
-    # rel_diff = diff / np.maximum(pywake_ws_eff, 1e-6)
-    # abs_diff = np.abs(diff)
 
-    # Allow higher tolerance for effective TI/WS due to different iteration strategies
-    # PyWake uses adaptive damping while pixwake uses fixed damping
-    # The error accumulates with more turbines and complex wake interactions
-    rtol_ws = 6e-3  # 0.6% for wind speed
-    rtol_ti = 1e-2  # 11% for turbulence intensity
-    atol = 1e-5
+    rtol = 1e-3
+    atol = 1e-6
     np.testing.assert_allclose(
         pixwake_sim_res.effective_ti.T,
         sim_res["TI_eff"].values,
-        rtol=rtol_ti,
+        rtol=rtol,
         atol=atol,
     )
     np.testing.assert_allclose(
         pixwake_sim_res.effective_ws.T,
         sim_res["WS_eff"].values,
-        rtol=rtol_ws,
+        rtol=rtol,
         atol=atol,
     )
+
+    pywake_aep = sim_res.aep().sum().values
+    pixwake_aep = pixwake_sim_res.aep()
+    np.testing.assert_allclose(pixwake_aep, pywake_aep, rtol=rtol)
+
+    # pywake is too slow to compute full gradients over all (ws, wd)
+    ws = ws[:100]
+    wd = wd[:100]
+
+    # gradients
+    pw_dx, pw_dy = wfm.aep_gradients(x=x, y=y, wd=wd, ws=ws, time=True)
+
+    grad_fn = jax.jit(
+        jax.value_and_grad(
+            lambda xx, yy: sim(
+                xx,
+                yy,
+                jnp.array(ws),
+                jnp.array(wd),
+                0.1,
+            ).aep(),
+            argnums=(0, 1),
+        )
+    )
+
+    val, (dx, dy) = grad_fn(jnp.asarray(x), jnp.asarray(y))
+    dx.block_until_ready()
+    dy.block_until_ready()
+    val.block_until_ready()
+    np.testing.assert_allclose(dx, pw_dx, rtol=rtol)
+    np.testing.assert_allclose(dy, pw_dy, rtol=rtol)
