@@ -428,14 +428,14 @@ def fixed_point_rev(
     ctx, x_star = res
     _, vjp_a = vjp(lambda s: f(x_star, s), ctx)
 
-    inner_f = lambda v, _: jax.tree.map(
-        jnp.add,
-        vjp(lambda x: f(x, ctx), x_star)[1](v)[0],
-        x_star_bar,
-    )
+    def _inner_f(v, _):
+        return jax.tree.map(
+            jnp.add,
+            vjp(lambda x: f(x, ctx), x_star)[1](v)[0],
+            x_star_bar,
+        )
 
-    a_bar_sum = vjp_a(fixed_point(inner_f, x_star_bar, None, tol=tol, damp=damp))[0]
-
+    a_bar_sum = vjp_a(fixed_point(_inner_f, x_star_bar, None, tol=tol, damp=damp))[0]
     return jax.tree.map(jnp.zeros_like, x_star), a_bar_sum
 
 

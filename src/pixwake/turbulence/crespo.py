@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from typing import Callable
 
 import jax.numpy as jnp
 
@@ -10,25 +11,25 @@ from ..utils import ct2a_madsen
 
 @dataclass
 class CrespoHernandez(TurbulenceModel):
-    """
-    Crespo-Hernandez turbulence model implementation, adapted from PyWake.
+    """Crespo-Hernandez wake-added turbulence model.
 
-    This model calculates added turbulence based on the formulation by
-    A. Crespo and J. Hernández in "Turbulence characteristics in wind-turbine
-    wakes," J. of Wind Eng. and Industrial Aero. 61 (1996) 71-85.
+    Empirical model for wake-added turbulence intensity based on thrust
+    coefficient and distance downstream. The model uses ambient turbulence
+    intensity (not effective TI) as per the original formulation.
 
-    Attributes
-    ----------
-    c : list[float]
-        A list of four coefficients used in the turbulence calculation.
-        Defaults to [0.73, 0.8325, -0.0325, -0.32].
-    ct2a : callable
-        A function to convert thrust coefficient (Ct) to induction factor (a).
-        Defaults to `ct2a_madsen`.
+    Reference:
+        Crespo, A., & Hernández, J. (1996). Turbulence characteristics in
+        wind-turbine wakes. Journal of Wind Engineering and Industrial
+        Aerodynamics, 61(1), 71-85.
+
+    Attributes:
+        c: Four empirical coefficients [c0, c1, c2, c3] for the turbulence
+           formula: TI_add = c0 * a^c1 * TI_ambient^c2 * (x/D)^c3.
+        ct2a: Function to convert thrust coefficient to induction factor.
     """
 
     c: list[float] = field(default_factory=lambda: [0.73, 0.8325, -0.0325, -0.32])
-    ct2a: callable = ct2a_madsen
+    ct2a: Callable = ct2a_madsen
 
     def calc_added_turbulence(
         self,
@@ -36,62 +37,53 @@ class CrespoHernandez(TurbulenceModel):
         ws_eff: jnp.ndarray,
         dw: jnp.ndarray,
         cw: jnp.ndarray,
-        ti_eff: jnp.ndarray,  # TODO: not used ???
+        ti_eff: jnp.ndarray,
         wake_radius: jnp.ndarray,
-        ct: jnp.ndarray = None,
+        ct: jnp.ndarray | None = None,
     ) -> jnp.ndarray:
-        """
-        Calculates the added turbulence intensity (TI) using the Crespo-Hernandez model.
+        """Calculate wake-added turbulence using Crespo-Hernandez formula.
 
-        Parameters
-        ----------
-        ctx : SimulationContext
-            The simulation context.
-        ws_eff : jnp.ndarray
-            The effective wind speed at each turbine.
-        dw : jnp.ndarray
-            The downwind distance between all pairs of turbines.
-        cw : jnp.ndarray
-            The crosswind distance between all pairs of turbines.
-        ti_eff : jnp.ndarray
-            The effective turbulence intensity at each source turbine.
-        wake_radius : jnp.ndarray
-            The wake radius for each turbine pair.
-        ct : jnp.ndarray
-            The thrust coefficient for each source turbine.
+        Note: This model uses AMBIENT turbulence intensity in the formula,
+        not effective TI, as per the original formulation and PyWake implementation.
 
-        Returns
-        -------
-        jnp.ndarray
-            An array representing the added turbulence intensity at each
-            turbine from each other turbine.
+        Args:
+            ctx: Simulation context.
+            ws_eff: Effective wind speed at sources (n_sources,).
+            dw: Downwind distances (n_receivers, n_sources).
+            cw: Crosswind distances (n_receivers, n_sources).
+            ti_eff: Effective TI at sources (unused in this model).
+            wake_radius: Wake radius (n_receivers, n_sources).
+            ct: Thrust coefficients at sources (n_sources,). Computed if not provided.
+
+        Returns:
+            Added turbulence intensity (n_receivers, n_sources).
         """
+        # Compute thrust coefficient if not provided
         if ct is None:
             ct = ctx.turbine.ct(ws_eff)
-        a = self.ct2a(ct)
 
-        # Ensure induction factor 'a' is not too small to avoid NaN in gradients
-        a = jnp.maximum(a, 1e-10)
+        # Convert to induction factor with numerical safeguard
+        induction_factor = jnp.maximum(self.ct2a(ct), 1e-10)
 
-        # Ensure downwind distance is positive to avoid issues with power laws
-        dw_gt0 = jnp.maximum(dw, 1e-10)
+        # Safeguard downwind distance for power law
+        dw_safe = jnp.maximum(dw, 1e-10)
 
-        # Crespo-Hernandez formula for added turbulence (Eq. 21 in the paper)
-        # The formula is applied for each source turbine's effect on each destination turbine.
-        # TODO: PyWake uses AMBIENT TI here, not effective TI (see line 16 of CrespoHernandez.calc_added_turbulence)
-        ti_ambient_array = jnp.full_like(ws_eff, ctx.ti)
-        ti_add = (
-            self.c[0]
-            * a[None, :] ** self.c[1]
-            * ti_ambient_array[None, :] ** self.c[2]
-            * (dw_gt0 / ctx.turbine.rotor_diameter) ** self.c[3]
+        # Normalized downwind distance
+        distance_normalized = dw_safe / ctx.turbine.rotor_diameter
+
+        # Apply Crespo-Hernandez formula using AMBIENT TI
+        c0, c1, c2, c3 = self.c
+        ti_ambient = ctx.ti  # scalar
+        ti_added = (
+            c0
+            * induction_factor[None, :] ** c1
+            * ti_ambient**c2
+            * distance_normalized**c3
         )
 
-        # Turbulence is only added inside the wake and for downwind positions
+        # Apply spatial mask: inside wake and downstream only
         is_inside_wake = jnp.abs(cw) < wake_radius
-        is_downwind = dw > 0
-        ti_add_filtered = jnp.where(
-            jnp.logical_and(is_inside_wake, is_downwind), ti_add, 0
-        )
+        is_downstream = dw > 0
+        mask = is_inside_wake & is_downstream
 
-        return ti_add_filtered
+        return jnp.where(mask, ti_added, 0.0)
