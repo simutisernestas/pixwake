@@ -1,3 +1,4 @@
+import argparse
 import multiprocessing
 import os
 import time
@@ -9,14 +10,17 @@ import numpy as np
 import pandas as pd
 import psutil
 from py_wake.deficit_models.gaussian import (
-    BastankhahGaussianDeficit as PyWakeBastankhahGaussianDeficit,
+    NiayifarGaussianDeficit as PyWakeNiayifarGaussianDeficit,
 )
 from py_wake.site import UniformSite
+from py_wake.turbulence_models import CrespoHernandez as PyWakeCrespoHernandez
 from py_wake.wind_farm_models.engineering_models import All2AllIterative
 from py_wake.wind_turbines import WindTurbines
 from py_wake.wind_turbines.power_ct_functions import PowerCtTabular
 
-from pixwake import BastankhahGaussianDeficit, Curve, Turbine, WakeSimulation
+from pixwake import Curve, Turbine, WakeSimulation
+from pixwake.deficit import NiayifarGaussianDeficit
+from pixwake.turbulence import CrespoHernandez
 
 
 def generate_turbine_layout(n_turbines, spacing_D, rotor_diameter=120.0):
@@ -201,9 +205,16 @@ def run_benchmark(n_turbines_list, spacings_list):
                 power_curve=power_curve,
                 ct_curve=ct_curve,
             )
-            pixwake_model = BastankhahGaussianDeficit(use_effective_ws=True)
+            pixwake_model = NiayifarGaussianDeficit(
+                use_effective_ws=True,
+                use_effective_ti=True,
+                turbulence_model=CrespoHernandez(),
+            )
             pixwake_sim = WakeSimulation(
-                pixwake_model, fpi_damp=1.0, mapping_strategy="map"
+                pixwake_model,
+                fpi_damp=1.0,
+                mapping_strategy="map",
+                turbine=pixwake_turbine,
             )
 
             pywake_power_ct = PowerCtTabular(
@@ -218,9 +229,10 @@ def run_benchmark(n_turbines_list, spacings_list):
             pywake_wfm = All2AllIterative(
                 site=UniformSite(),
                 windTurbines=pywake_turbines,
-                wake_deficitModel=PyWakeBastankhahGaussianDeficit(
-                    use_effective_ws=True
+                wake_deficitModel=PyWakeNiayifarGaussianDeficit(
+                    use_effective_ws=True, use_effective_ti=True
                 ),
+                turbulenceModel=PyWakeCrespoHernandez(),
             )
             n_cpu = get_pywake_n_cpu(n_turbines_actual)
 
@@ -230,11 +242,13 @@ def run_benchmark(n_turbines_list, spacings_list):
             max_mem_before = safe_send_recv("get_max")
 
             start = time.time()
-            pywake_wfm(x=x, y=y, wd=wd_ts, ws=ws_ts, n_cpu=n_cpu, time=True).aep().sum()
+            pywake_wfm(
+                x=x, y=y, wd=wd_ts, ws=ws_ts, n_cpu=n_cpu, time=True, TI=0.1
+            ).aep().sum()
             pywake_aep_time_ts = time.time() - start
             start = time.time()
             pywake_wfm.aep_gradients(
-                x=x, y=y, wd=wd_ts, ws=ws_ts, n_cpu=n_cpu, time=True
+                x=x, y=y, wd=wd_ts, ws=ws_ts, n_cpu=n_cpu, time=True, TI=0.1
             )
             pywake_grad_time_ts = time.time() - start
 
@@ -243,7 +257,7 @@ def run_benchmark(n_turbines_list, spacings_list):
 
             @jax.jit
             def pixwake_aep_ts(xx, yy):
-                return pixwake_sim(xx, yy, ws_ts, wd_ts, pixwake_turbine).aep()
+                return pixwake_sim(xx, yy, ws_ts, wd_ts, ti=0.1).aep()
 
             grad_fn_ts = jax.jit(jax.value_and_grad(pixwake_aep_ts, argnums=(0, 1)))
             _ = pixwake_aep_ts(x, y).block_until_ready()
@@ -263,36 +277,6 @@ def run_benchmark(n_turbines_list, spacings_list):
 
             max_mem_after = safe_send_recv("get_max")
             memory_usage_pixwake_sim = max_mem_after - max_mem_before
-
-            # ws_wr, wd_wr, probs_wr = generate_wind_rose_data()
-            # start = time.time()
-            # pywake_wfm(x=x, y=y, wd=wd_wr, ws=ws_wr, n_cpu=n_cpu, time=True).aep(
-            #     freq=probs_wr
-            # ).sum()
-            # pywake_aep_time_wr = time.time() - start
-            # start = time.time()
-            # pywake_wfm.aep_gradients(
-            #     x=x, y=y, wd=wd_wr, ws=ws_wr, n_cpu=n_cpu, freq=probs_wr, time=True
-            # )
-            # pywake_grad_time_wr = time.time() - start
-
-            # @jax.jit
-            # def pixwake_aep_wr(xx, yy):
-            #     return pixwake_sim(xx, yy, ws_wr, wd_wr, pixwake_turbine).aep(
-            #         probabilities=probs_wr
-            #     )
-
-            # grad_fn_wr = jax.jit(jax.value_and_grad(pixwake_aep_wr, argnums=(0, 1)))
-            # _ = pixwake_aep_wr(x, y).block_until_ready()
-            # _, _ = grad_fn_wr(x, y)
-            # start = time.time()
-            # _ = pixwake_aep_wr(x, y).block_until_ready()
-            # pixwake_aep_time_wr = time.time() - start
-            # start = time.time()
-            # _, (px_dx, px_dy) = grad_fn_wr(x, y)
-            # px_dx.block_until_ready()
-            # px_dy.block_until_ready()
-            # pixwake_grad_time_wr = time.time() - start
 
             results.append(
                 {
@@ -348,9 +332,6 @@ def plot_results(results):
         "AEP_Time-Series": ("pywake_aep_time_ts", "pixwake_aep_time_ts"),
         "Gradient_Time-Series": ("pywake_grad_time_ts", "pixwake_grad_time_ts"),
         "Total_Time-Series": ("pywake_total_time_ts", "pixwake_total_time_ts"),
-        # "AEP_Wind-Rose": ("pywake_aep_time_wr", "pixwake_aep_time_wr"),
-        # "Gradient_Wind-Rose": ("pywake_grad_time_wr", "pixwake_grad_time_wr"),
-        # "Total_Wind-Rose": ("pywake_total_time_wr", "pixwake_total_time_wr"),
     }
 
     for name, (pywake_col, pixwake_col) in plot_configs.items():
@@ -412,12 +393,26 @@ if __name__ == "__main__":
     os.makedirs("figures", exist_ok=True)
 
     multiprocessing.set_start_method("spawn", force=True)
-    N_TURBINES_LIST = [2**x for x in range(5, 9)]
-    SPACINGS_LIST = [3, 5, 7]
 
-    # For testing, run a smaller set
-    # N_TURBINES_LIST = [8, 16, 32, 64]
-    # SPACINGS_LIST = [3]
+    parser = argparse.ArgumentParser(description="Benchmark PixWake vs PyWake.")
+    parser.add_argument(
+        "--n_turbines",
+        type=int,
+        nargs="+",
+        default=[32, 64, 128, 256],
+        help="List of number of turbines to benchmark.",
+    )
+    parser.add_argument(
+        "--spacings",
+        type=int,
+        nargs="+",
+        default=[3, 5, 7],
+        help="List of turbine spacings (in D) to benchmark.",
+    )
+    args = parser.parse_args()
+
+    N_TURBINES_LIST = args.n_turbines
+    SPACINGS_LIST = args.spacings
 
     benchmark_results = run_benchmark(N_TURBINES_LIST, SPACINGS_LIST)
 
