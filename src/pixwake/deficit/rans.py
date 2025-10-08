@@ -119,14 +119,22 @@ class RANSDeficit(WakeDeficitModel):
     CFD simulations.
     """
 
-    def __init__(self, ambient_ti: float) -> None:
+    def __init__(self, ambient_ti: float, use_effective: bool = True) -> None:
         """Initializes the RANSDeficit.
 
         Args:
             ambient_ti: The ambient turbulence intensity.
+            use_effective: A boolean flag to control the deficit calculation.
+                - If True (default), the deficit is calculated as an absolute
+                  reduction in wind speed, proportional to the effective wind
+                  speed at the waking turbine. This is more physically realistic.
+                - If False, the deficit is calculated as a fractional reduction
+                  relative to the free-stream wind speed.
         """
         super().__init__()
         self.ambient_ti = ambient_ti
+        self.use_effective = use_effective
+        self.use_effective_ti = True
         (
             self.deficit_model,
             self.deficit_weights,
@@ -140,28 +148,23 @@ class RANSDeficit(WakeDeficitModel):
         ctx: SimulationContext,
         xs_r: jnp.ndarray | None = None,
         ys_r: jnp.ndarray | None = None,
-        use_effective: bool = True,
-    ) -> jnp.ndarray:
+        ti_eff: jnp.ndarray | None = None,
+    ) -> tuple[jnp.ndarray, jnp.ndarray]:
         """Computes the wake deficit using the RANS surrogate model.
 
         This method calculates the velocity deficit and added turbulence
-        intensity for each turbine in the wind farm. It offers two modes of
-        operation controlled by the `use_effective` parameter.
+        intensity for each turbine in the wind farm.
 
         Args:
             ws_eff: An array of effective wind speeds at each turbine.
             ctx: The context of the simulation.
             xs_r: An array of x-coordinates for each receiver point (optional).
             ys_r: An array of y-coordinates for each receiver point (optional).
-            use_effective: A boolean flag to control the deficit calculation.
-                - If True (default), the deficit is calculated as an absolute
-                  reduction in wind speed, proportional to the effective wind
-                  speed at the waking turbine. This is more physically realistic.
-                - If False, the deficit is calculated as a fractional reduction
-                  relative to the free-stream wind speed.
+            ti_eff: An array of effective turbulence intensities at each turbine.
 
         Returns:
-            An array of updated effective wind speeds at each turbine.
+            A tuple containing the updated effective wind speeds and turbulence
+            intensities at each turbine.
         """
         if xs_r is None:
             xs_r = ctx.xs
@@ -195,14 +198,26 @@ class RANSDeficit(WakeDeficitModel):
             nn_out = jnp.array(model.apply(params, md_input)).reshape(x_d.shape)
             return jnp.where(in_domain_mask, nn_out, 0.0).sum(axis=1)
 
-        effective_ti = self.ambient_ti + _predict(
-            self.turbulence_model, self.ti_weights, self.ambient_ti
-        )
+        ti_input: float | jnp.ndarray | None
+        ti_input = ti_eff if ti_eff is not None else ctx.ti
+        if ti_input is None:
+            ti_input = self.ambient_ti
 
-        deficit = _predict(self.deficit_model, self.deficit_weights, effective_ti)
+        added_ti = _predict(self.turbulence_model, self.ti_weights, ti_input)
 
-        if use_effective:
+        ambient_ti_base: float | jnp.ndarray
+        if ctx.ti is not None:
+            ambient_ti_base = ctx.ti
+        else:
+            ambient_ti_base = self.ambient_ti
+        new_effective_ti = ambient_ti_base + added_ti
+
+        deficit = _predict(self.deficit_model, self.deficit_weights, ti_input)
+
+        if self.use_effective:
             deficit *= ws_eff
-            return jnp.maximum(0.0, ctx.ws - deficit)  # (N,)
+            new_ws_eff = jnp.maximum(0.0, ctx.ws - deficit)
+        else:
+            new_ws_eff = jnp.maximum(0.0, ctx.ws * (1.0 - deficit))
 
-        return jnp.maximum(0.0, ctx.ws * (1.0 - deficit))
+        return new_ws_eff, new_effective_ti

@@ -1,13 +1,19 @@
 import jax.numpy as jnp
+import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 
 from pixwake.core import Curve, Turbine, WakeSimulation
-from pixwake.deficit import BastankhahGaussianDeficit
+from pixwake.deficit import BastankhahGaussianDeficit, NiayifarGaussianDeficit
 from pixwake.plot import plot_flow_map
 
 
-@pytest.fixture
+@pytest.fixture(
+    params=[
+        (BastankhahGaussianDeficit(use_effective_ws=True, use_radius_mask=True),),
+        (NiayifarGaussianDeficit(use_effective_ws=True, use_radius_mask=True),),
+    ]
+)
 def sim():
     sim = WakeSimulation(
         BastankhahGaussianDeficit(use_effective_ws=True, use_radius_mask=True),
@@ -44,7 +50,7 @@ def test_flow_map(sim):
     assert flow_map is not None
     assert flow_map.shape == (1, grid_density**2)
 
-    plot_flow_map(grid_x, grid_y, flow_map, xs, ys)
+    plot_flow_map(grid_x, grid_y, flow_map, xs, ys, show=False)
 
 
 def test_flow_map_ws_wd_args(sim):
@@ -70,8 +76,8 @@ def test_flow_map_ws_wd_args(sim):
     assert fm_x.shape == (grid_density**2,)
     assert fm_y.shape == (grid_density**2,)
 
-    plot_flow_map(fm_x, fm_y, flow_map[0], xs, ys)
-    plot_flow_map(fm_x, fm_y, flow_map[1], xs, ys)
+    plot_flow_map(fm_x, fm_y, flow_map[0], xs, ys, show=False)
+    plot_flow_map(fm_x, fm_y, flow_map[1], xs, ys, show=False)
 
 
 def test_flow_map_no_grid(sim):
@@ -88,4 +94,40 @@ def test_flow_map_no_grid(sim):
     assert flow_map is not None
     assert flow_map.shape == (1, 100**2)
 
-    plot_flow_map(fm_x, fm_y, flow_map[0], xs, ys)
+    plot_flow_map(fm_x, fm_y, flow_map[0], xs, ys, show=False)
+
+
+def test_flow_map_no_grid_with_ti(sim):
+    """Test that the flow map is correctly generated when no grid is provided."""
+
+    xs = jnp.array([0, 500, 0, 1000])
+    ys = jnp.array([0, 0, 500, 0])
+    ti = 0.1
+    flow_map, (fm_x, fm_y) = sim.flow_map(xs, ys, ti=ti)
+    assert flow_map is not None
+    assert flow_map.shape == (1, 100**2)
+    plot_flow_map(fm_x, fm_y, flow_map[0], xs, ys, show=False)
+
+
+def test_flow_map_plotting_with_ax_passing(sim):
+    """Test that the flow map can be plotted when an axes is provided."""
+    xs = jnp.array([0, 500, 0, 1000])
+    ys = jnp.array([0, 0, 500, 0])
+    grid_density = 100
+    grid_x, grid_y = np.mgrid[
+        -100 : 2000 : grid_density * 1j, -250 : 750 : grid_density * 1j
+    ]
+
+    flow_map, _ = sim.flow_map(
+        xs,
+        ys,
+        fm_x=grid_x.ravel(),
+        fm_y=grid_y.ravel(),
+    )
+
+    assert flow_map is not None
+    assert flow_map.shape == (1, grid_density**2)
+
+    fig, ax = plt.subplots(figsize=(10, 8))
+    plot_flow_map(grid_x, grid_y, flow_map, xs, ys, show=False, ax=ax)
+    plt.close(fig)

@@ -42,7 +42,7 @@ ruff = "*"
 format = "pre-commit run --all-files"
 
 [tool.pixi.feature.test.tasks]
-test = "MPLBACKEND=Agg pytest test/ --cov=src/pixwake -n auto --dist worksteal"
+test = "pytest test/ --cov=src/pixwake -n auto --dist worksteal"
 
 [tool.pixi.feature.cuda.target.linux-64.pypi-dependencies]
 jax = { version = "*", extras = ["cuda12"] }

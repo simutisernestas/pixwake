@@ -1,4 +1,4 @@
-from abc import ABC
+from abc import ABC, abstractmethod
 
 import jax.numpy as jnp
 
@@ -14,15 +14,16 @@ class WakeDeficitModel(ABC):
 
     def __call__(
         self,
-        ws_eff: jnp.ndarray,
+        x: jnp.ndarray | tuple,
         ctx: SimulationContext,
         xs_r: jnp.ndarray | None = None,
         ys_r: jnp.ndarray | None = None,
-    ) -> jnp.ndarray:
+    ) -> jnp.ndarray | tuple:
         """A wrapper around the compute_deficit method.
 
         Args:
-            ws_eff: An array of effective wind speeds at each turbine.
+            x: An array of effective wind speeds at each turbine, or a tuple of
+                (ws_eff, ti_eff).
             ctx: The context of the simulation.
             xs_r: An array of x-coordinates for each receiver point (optional).
             ys_r: An array of y-coordinates for each receiver point (optional).
@@ -30,15 +31,22 @@ class WakeDeficitModel(ABC):
         Returns:
             The updated effective wind speeds.
         """
-        return self.compute_deficit(ws_eff, ctx, xs_r, ys_r)
+        if isinstance(x, tuple):
+            ws_eff, ti_eff = x
+        else:
+            ws_eff, ti_eff = x, None
 
+        return self.compute_deficit(ws_eff, ctx, xs_r, ys_r, ti_eff=ti_eff)
+
+    @abstractmethod
     def compute_deficit(
         self,
         ws_eff: jnp.ndarray,
         ctx: SimulationContext,
         xs_r: jnp.ndarray | None = None,
         ys_r: jnp.ndarray | None = None,
-    ) -> jnp.ndarray:  # pragma: no cover
+        ti_eff: jnp.ndarray | None = None,
+    ) -> jnp.ndarray | tuple:  # pragma: no cover
         """Computes the wake deficit.
 
         This method must be implemented by subclasses.
@@ -48,12 +56,11 @@ class WakeDeficitModel(ABC):
             ctx: The context of the simulation.
             xs_r: An array of x-coordinates for each receiver point (optional).
             ys_r: An array of y-coordinates for each receiver point (optional).
-
+            ti_eff: An array of effective turbulence intensity at each turbine (optional).
 
         Raises:
             NotImplementedError: If the method is not implemented by a subclass.
         """
-        _ = (ws_eff, ctx, xs_r, ys_r)
         raise NotImplementedError
 
     def get_downwind_crosswind_distances(

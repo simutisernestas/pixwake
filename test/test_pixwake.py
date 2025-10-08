@@ -7,7 +7,11 @@ from jax.test_util import check_grads
 
 from pixwake import Curve, Turbine
 from pixwake.core import SimulationContext, WakeSimulation, fixed_point
-from pixwake.deficit.noj import NOJDeficit
+from pixwake.deficit import (
+    BastankhahGaussianDeficit,
+    NiayifarGaussianDeficit,
+    NOJDeficit,
+)
 
 jcfg.update("jax_enable_x64", True)  # need float64 to match pywake
 
@@ -243,3 +247,40 @@ def test_wake_simulation_manual_mapping_strategy():
         jnp.asarray([10.0, 12.0]),
         jnp.asarray([270.0, 270.0]),
     )
+
+
+@pytest.mark.parametrize(
+    "model,requires_ti",
+    [
+        (NOJDeficit(k=0.05), False),
+        (BastankhahGaussianDeficit(), False),
+        (NiayifarGaussianDeficit(), True),
+    ],
+)
+def test_mapping_strategies_give_same_results(model, requires_ti):
+    """Test that different mapping strategies give the same results for various models."""
+    xs, ys, ws, wd, _, turbine = rect_grid_params(nx=5, ny=4)
+
+    mapping_methods = getattr(
+        WakeSimulation(model, turbine), "_WakeSimulation__sim_call_table"
+    ).keys()
+
+    results = []
+    for map_strategy in mapping_methods:
+        sim = WakeSimulation(model, turbine, mapping_strategy=map_strategy)
+
+        sim_args = {
+            "xs": xs,
+            "ys": ys,
+            "ws": jnp.full_like(xs, ws),
+            "wd": jnp.full_like(xs, wd),
+        }
+        if requires_ti:
+            sim_args["ti"] = 0.1
+
+        res = sim(**sim_args)
+        results.append(res.effective_ws)
+
+    for i in range(len(results)):
+        for j in range(i + 1, len(results)):
+            assert jnp.allclose(results[i], results[j], rtol=1e-6)
