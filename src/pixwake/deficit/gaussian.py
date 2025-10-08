@@ -23,7 +23,7 @@ class BastankhahGaussianDeficit(WakeDeficitModel):
         ctlim: float = 0.899,
         ct2a: Callable = ct2a_madsen,
         use_effective_ws: bool = False,
-        use_radius_mask: bool = True,
+        use_radius_mask: bool = False,
     ) -> None:
         """Initializes the BastankhahGaussianDeficit model.
 
@@ -76,7 +76,6 @@ class BastankhahGaussianDeficit(WakeDeficitModel):
         # epsilon per source (1d); make broadcasting explicit below
         epsilon_ilk = self.ceps * jnp.sqrt(beta)
 
-        # Use ti_eff if provided (for effective TI mode), otherwise use ambient ti
         ti_for_expansion = ti_eff if ti_eff is not None else ctx.ti
 
         # sigma_term: x_d has shape (n_receivers, n_sources).
@@ -85,8 +84,6 @@ class BastankhahGaussianDeficit(WakeDeficitModel):
         k_expansion = self.wake_expansion_coefficient(ti_for_expansion)
         # Ensure k_expansion is broadcastable: if it's an array (ndim > 0), add None for receiver dim
         k_expansion_arr = jnp.asarray(k_expansion)
-        if jnp.ndim(k_expansion_arr) > 0:
-            k_expansion_arr = k_expansion_arr[None, :]  # shape (1, S)
         sigma_term = (
             k_expansion_arr * x_d / D_src + epsilon_ilk[None, :]
         )  # shape (R, S)
@@ -115,20 +112,17 @@ class BastankhahGaussianDeficit(WakeDeficitModel):
         deficit_abs_matrix = deficit_fraction_matrix * ws_ref_sources[None, :]  # (R, S)
 
         # according to Niayifar, the wake radius is twice sigma
+        wake_radius = 2.0 * sigma_term * D_src  # dimensional radius
+
         if self.use_radius_mask:
-            wake_radius = 2.0 * sigma_term * D_src  # dimensional radius
             inside_wake = jnp.abs(y_d) <= wake_radius
             mask &= inside_wake
 
         # apply upstream mask
         deficit_abs_matrix = jnp.where(mask, deficit_abs_matrix, 0.0)
-
         # combine absolute deficits in quadrature and subtract from ambient
         total_abs_deficit = jnp.sqrt(jnp.sum(deficit_abs_matrix**2, axis=1) + eps)
-
-        new_ws = jnp.maximum(0.0, ctx.ws - total_abs_deficit)
-
-        return new_ws
+        return jnp.maximum(0.0, ctx.ws - total_abs_deficit)
 
     def wake_expansion_coefficient(
         self, ti: jnp.ndarray | None = None
@@ -242,5 +236,4 @@ class NiayifarGaussianDeficit(BastankhahGaussianDeficit):
         if ti is None:
             raise ValueError("Turbulence intensity must be provided.")
         a0, a1 = self.a
-        # ti can be a scalar or array, ensure we handle both
         return a0 * ti + a1

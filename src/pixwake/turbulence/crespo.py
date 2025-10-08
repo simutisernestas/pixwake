@@ -36,9 +36,9 @@ class CrespoHernandez(TurbulenceModel):
         ws_eff: jnp.ndarray,
         dw: jnp.ndarray,
         cw: jnp.ndarray,
-        ti_eff: jnp.ndarray,
+        ti_eff: jnp.ndarray,  # TODO: not used ???
         wake_radius: jnp.ndarray,
-        ct: jnp.ndarray,
+        ct: jnp.ndarray = None,
     ) -> jnp.ndarray:
         """
         Calculates the added turbulence intensity (TI) using the Crespo-Hernandez model.
@@ -78,10 +78,12 @@ class CrespoHernandez(TurbulenceModel):
 
         # Crespo-Hernandez formula for added turbulence (Eq. 21 in the paper)
         # The formula is applied for each source turbine's effect on each destination turbine.
+        # TODO: PyWake uses AMBIENT TI here, not effective TI (see line 16 of CrespoHernandez.calc_added_turbulence)
+        ti_ambient_array = jnp.full_like(ws_eff, ctx.ti)
         ti_add = (
             self.c[0]
             * a[None, :] ** self.c[1]
-            * ti_eff[None, :] ** self.c[2]
+            * ti_ambient_array[None, :] ** self.c[2]
             * (dw_gt0 / ctx.turbine.rotor_diameter) ** self.c[3]
         )
 
