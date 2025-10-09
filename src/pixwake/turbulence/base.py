@@ -45,10 +45,10 @@ class SqrMaxSum(Superposition):
 
 
 @dataclass
-class TurbulenceModel:
+class WakeTurbulence:
     """Base class for wake-added turbulence models."""
 
-    superposition_model: Superposition = field(default_factory=SqrMaxSum)
+    superposition: Superposition = field(default_factory=SqrMaxSum)
 
     def __call__(
         self,
@@ -68,7 +68,7 @@ class TurbulenceModel:
         # Combine ambient and added turbulence
         assert ctx.ti is not None
         ti_ambient = jnp.full_like(ct, ctx.ti)
-        return self.superposition_model(ti_ambient, ti_added)
+        return self.superposition(ti_ambient, ti_added)
 
     @abstractmethod
     def calc_added_turbulence(

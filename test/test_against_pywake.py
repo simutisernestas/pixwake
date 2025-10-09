@@ -512,8 +512,8 @@ def test_crespo_hernandez_implementation_match():
         power_curve=Curve(jnp.array([0, 25]), jnp.array([0, 1])),
     )
     ctx = SimulationContext(
-        xs=jnp.array([0.0, 200.0]),
-        ys=jnp.array([0.0, 0.0]),
+        dw=jnp.array([0.0, 200.0]),
+        cw=jnp.array([0.0, 0.0]),
         ws=jnp.array([8.0, 8.0]),
         wd=jnp.array([0.0, 0.0]),
         turbine=turbine,
@@ -532,7 +532,7 @@ def test_crespo_hernandez_implementation_match():
         wake_radius=wake_radius,
         ct=ct,
     )
-    pixwake_ti_eff_res = turbulence_model.superposition_model(
+    pixwake_ti_eff_res = turbulence_model.superposition(
         jnp.ones_like(pixwake_ti_res) * 0.1, pixwake_ti_res
     )
 

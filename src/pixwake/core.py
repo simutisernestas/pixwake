@@ -1,5 +1,12 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, Callable
+
+if TYPE_CHECKING:
+    from pixwake.deficit.base import WakeDeficit
+    from pixwake.turbulence.base import WakeTurbulence
+
 from functools import partial
-from typing import Any, Callable
 
 import jax
 import jax.numpy as jnp
@@ -83,12 +90,14 @@ class SimulationContext:
         turbine: The turbine object used in the simulation.
     """
 
-    xs: jnp.ndarray
-    ys: jnp.ndarray
-    ws: jnp.ndarray
-    wd: jnp.ndarray
     turbine: Turbine
+    dw: jnp.ndarray
+    cw: jnp.ndarray
+    ws: jnp.ndarray
     ti: jnp.ndarray | None = None
+    # TODO:
+    # xs_r: jnp.ndarray | None = None  # for flow maps, receiver coords
+    # ys_r: jnp.ndarray | None = None  # for flow maps, receiver coords
 
 
 @dataclass
@@ -100,13 +109,17 @@ class SimulationResult:
         effective_ti: Effective turbulence intensity at each turbine for each wind condition.
     """
 
+    turbine: Turbine
+    wt_x: jnp.ndarray
+    wt_y: jnp.ndarray
+    wd: jnp.ndarray
+    ws: jnp.ndarray
     effective_ws: jnp.ndarray
-    ctx: SimulationContext
     effective_ti: jnp.ndarray | None = None
 
     def power(self) -> jnp.ndarray:
         """Calculates the power of each turbine for each wind condition."""
-        return self.ctx.turbine.power(self.effective_ws)
+        return self.turbine.power(self.effective_ws)
 
     def aep(self, probabilities: jnp.ndarray | None = None) -> jnp.ndarray:
         """Calculates the Annual Energy Production (AEP) of a wind farm."""
@@ -137,11 +150,12 @@ class WakeSimulation:
 
     def __init__(
         self,
-        model: Any,
         turbine: Turbine,
+        deficit: WakeDeficit,
+        turbulence: WakeTurbulence = None,
         fpi_damp: float = 0.5,
         fpi_tol: float = 1e-6,
-        mapping_strategy: str = "vmap",
+        mapping_strategy: str = "map",
     ) -> None:
         """Initializes the WakeSimulation.
         Args:
@@ -152,7 +166,8 @@ class WakeSimulation:
             mapping_strategy: The strategy to use for mapping over multiple
                 wind conditions. Can be 'vmap', 'map', or '_manual'.
         """
-        self.model = model
+        self.deficit = deficit
+        self.turbulence = turbulence
         self.mapping_strategy = mapping_strategy
         self.fpi_damp = fpi_damp
         self.fpi_tol = fpi_tol
@@ -166,9 +181,9 @@ class WakeSimulation:
 
     def __call__(
         self,
-        xs: jnp.ndarray,
-        ys: jnp.ndarray,
-        ws: jnp.ndarray,
+        wt_xs: jnp.ndarray,
+        wt_ys: jnp.ndarray,
+        ws_amb: jnp.ndarray,
         wd: jnp.ndarray,
         ti: jnp.ndarray | float | None = None,
     ) -> SimulationResult:
@@ -189,30 +204,63 @@ class WakeSimulation:
                 f"Valid options are: {self.__sim_call_table.keys()}"
             )
 
-        xs = self._atleast_1d_jax(xs)
-        ys = self._atleast_1d_jax(ys)
-        ws = self._atleast_1d_jax(ws)
+        wt_xs = self._atleast_1d_jax(wt_xs)
+        wt_ys = self._atleast_1d_jax(wt_ys)
+        assert wt_xs.shape == wt_ys.shape
+        assert len(wt_xs.shape) == 1
+
+        ws_amb = self._atleast_1d_jax(ws_amb)
         wd = self._atleast_1d_jax(wd)
+        assert ws_amb.shape == wd.shape
+        assert len(ws_amb.shape) == 1
+
         if ti is not None:
             ti = self._atleast_1d_jax(ti)
             if ti.size == 1:
-                ti = jnp.full_like(ws, ti)
-            if ti.shape != ws.shape:
-                raise ValueError(
-                    f"Turbulence intensity shape {ti.shape} "
-                    f"does not match wind speed shape {ws.shape}."
-                )
+                ti = jnp.full_like(ws_amb, ti)
+            assert ti.shape == ws_amb.shape
 
-        ctx = SimulationContext(xs, ys, ws, wd, self.turbine, ti)
+        dw, cw = self._get_downwind_crosswind_distances(wd, wt_xs, wt_ys)
+        ctx = SimulationContext(self.turbine, dw, cw, ws_amb, ti)
         sim_func = self.__sim_call_table[self.mapping_strategy]
+        ws_eff, ti_eff = sim_func(ctx)
+        return SimulationResult(self.turbine, wt_xs, wt_ys, wd, ws_amb, ws_eff, ti_eff)
 
-        sim_result = sim_func(ctx)
-        if isinstance(sim_result, tuple) and len(sim_result) == 2:
-            ws_eff, ti_eff = sim_result
-        else:
-            ws_eff, ti_eff = sim_result, None
+    def _atleast_1d_jax(self, x: jnp.ndarray | float | list) -> jnp.ndarray:
+        return jnp.atleast_1d(jnp.asarray(x)).squeeze()
 
-        return SimulationResult(effective_ws=ws_eff, effective_ti=ti_eff, ctx=ctx)
+    def _get_downwind_crosswind_distances(
+        self,
+        wd: jnp.ndarray,
+        xs_s: jnp.ndarray,
+        ys_s: jnp.ndarray,
+        xs_r: jnp.ndarray = None,
+        ys_r: jnp.ndarray = None,
+    ) -> tuple[jnp.ndarray, jnp.ndarray]:
+        """Calculates the downwind and crosswind distances between points.
+
+        Args:
+            xs_s: An array of x-coordinates for each source point.
+            ys_s: An array of y-coordinates for each source point.
+            xs_r: An array of x-coordinates for each receiver point.
+            ys_r: An array of y-coordinates for each receiver point.
+            wd: The wind direction.
+
+        Returns:
+            A tuple containing the downwind and crosswind distances.
+        """
+        if xs_r is None:
+            xs_r = xs_s
+        if ys_r is None:
+            ys_r = ys_s
+        dx = xs_r[:, None] - xs_s[None, :]
+        dy = ys_r[:, None] - ys_s[None, :]
+        wd_rad = jnp.deg2rad((270.0 - wd + 180.0) % 360.0)
+        cos_a = jnp.cos(wd_rad)
+        sin_a = jnp.sin(wd_rad)
+        x_d = -(dx * cos_a + dy * sin_a)
+        y_d = dx * sin_a - dy * cos_a
+        return x_d, y_d
 
     def flow_map(
         self,
@@ -262,8 +310,7 @@ class WakeSimulation:
         )(ws, wd, result.effective_ws, result.effective_ti), (fm_x, fm_y)
 
     def _simulate_vmap(
-        self,
-        ctx: SimulationContext,
+        self, ctx: SimulationContext
     ) -> jnp.ndarray | tuple[jnp.ndarray, jnp.ndarray]:
         """Simulates multiple wind conditions using jax.vmap."""
 
@@ -271,35 +318,33 @@ class WakeSimulation:
             ws: jnp.ndarray, wd: jnp.ndarray, ti: jnp.ndarray | None
         ) -> jnp.ndarray | tuple[jnp.ndarray, jnp.ndarray]:
             return self._simulate_single_case(
-                SimulationContext(ctx.xs, ctx.ys, ws, wd, ctx.turbine, ti)
+                SimulationContext(ctx.dw, ctx.cw, ws, wd, ctx.turbine, ti)
             )
 
         return jax.vmap(_single_case)(ctx.ws, ctx.wd, ctx.ti)
 
     def _simulate_map(
-        self,
-        ctx: SimulationContext,
+        self, ctx: SimulationContext
     ) -> jnp.ndarray | tuple[jnp.ndarray, jnp.ndarray]:
         """Simulates multiple wind conditions using jax.lax.map."""
 
         def _single_case(
-            case: tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray | None],
-        ) -> jnp.ndarray | tuple[jnp.ndarray, jnp.ndarray]:
-            ws, wd, ti = case
+            case: tuple[jnp.ndarray, jnp.ndarray | None],
+        ) -> tuple[jnp.ndarray, jnp.ndarray]:
+            ws, ti = case
             return self._simulate_single_case(
-                SimulationContext(ctx.xs, ctx.ys, ws, wd, ctx.turbine, ti)
+                SimulationContext(ctx.turbine, ctx.dw, ctx.cw, ws, ti)
             )
 
-        return jax.lax.map(_single_case, (ctx.ws, ctx.wd, ctx.ti))
+        return jax.lax.map(_single_case, (ctx.ws, ctx.ti))
 
     def _simulate_manual(
-        self,
-        ctx: SimulationContext,
+        self, ctx: SimulationContext
     ) -> jnp.ndarray | tuple[jnp.ndarray, jnp.ndarray]:
         """Simulates multiple wind conditions using a manual loop (for debugging)."""
         # Pre-allocate output arrays
         n_cases = ctx.ws.size
-        n_turbines = ctx.xs.size
+        n_turbines = ctx.dw.size
         ws_out = jnp.zeros((n_cases, n_turbines))
         ti_out = (
             jnp.zeros((n_cases, n_turbines))
@@ -313,7 +358,7 @@ class WakeSimulation:
             _ti = None if ctx.ti is None else ctx.ti[i]
 
             result = self._simulate_single_case(
-                SimulationContext(ctx.xs, ctx.ys, _ws, _wd, ctx.turbine, _ti)
+                SimulationContext(ctx.dw, ctx.cw, _ws, _wd, ctx.turbine, _ti)
             )
 
             if isinstance(result, tuple):
@@ -331,21 +376,34 @@ class WakeSimulation:
         ctx: SimulationContext,
     ) -> jnp.ndarray | tuple[jnp.ndarray, jnp.ndarray]:
         """Simulates a single wind condition."""
-        ws_effective = jnp.full_like(ctx.xs, ctx.ws, dtype=default_float_type())
-        ti_effective = None if ctx.ti is None else jnp.full_like(ws_effective, ctx.ti)
-        x_guess = (ws_effective, ti_effective)
 
-        if self.mapping_strategy == "_manual":
-            return fixed_point_debug(
-                self.model, x_guess, ctx, damp=self.fpi_damp, tol=self.fpi_tol
-            )
+        # initialize all turbines with ambient quantities
+        ws_amb = jnp.full_like(ctx.dw, ctx.ws, dtype=default_float_type())
+        ti_amb = None if ctx.ti is None else jnp.full_like(ctx.dw, ctx.ti)
+        x_guess = (ws_amb, ti_amb)
 
-        return fixed_point(
-            self.model, x_guess, ctx, damp=self.fpi_damp, tol=self.fpi_tol
+        fp_func = (  # fixed_point_debug is not traced and can be used with pydebugger
+            fixed_point if self.mapping_strategy != "_manual" else fixed_point_debug
+        )
+        return fp_func(
+            self._solve_farm, x_guess, ctx, damp=self.fpi_damp, tol=self.fpi_tol
         )
 
-    def _atleast_1d_jax(self, x: jnp.ndarray | float | list) -> jnp.ndarray:
-        return jnp.atleast_1d(jnp.asarray(x))
+    def _solve_farm(self, effective: tuple, ctx: SimulationContext):
+        ws_eff, ti_eff = effective
+
+        # TODO: maybe should recompute ct??
+        # then don't pass it to the funcs and
+        # simply compute inside the models with
+        # turbine object; let's seee what happens
+        # cts = ctx.turbine.ct(ws_eff)
+
+        ws_eff = self.deficit(ws_eff, ti_eff, ctx)
+
+        if self.turbulence:
+            ti_eff = self.turbulence(ws_eff, ti_eff, ctx)
+
+        return ws_eff, ti_eff
 
 
 @partial(

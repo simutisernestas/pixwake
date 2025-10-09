@@ -1,15 +1,15 @@
-from typing import Any, Callable, cast
+from typing import Any, Callable
 
 import jax.numpy as jnp
 
 from ..core import SimulationContext
 from ..jax_utils import get_float_eps
-from ..turbulence.base import TurbulenceModel
+from ..turbulence.base import WakeTurbulence
 from ..utils import ct2a_madsen
-from .base import WakeDeficitModel
+from .base import WakeDeficit
 
 
-class BastankhahGaussianDeficit(WakeDeficitModel):
+class BastankhahGaussianDeficit(WakeDeficit):
     """Bastankhah-Gaussian wake deficit model.
 
     Implementation of the Gaussian wake model from Bastankhah and Porte-Agel (2014).
@@ -29,7 +29,7 @@ class BastankhahGaussianDeficit(WakeDeficitModel):
         ct2a: Callable = ct2a_madsen,
         use_effective_ws: bool = False,
         use_radius_mask: bool = False,
-        turbulence_model: TurbulenceModel | None = None,
+        turbulence_model: WakeTurbulence | None = None,
     ) -> None:
         """Initialize the Bastankhah-Gaussian wake deficit model.
 
@@ -71,8 +71,8 @@ class BastankhahGaussianDeficit(WakeDeficitModel):
         Returns:
             Effective wind speeds at receivers after wake deficits (n_receivers,).
         """
-        xs_r = xs_r if xs_r is not None else ctx.xs
-        ys_r = ys_r if ys_r is not None else ctx.ys
+        xs_r = xs_r if xs_r is not None else ctx.dw
+        ys_r = ys_r if ys_r is not None else ctx.cw
 
         if ctx.ti is not None:
             # Initialize effective TI with ambient value
@@ -83,7 +83,7 @@ class BastankhahGaussianDeficit(WakeDeficitModel):
             ti_eff = self._compute_effective_ti(ws_eff, ctx, ti_eff)
 
         downwind_dist, crosswind_dist = self.get_downwind_crosswind_distances(
-            ctx.xs, ctx.ys, xs_r, ys_r, ctx.wd
+            ctx.dw, ctx.cw, xs_r, ys_r, ctx.wd
         )
 
         # Compute wake parameters for all source-receiver pairs
@@ -95,6 +95,7 @@ class BastankhahGaussianDeficit(WakeDeficitModel):
         )
 
         # Apply wake superposition (quadratic sum) and return effective wind speed
+        return deficit_matrix
         eps = get_float_eps()
         total_deficit = jnp.sqrt(jnp.sum(deficit_matrix**2, axis=1) + eps)
         return jnp.maximum(0.0, ctx.ws - total_deficit), ti_eff
@@ -210,7 +211,7 @@ class BastankhahGaussianDeficit(WakeDeficitModel):
 
         # Get turbine-to-turbine distances
         downwind_dist, crosswind_dist = self.get_downwind_crosswind_distances(
-            ctx.xs, ctx.ys, ctx.xs, ctx.ys, ctx.wd
+            ctx.dw, ctx.cw, ctx.dw, ctx.cw, ctx.wd
         )
 
         # Compute wake parameters using current effective TI
@@ -248,7 +249,7 @@ class NiayifarGaussianDeficit(BastankhahGaussianDeficit):
         self,
         a: tuple[float, float] = (0.38, 4e-3),
         use_effective_ti: bool = False,
-        turbulence_model: TurbulenceModel | None = None,
+        turbulence_model: WakeTurbulence | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the Niayifar-Gaussian wake deficit model.

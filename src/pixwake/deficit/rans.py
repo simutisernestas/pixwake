@@ -8,7 +8,7 @@ from flax import serialization
 from flax.struct import field
 
 from ..core import SimulationContext
-from .base import WakeDeficitModel
+from .base import WakeDeficit
 
 
 class WakeDeficitModelFlax(nn.Module):
@@ -111,7 +111,7 @@ def load_rans_models() -> tuple[nn.Module, Any, nn.Module, Any]:
     return deficit_model, deficit_weights, turbulence_model, ti_weights
 
 
-class RANSDeficit(WakeDeficitModel):
+class RANSDeficit(WakeDeficit):
     """A RANS surrogate model for wake prediction.
 
     This model uses two pre-trained neural networks to predict the wake deficit
@@ -177,12 +177,12 @@ class RANSDeficit(WakeDeficitModel):
             )
 
         if xs_r is None:
-            xs_r = ctx.xs
+            xs_r = ctx.dw
         if ys_r is None:
-            ys_r = ctx.ys
+            ys_r = ctx.cw
 
         x_d, y_d = self.get_downwind_crosswind_distances(
-            ctx.xs, ctx.ys, xs_r, ys_r, ctx.wd
+            ctx.dw, ctx.cw, xs_r, ys_r, ctx.wd
         )
         x_d /= ctx.turbine.rotor_diameter
         y_d /= ctx.turbine.rotor_diameter

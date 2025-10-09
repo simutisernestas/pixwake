@@ -23,8 +23,8 @@ def simulation_result():
     )
     effective_wind_speed = jnp.array([[10.0, 12.0], [8.0, 6.0]])
     ctx = SimulationContext(
-        xs=jnp.array([0]),
-        ys=jnp.array([0]),
+        dw=jnp.array([0]),
+        cw=jnp.array([0]),
         ws=jnp.array([0]),
         wd=jnp.array([0]),
         turbine=turbine,

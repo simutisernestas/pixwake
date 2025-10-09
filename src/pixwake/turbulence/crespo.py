@@ -1,16 +1,15 @@
 from dataclasses import dataclass, field
-from typing import Callable
 
 import jax.numpy as jnp
 
 from pixwake.core import SimulationContext
-from pixwake.turbulence.base import TurbulenceModel
+from pixwake.turbulence.base import WakeTurbulence
 
 from ..utils import ct2a_madsen
 
 
 @dataclass
-class CrespoHernandez(TurbulenceModel):
+class CrespoHernandez(WakeTurbulence):
     """Crespo-Hernandez wake-added turbulence model.
 
     Empirical model for wake-added turbulence intensity based on thrust
@@ -29,7 +28,7 @@ class CrespoHernandez(TurbulenceModel):
     """
 
     c: list[float] = field(default_factory=lambda: [0.73, 0.8325, -0.0325, -0.32])
-    ct2a: Callable = ct2a_madsen
+    ct2a: callable = ct2a_madsen
 
     def calc_added_turbulence(
         self,

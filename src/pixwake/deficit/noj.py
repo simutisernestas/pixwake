@@ -5,10 +5,10 @@ import jax.numpy as jnp
 from ..core import SimulationContext
 from ..jax_utils import get_float_eps
 from ..utils import ct2a_madsen
-from .base import WakeDeficitModel
+from .base import WakeDeficit
 
 
-class NOJDeficit(WakeDeficitModel):
+class NOJDeficit(WakeDeficit):
     """A Jensen NOJ (N.O. Jensen) wake model.
 
     This is a simple analytical model that assumes a linearly expanding wake.
@@ -25,12 +25,7 @@ class NOJDeficit(WakeDeficitModel):
         self.ct2a = ct2a
 
     def compute_deficit(
-        self,
-        ws_eff: jnp.ndarray,
-        ctx: SimulationContext,
-        xs_r: jnp.ndarray | None = None,
-        ys_r: jnp.ndarray | None = None,
-        ti_eff: jnp.ndarray | None = None,
+        self, ws_eff: jnp.ndarray, ti_eff: jnp.ndarray | None, ctx: SimulationContext
     ) -> jnp.ndarray:
         """Computes the wake deficit using the NOJ model.
 
@@ -44,37 +39,17 @@ class NOJDeficit(WakeDeficitModel):
         Returns:
             An array of updated effective wind speeds at each turbine.
         """
-        if xs_r is None:
-            xs_r = ctx.xs
-        if ys_r is None:
-            ys_r = ctx.ys
-
-        x_d, y_d = self.get_downwind_crosswind_distances(
-            ctx.xs, ctx.ys, xs_r, ys_r, ctx.wd
-        )
-        wake_rad = (ctx.turbine.rotor_diameter / 2) + self.k * x_d
-
+        wake_rad = (ctx.turbine.rotor_diameter / 2) + self.k * ctx.dw
         # mask upstream turbines within wake cone
-        mask = (x_d > 0) & (jnp.abs(y_d) < wake_rad)
+        mask = (ctx.dw > 0) & (jnp.abs(ctx.cw) < wake_rad)
 
-        ct_eff = ctx.turbine.ct(ws_eff)
+        eps = get_float_eps()
 
-        # wake deficit formulation
-        a_coef = self.ct2a(ct_eff)
-        term = (
+        deficit_matrix = (
             2
-            * a_coef
-            * (
-                (ctx.turbine.rotor_diameter / 2)
-                / jnp.maximum(wake_rad, get_float_eps())
-            )
-            ** 2
+            * self.ct2a(ctx.turbine.ct(ws_eff))
+            * ((ctx.turbine.rotor_diameter / 2) / jnp.maximum(wake_rad, eps)) ** 2
         )
+        deficit_matrix = jnp.where(mask, deficit_matrix, 0.0)
 
-        # combine deficits in quadrature
-        deficits = jnp.sqrt(
-            jnp.sum(jnp.where(mask, term**2, 0.0), axis=1) + get_float_eps()
-        )
-
-        # new effective speed
-        return jnp.maximum(0.0, ctx.ws * (1.0 - deficits))
+        return deficit_matrix

@@ -2,10 +2,12 @@ from abc import ABC, abstractmethod
 
 import jax.numpy as jnp
 
+from pixwake.jax_utils import get_float_eps
+
 from ..core import SimulationContext
 
 
-class WakeDeficitModel(ABC):
+class WakeDeficit(ABC):
     """An abstract base class for wake models."""
 
     def __init__(self) -> None:
@@ -14,11 +16,10 @@ class WakeDeficitModel(ABC):
 
     def __call__(
         self,
-        x: jnp.ndarray | tuple,
+        ws_eff: jnp.ndarray,
+        ti_eff: jnp.ndarray | None,
         ctx: SimulationContext,
-        xs_r: jnp.ndarray | None = None,
-        ys_r: jnp.ndarray | None = None,
-    ) -> jnp.ndarray | tuple:
+    ) -> jnp.ndarray:
         """A wrapper around the compute_deficit method.
 
         Args:
@@ -31,21 +32,16 @@ class WakeDeficitModel(ABC):
         Returns:
             The updated effective wind speeds.
         """
-        if isinstance(x, tuple):
-            ws_eff, ti_eff = x
-        else:
-            ws_eff, ti_eff = x, None
-
-        return self.compute_deficit(ws_eff, ctx, xs_r, ys_r, ti_eff=ti_eff)
+        ws_deficit = self.compute_deficit(ws_eff, ti_eff, ctx)
+        ws_deficit = jnp.sqrt(jnp.sum(ws_deficit**2, axis=1) + get_float_eps())
+        return jnp.maximum(0.0, ctx.ws - ws_deficit)
 
     @abstractmethod
     def compute_deficit(
         self,
         ws_eff: jnp.ndarray,
+        ti_eff: jnp.ndarray | None,
         ctx: SimulationContext,
-        xs_r: jnp.ndarray | None = None,
-        ys_r: jnp.ndarray | None = None,
-        ti_eff: jnp.ndarray | None = None,
     ) -> jnp.ndarray | tuple:  # pragma: no cover
         """Computes the wake deficit.
 
@@ -62,32 +58,3 @@ class WakeDeficitModel(ABC):
             NotImplementedError: If the method is not implemented by a subclass.
         """
         raise NotImplementedError
-
-    def get_downwind_crosswind_distances(
-        self,
-        xs_s: jnp.ndarray,
-        ys_s: jnp.ndarray,
-        xs_r: jnp.ndarray,
-        ys_r: jnp.ndarray,
-        wd: jnp.ndarray,
-    ) -> tuple[jnp.ndarray, jnp.ndarray]:
-        """Calculates the downwind and crosswind distances between points.
-
-        Args:
-            xs_s: An array of x-coordinates for each source point.
-            ys_s: An array of y-coordinates for each source point.
-            xs_r: An array of x-coordinates for each receiver point.
-            ys_r: An array of y-coordinates for each receiver point.
-            wd: The wind direction.
-
-        Returns:
-            A tuple containing the downwind and crosswind distances.
-        """
-        dx = xs_r[:, None] - xs_s[None, :]
-        dy = ys_r[:, None] - ys_s[None, :]
-        wd_rad = jnp.deg2rad((270.0 - wd + 180.0) % 360.0)
-        cos_a = jnp.cos(wd_rad)
-        sin_a = jnp.sin(wd_rad)
-        x_d = -(dx * cos_a + dy * sin_a)
-        y_d = dx * sin_a - dy * cos_a
-        return x_d, y_d
