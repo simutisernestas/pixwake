@@ -331,24 +331,20 @@ class WakeSimulation:
         ctx: SimulationContext,
     ) -> jnp.ndarray | tuple[jnp.ndarray, jnp.ndarray]:
         """Simulates a single wind condition."""
-        ws_guess = jnp.full_like(ctx.xs, ctx.ws, dtype=default_float_type())
+        ws_effective = jnp.full_like(ctx.xs, ctx.ws, dtype=default_float_type())
         x_guess: jnp.ndarray | tuple[jnp.ndarray, jnp.ndarray]
         use_ti = getattr(self.model, "use_effective_ti", False)
         if use_ti:
-            ti_val = ctx.ti
-            if ti_val is None:
-                # try to get it from the model itself
-                if hasattr(self.model, "ambient_ti"):
-                    ti_val = self.model.ambient_ti
-                else:
-                    raise ValueError(
-                        "Turbulence intensity `ti` must be provided for this model, "
-                        "either in the simulation call or as `ambient_ti` in the model."
-                    )
-            ti_guess = jnp.full_like(ws_guess, ti_val)
-            x_guess = (ws_guess, ti_guess)
+            ti_effective = ctx.ti
+            if ti_effective is None:
+                raise ValueError(
+                    "Turbulence intensity `ti` must be provided for this model. "
+                    "Pass ti parameter when calling WakeSimulation."
+                )
+            ti_guess = jnp.full_like(ws_effective, ti_effective)
+            x_guess = (ws_effective, ti_guess)
         else:
-            x_guess = ws_guess
+            x_guess = ws_effective
 
         if self.mapping_strategy == "_manual":
             return fixed_point_debug(
@@ -375,21 +371,34 @@ def fixed_point(
     tol: float = 1e-6,
     damp: float = 0.5,
 ) -> jnp.ndarray | tuple:
-    """Finds the fixed point of a function using iterative updates.
+    """This function solves for a fixed point, i.e., a value `x` such that `f(x) = x`.
+    In the context of wake modeling, this is used to determine the stable effective
+    wind speeds within a wind farm, where the wind speed at each turbine is
+    influenced by the wakes of others.
 
-    This function is used to solve for the stable effective wind speeds in the
-    wind farm. It has a custom vector-Jacobian product (VJP) defined to
-    enable automatic differentiation through the fixed-point iteration.
+    The function is JAX-transformable and has a custom vector-Jacobian product (VJP)
+    to allow for automatic differentiation. This is essential for gradient-based
+    optimization of wind farm layouts or control strategies.
+
+    The mathematical foundation for the custom VJP is the implicit function theorem.
+    If we have a fixed-point equation `x_star = f(x_star, a)`, where `a` represents
+    the parameters of `f`, we can differentiate both sides to find the derivative
+    of `x_star` with respect to `a`.
 
     Args:
-        f: The function to iterate.
-        x_guess: The initial guess for the fixed point. Can be a single array or a pytree.
-        ctx: The context of the simulation.
-        tol: The tolerance for convergence.
-        damp: The damping factor for the updates.
-
+        f: The function to iterate, which should accept the current estimate of the
+        fixed point and the simulation context `ctx`.
+        x_guess: The initial guess for the fixed point. This can be a single array
+                or a pytree of arrays.
+        ctx: The context of the simulation, containing parameters and other data
+            needed by the function `f`.
+        tol: The tolerance for convergence. The iteration stops when the maximum
+            absolute difference between successive estimates is below this value.
+        damp: The damping factor for the updates, used to stabilize the iteration.
+            A value of 0.0 means no damping, while a value closer to 1.0
+            introduces more damping.
     Returns:
-        The fixed point of the function.
+        The fixed point of the function, with the same structure as `x_guess`.
     """
     max_iter = max(20, len(jnp.atleast_1d(jax.tree.leaves(x_guess)[0])))
 
@@ -418,6 +427,7 @@ def fixed_point_fwd(
     tol: float,
     damp: float,
 ) -> tuple[jnp.ndarray | tuple, tuple]:
+    """Forward pass for the custom VJP of the fixed_point function."""
     x_star = fixed_point(f, x_guess, ctx, tol=tol, damp=damp)
     return x_star, (ctx, x_star)
 
@@ -425,6 +435,7 @@ def fixed_point_fwd(
 def fixed_point_rev(
     f: Callable, tol: float, damp: float, res: tuple, x_star_bar: jnp.ndarray | tuple
 ) -> tuple[jnp.ndarray | tuple, Any]:
+    """Reverse pass for the custom VJP of the fixed_point function."""
     ctx, x_star = res
     _, vjp_a = vjp(lambda s: f(x_star, s), ctx)
 
@@ -432,14 +443,24 @@ def fixed_point_rev(
         v: jnp.ndarray | tuple,
         _: Any,
     ) -> jnp.ndarray | tuple:
-        """Helper function for the reverse-mode differentiation of the fixed point."""
+        """Helper function for the reverse-mode differentiation of the fixed point.
+
+        This function represents the application of the Jacobian of `f` with respect
+        to `x` to a vector `v`. It is used within another fixed-point iteration
+        to solve for the gradients.
+        """
         return jax.tree.map(
             jnp.add,
             vjp(lambda x: f(x, ctx), x_star)[1](v)[0],
             x_star_bar,
         )
 
+    # Solve another fixed-point problem to compute the gradient.
+    # This is derived from the implicit function theorem.
     a_bar_sum = vjp_a(fixed_point(_inner_f, x_star_bar, None, tol=tol, damp=damp))[0]
+
+    # The gradient with respect to `x_guess` is zero, as the fixed point
+    # does not depend on the initial guess.
     return jax.tree.map(jnp.zeros_like, x_star), a_bar_sum
 
 
@@ -456,16 +477,6 @@ def fixed_point_debug(
     """Finds the fixed point of a function using iterative updates.
     This function is for debugging purposes only and is not JAX-transformable.
     It uses a standard Python while loop instead of `jax.lax.while_loop`.
-
-    Args:
-        f: The function to iterate.
-        x_guess: The initial guess for the fixed point.
-        ctx: The context of the simulation.
-        tol: The tolerance for convergence.
-        damp: The damping factor for the updates.
-
-    Returns:
-        The fixed point of the function.
     """
     max_iter = max(20, len(jnp.atleast_1d(jax.tree.leaves(x_guess)[0])))
 

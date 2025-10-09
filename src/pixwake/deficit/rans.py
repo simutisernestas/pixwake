@@ -117,13 +117,15 @@ class RANSDeficit(WakeDeficitModel):
     This model uses two pre-trained neural networks to predict the wake deficit
     and added turbulence intensity. The model is based on high-fidelity RANS
     CFD simulations.
+
+    Note: This model requires turbulence intensity to be provided in the simulation
+    context (ctx.ti). The TI value must be passed when calling the WakeSimulation.
     """
 
-    def __init__(self, ambient_ti: float, use_effective: bool = True) -> None:
+    def __init__(self, use_effective: bool = True) -> None:
         """Initializes the RANSDeficit.
 
         Args:
-            ambient_ti: The ambient turbulence intensity.
             use_effective: A boolean flag to control the deficit calculation.
                 - If True (default), the deficit is calculated as an absolute
                   reduction in wind speed, proportional to the effective wind
@@ -132,7 +134,6 @@ class RANSDeficit(WakeDeficitModel):
                   relative to the free-stream wind speed.
         """
         super().__init__()
-        self.ambient_ti = ambient_ti
         self.use_effective = use_effective
         self.use_effective_ti = True
         (
@@ -165,7 +166,16 @@ class RANSDeficit(WakeDeficitModel):
         Returns:
             A tuple containing the updated effective wind speeds and turbulence
             intensities at each turbine.
+
+        Raises:
+            ValueError: If ctx.ti is None - turbulence intensity is required.
         """
+        if ctx.ti is None:
+            raise ValueError(
+                "RANSDeficit requires turbulence intensity (ti) to be provided. "
+                "Pass ti parameter when calling WakeSimulation."
+            )
+
         if xs_r is None:
             xs_r = ctx.xs
         if ys_r is None:
@@ -198,19 +208,13 @@ class RANSDeficit(WakeDeficitModel):
             nn_out = jnp.array(model.apply(params, md_input)).reshape(x_d.shape)
             return jnp.where(in_domain_mask, nn_out, 0.0).sum(axis=1)
 
-        ti_input: float | jnp.ndarray | None
+        # Use effective TI if available, otherwise use ambient TI from context
         ti_input = ti_eff if ti_eff is not None else ctx.ti
-        if ti_input is None:
-            ti_input = self.ambient_ti
 
         added_ti = _predict(self.turbulence_model, self.ti_weights, ti_input)
 
-        ambient_ti_base: float | jnp.ndarray
-        if ctx.ti is not None:
-            ambient_ti_base = ctx.ti
-        else:
-            ambient_ti_base = self.ambient_ti
-        new_effective_ti = ambient_ti_base + added_ti
+        # Ambient TI comes from context
+        new_effective_ti = ctx.ti + added_ti
 
         deficit = _predict(self.deficit_model, self.deficit_weights, ti_input)
 
