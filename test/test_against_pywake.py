@@ -129,7 +129,7 @@ def _pixwake_compute_gradients(sim, x, y, ws, wd, ti=None, ret_grad_fn=False):
     return val, dx, dy
 
 
-def test_noj_aep_and_gradients_equivalence_timeseries(curves):
+def test_noj_equivalence_timeseries(curves):
     ct_curve, power_curve = curves
     cutin_ws, cutout_ws = 3.0, 25.0
     wake_expansion_k = 0.1
@@ -189,7 +189,7 @@ def test_noj_aep_and_gradients_equivalence_timeseries(curves):
     assert speedup > 2.0, speedup
 
 
-def test_noj_aep_and_gradients_equivalence_with_site_frequencies(curves):
+def test_noj_equivalence_with_site_frequencies(curves):
     ct_curve, power_curve = curves
     cutin_ws, cutout_ws = 4.0, 25.0
     wake_expansion_k = 0.1
@@ -289,7 +289,7 @@ def test_noj_aep_and_gradients_equivalence_with_site_frequencies(curves):
     assert speedup > 2.0, speedup
 
 
-def test_gaussian_aep_and_gradients_equivalence_timeseries(ct_vals, power_vals):
+def test_gaussian_equivalence_timeseries(ct_vals, power_vals):
     cutin_ws = 3.0
     cutout_ws = 25.0
     ct_pw_ws = np.arange(0.0, cutout_ws + 1.0, 1.0)
@@ -373,7 +373,7 @@ def test_gaussian_aep_and_gradients_equivalence_timeseries(ct_vals, power_vals):
     np.testing.assert_allclose(dy, pw_dy, rtol=rtol, atol=1e-5)
 
 
-def test_gaussian_aep_and_gradients_equivalence_timeseries_with_effective_ws(curves):
+def test_gaussian_equivalence_timeseries_with_effective_ws(curves):
     ct_curve, power_curve = curves
     cutin_ws, cutout_ws = 3.0, 25.0
     wake_expansion_k = 0.0324555
@@ -407,6 +407,61 @@ def test_gaussian_aep_and_gradients_equivalence_timeseries_with_effective_ws(cur
     sim = WakeSimulation(model, turbine, fpi_damp=1.0)
     pixwake_sim_res = sim(
         jnp.asarray(x), jnp.asarray(y), jnp.asarray(ws), jnp.asarray(wd)
+    )
+
+    rtol = 1e-2
+    _assert_ws_eff_close(
+        pixwake_sim_res.effective_ws, pywake_ws_eff, rtol=rtol, atol=1e-5
+    )
+    np.testing.assert_allclose(
+        pixwake_sim_res.aep(), sim_res.aep().sum().values, rtol=rtol
+    )
+
+    pw_dx, pw_dy = wfm.aep_gradients(x=x, y=y, wd=wd, ws=ws, time=True)
+    _, dx, dy = _pixwake_compute_gradients(sim, x, y, ws, wd)
+
+    np.testing.assert_allclose(dx, pw_dx, rtol=rtol)
+    np.testing.assert_allclose(dy, pw_dy, rtol=rtol)
+
+
+def test_gaussian_equivalence_timeseries_with_effective_ws_with_turbulence(curves):
+    ct_curve, power_curve = curves
+    cutin_ws, cutout_ws = 3.0, 25.0
+    wake_expansion_k = 0.0324555
+    RD = 120.0
+
+    x, y = _create_turbine_layout(20, 3, spacing=RD)
+    windTurbines = _create_pywake_turbines(x, y, ct_curve, power_curve, RD=RD)
+
+    site = Hornsrev1Site()
+    wake_model = PyWakeBastankhahGaussianDeficit(
+        k=wake_expansion_k, use_effective_ws=True
+    )
+    wfm = All2AllIterative(
+        site,
+        windTurbines,
+        wake_deficitModel=wake_model,
+        superpositionModel=SquaredSum(),
+        turbulenceModel=PyWakeCrespoHernandez(),
+    )
+
+    n_timestamps = 1000
+    ws = np.random.uniform(cutin_ws, cutout_ws, size=n_timestamps)
+    wd = np.random.uniform(0, 360, size=n_timestamps)
+
+    sim_res = wfm(x=x, y=y, wd=wd, ws=ws, time=True, TI=0.1)
+    pywake_ws_eff = sim_res["WS_eff"].values
+
+    model = BastankhahGaussianDeficit(
+        k=wake_expansion_k,
+        use_effective_ws=True,
+        use_radius_mask=False,
+        turbulence_model=CrespoHernandez(),
+    )
+    turbine = _create_pixwake_turbine(ct_curve, power_curve, RD=RD)
+    sim = WakeSimulation(model, turbine, fpi_damp=1.0)
+    pixwake_sim_res = sim(
+        jnp.asarray(x), jnp.asarray(y), jnp.asarray(ws), jnp.asarray(wd), 0.1
     )
 
     rtol = 1e-2
@@ -467,16 +522,13 @@ def test_crespo_hernandez_implementation_match():
 
     dw = jnp.array(dw_ijlk[:, :, 0, 0])
     cw = jnp.array(cw_ijlk[:, :, 0, 0])
-    ti_amb = jnp.array(TI_ilk[:, 0, 0])
     wake_radius = jnp.array(wake_radius_ijlk[:, :, 0, 0])
     ct = jnp.array(ct_ilk[:, 0, 0])
 
     pixwake_ti_res = turbulence_model.calc_added_turbulence(
         ctx,
-        ws_eff=jnp.array([0.1]),
         dw=dw,
         cw=cw,
-        ti_eff=ti_amb,
         wake_radius=wake_radius,
         ct=ct,
     )
@@ -489,7 +541,7 @@ def test_crespo_hernandez_implementation_match():
     np.testing.assert_allclose(pixwake_ti_eff_res, pywake_ti_eff_res, **tols)
 
 
-def test_gaussian_aep_and_gradients_equivalence_timeseries_with_wake_expansion_based_on_ti(
+def test_gaussian_equivalence_timeseries_with_wake_expansion_based_on_ti(
     curves,
 ):
     ct_curve, power_curve = curves
@@ -539,7 +591,7 @@ def test_gaussian_aep_and_gradients_equivalence_timeseries_with_wake_expansion_b
     np.testing.assert_allclose(dy, pw_dy, **tols)
 
 
-def test_effective_ti_gaussian_aep_and_gradients_equivalence_timeseries_with_wake_expansion_based_on_ti(
+def test_effective_ti_gaussian_equivalence_timeseries_with_wake_expansion_based_on_ti(
     curves,
 ):
     ct_curve, power_curve = curves

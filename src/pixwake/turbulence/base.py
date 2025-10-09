@@ -53,35 +53,29 @@ class TurbulenceModel:
     def __call__(
         self,
         ctx: SimulationContext,
-        ws_eff: jnp.ndarray,
         dw: jnp.ndarray,
         cw: jnp.ndarray,
-        ti_eff: jnp.ndarray,
         wake_radius: jnp.ndarray,
         ct: jnp.ndarray,
     ) -> jnp.ndarray:
         ti_added = self.calc_added_turbulence(
             ctx=ctx,
-            ws_eff=ws_eff,
             dw=dw,
             cw=cw,
-            ti_eff=ti_eff,
             wake_radius=wake_radius,
             ct=ct,
         )
         # Combine ambient and added turbulence
         assert ctx.ti is not None
-        ti_ambient = jnp.full_like(ws_eff, ctx.ti)
+        ti_ambient = jnp.full_like(ct, ctx.ti)
         return self.superposition_model(ti_ambient, ti_added)
 
     @abstractmethod
     def calc_added_turbulence(
         self,
         ctx: SimulationContext,
-        ws_eff: jnp.ndarray,
         dw: jnp.ndarray,
         cw: jnp.ndarray,
-        ti_eff: jnp.ndarray,
         wake_radius: jnp.ndarray,
         ct: jnp.ndarray,
     ) -> jnp.ndarray:

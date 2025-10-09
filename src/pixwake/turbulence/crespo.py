@@ -34,10 +34,8 @@ class CrespoHernandez(TurbulenceModel):
     def calc_added_turbulence(
         self,
         ctx: SimulationContext,
-        ws_eff: jnp.ndarray,
         dw: jnp.ndarray,
         cw: jnp.ndarray,
-        ti_eff: jnp.ndarray,
         wake_radius: jnp.ndarray,
         ct: jnp.ndarray | None = None,
     ) -> jnp.ndarray:
@@ -58,10 +56,6 @@ class CrespoHernandez(TurbulenceModel):
         Returns:
             Added turbulence intensity (n_receivers, n_sources).
         """
-        # Compute thrust coefficient if not provided
-        if ct is None:
-            ct = ctx.turbine.ct(ws_eff)
-
         # Convert to induction factor with numerical safeguard
         induction_factor = jnp.maximum(self.ct2a(ct), 1e-10)
 

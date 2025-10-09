@@ -332,19 +332,8 @@ class WakeSimulation:
     ) -> jnp.ndarray | tuple[jnp.ndarray, jnp.ndarray]:
         """Simulates a single wind condition."""
         ws_effective = jnp.full_like(ctx.xs, ctx.ws, dtype=default_float_type())
-        x_guess: jnp.ndarray | tuple[jnp.ndarray, jnp.ndarray]
-        use_ti = getattr(self.model, "use_effective_ti", False)
-        if use_ti:
-            ti_effective = ctx.ti
-            if ti_effective is None:
-                raise ValueError(
-                    "Turbulence intensity `ti` must be provided for this model. "
-                    "Pass ti parameter when calling WakeSimulation."
-                )
-            ti_guess = jnp.full_like(ws_effective, ti_effective)
-            x_guess = (ws_effective, ti_guess)
-        else:
-            x_guess = ws_effective
+        ti_effective = None if ctx.ti is None else jnp.full_like(ws_effective, ctx.ti)
+        x_guess = (ws_effective, ti_effective)
 
         if self.mapping_strategy == "_manual":
             return fixed_point_debug(
