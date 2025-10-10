@@ -182,8 +182,8 @@ def test_noj_equivalence_timeseries(curves):
     pixwake_runtime = time.time() - s
 
     assert np.isfinite(px_dx).all() and np.isfinite(px_dy).all()
-    np.testing.assert_allclose(px_dx, pw_dx, atol=1e-5)
-    np.testing.assert_allclose(px_dy, pw_dy, atol=1e-5)
+    np.testing.assert_allclose(px_dx, pw_dx, atol=1e-6)
+    np.testing.assert_allclose(px_dy, pw_dy, atol=1e-6)
 
     speedup = pywake_runtime / pixwake_runtime
     assert speedup > 2.0, speedup
@@ -343,7 +343,7 @@ def test_gaussian_equivalence_timeseries(ct_vals, power_vals):
     np.testing.assert_allclose(
         pixwake_sim_res.effective_ws.T,
         np.maximum(pywake_ws_eff, 0),
-        atol=1e-5,
+        atol=1e-6,
         rtol=rtol,
     )
 
@@ -369,8 +369,8 @@ def test_gaussian_equivalence_timeseries(ct_vals, power_vals):
     dx.block_until_ready()
     dy.block_until_ready()
     val.block_until_ready()
-    np.testing.assert_allclose(dx, pw_dx, rtol=rtol, atol=1e-5)
-    np.testing.assert_allclose(dy, pw_dy, rtol=rtol, atol=1e-5)
+    np.testing.assert_allclose(dx, pw_dx, rtol=rtol, atol=1e-6)
+    np.testing.assert_allclose(dy, pw_dy, rtol=rtol, atol=1e-6)
 
 
 def test_gaussian_equivalence_timeseries_with_effective_ws(curves):
@@ -411,7 +411,7 @@ def test_gaussian_equivalence_timeseries_with_effective_ws(curves):
 
     rtol = 1e-2
     _assert_ws_eff_close(
-        pixwake_sim_res.effective_ws, pywake_ws_eff, rtol=rtol, atol=1e-5
+        pixwake_sim_res.effective_ws, pywake_ws_eff, rtol=rtol, atol=1e-6
     )
     np.testing.assert_allclose(
         pixwake_sim_res.aep(), sim_res.aep().sum().values, rtol=rtol
@@ -420,8 +420,8 @@ def test_gaussian_equivalence_timeseries_with_effective_ws(curves):
     pw_dx, pw_dy = wfm.aep_gradients(x=x, y=y, wd=wd, ws=ws, time=True)
     _, dx, dy = _pixwake_compute_gradients(sim, x, y, ws, wd)
 
-    np.testing.assert_allclose(dx, pw_dx, rtol=rtol, atol=1e-5)
-    np.testing.assert_allclose(dy, pw_dy, rtol=rtol, atol=1e-5)
+    np.testing.assert_allclose(dx, pw_dx, rtol=rtol, atol=1e-6)
+    np.testing.assert_allclose(dy, pw_dy, rtol=rtol, atol=1e-6)
 
 
 def test_gaussian_equivalence_timeseries_with_effective_ws_with_turbulence(curves):
@@ -581,8 +581,8 @@ def test_effective_ti_gaussian_equivalence_timeseries_with_wake_expansion_based_
     pw_dx, pw_dy = wfm.aep_gradients(x=x, y=y, wd=wd, ws=ws, time=True)
     _, dx, dy = _pixwake_compute_gradients(sim, x, y, ws, wd, ti=0.1)
 
-    np.testing.assert_allclose(dx, pw_dx, rtol=rtol, atol=1e-5)
-    np.testing.assert_allclose(dy, pw_dy, rtol=rtol, atol=1e-5)
+    np.testing.assert_allclose(dx, pw_dx, rtol=rtol, atol=1e-6)
+    np.testing.assert_allclose(dy, pw_dy, rtol=rtol, atol=1e-6)
 
 
 def test_crespo_hernandez_implementation_match():
@@ -642,6 +642,6 @@ def test_crespo_hernandez_implementation_match():
         jnp.ones_like(pixwake_ti_addded) * 0.1, pixwake_ti_addded
     )
 
-    tols = dict(rtol=1e-5, atol=1e-5)
+    tols = dict(rtol=1e-5, atol=1e-6)
     np.testing.assert_allclose(pixwake_ti_addded, pywake_ti_added, **tols)
     np.testing.assert_allclose(pixwake_ti_eff_res, pywake_ti_eff_res, **tols)
