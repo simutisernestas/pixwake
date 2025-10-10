@@ -6,13 +6,14 @@ if TYPE_CHECKING:
     from pixwake.deficit.base import WakeDeficit
     from pixwake.turbulence.base import WakeTurbulence
 
+from dataclasses import dataclass
 from functools import partial
 
 import jax
 import jax.numpy as jnp
-from flax.struct import dataclass
 from jax import custom_vjp, vjp
 from jax.lax import while_loop
+from jax.tree_util import register_pytree_node_class
 
 from pixwake.jax_utils import default_float_type
 
@@ -78,8 +79,9 @@ class Turbine:
 
 
 @dataclass
+@register_pytree_node_class
 class SimulationContext:
-    """A dataclass to hold the context of a wind farm simulation.
+    """A dataclass to hold static context of a wind farm simulation.
 
     Attributes:
         xs: An array of x-coordinates for each turbine.
@@ -95,7 +97,17 @@ class SimulationContext:
     cw: jnp.ndarray
     ws: jnp.ndarray
     ti: jnp.ndarray | None = None
-    # TODO:
+
+    def tree_flatten(self):
+        children = (self.dw, self.cw, self.ws, self.ti)
+        aux_data = (self.turbine,)
+        return children, aux_data
+
+    @classmethod
+    def tree_unflatten(self, aux_data, children):
+        return SimulationContext(*aux_data, *children)
+
+    # TODO: this might be redundant
     # xs_r: jnp.ndarray | None = None  # for flow maps, receiver coords
     # ys_r: jnp.ndarray | None = None  # for flow maps, receiver coords
 
@@ -115,6 +127,7 @@ class SimulationResult:
     wd: jnp.ndarray
     ws: jnp.ndarray
     effective_ws: jnp.ndarray
+    ti: jnp.ndarray | None = None
     effective_ti: jnp.ndarray | None = None
 
     def power(self) -> jnp.ndarray:
@@ -167,11 +180,11 @@ class WakeSimulation:
                 wind conditions. Can be 'vmap', 'map', or '_manual'.
         """
         self.deficit = deficit
+        self.turbine = turbine
         self.turbulence = turbulence
         self.mapping_strategy = mapping_strategy
         self.fpi_damp = fpi_damp
         self.fpi_tol = fpi_tol
-        self.turbine = turbine
 
         self.__sim_call_table: dict[str, Callable] = {
             "vmap": self._simulate_vmap,
@@ -204,6 +217,21 @@ class WakeSimulation:
                 f"Valid options are: {self.__sim_call_table.keys()}"
             )
 
+        sc = self._preprocess_ambient_conditions(wt_xs, wt_ys, ws_amb, wd, ti)
+        wt_xs, wt_ys, ws_amb, wd, ti = sc
+
+        dw, cw = self._get_downwind_crosswind_distances(wd, wt_xs, wt_ys)
+        ctx = SimulationContext(self.turbine, dw, cw, ws_amb, ti)
+        sim_func = self.__sim_call_table[self.mapping_strategy]
+        ws_eff, ti_eff = sim_func(ctx)
+        return SimulationResult(
+            self.turbine, wt_xs, wt_ys, wd, ws_amb, ws_eff, ti, ti_eff
+        )
+
+    def _atleast_1d_jax(self, x: jnp.ndarray | float | list) -> jnp.ndarray:
+        return jnp.atleast_1d(jnp.asarray(x))
+
+    def _preprocess_ambient_conditions(self, wt_xs, wt_ys, ws_amb, wd, ti):
         wt_xs = self._atleast_1d_jax(wt_xs)
         wt_ys = self._atleast_1d_jax(wt_ys)
         assert wt_xs.shape == wt_ys.shape
@@ -220,14 +248,7 @@ class WakeSimulation:
                 ti = jnp.full_like(ws_amb, ti)
             assert ti.shape == ws_amb.shape
 
-        dw, cw = self._get_downwind_crosswind_distances(wd, wt_xs, wt_ys)
-        ctx = SimulationContext(self.turbine, dw, cw, ws_amb, ti)
-        sim_func = self.__sim_call_table[self.mapping_strategy]
-        ws_eff, ti_eff = sim_func(ctx)
-        return SimulationResult(self.turbine, wt_xs, wt_ys, wd, ws_amb, ws_eff, ti_eff)
-
-    def _atleast_1d_jax(self, x: jnp.ndarray | float | list) -> jnp.ndarray:
-        return jnp.atleast_1d(jnp.asarray(x)).squeeze()
+        return wt_xs, wt_ys, ws_amb, wd, ti
 
     def _get_downwind_crosswind_distances(
         self,
@@ -272,18 +293,9 @@ class WakeSimulation:
         ti: jnp.ndarray | float | None = None,
     ) -> tuple[jnp.ndarray, tuple[jnp.ndarray, jnp.ndarray]]:
         """Generates a flow map for the wind farm."""
-        raise NotImplementedError()
-        ws = self._atleast_1d_jax(ws)
-        wd = self._atleast_1d_jax(wd)
-        if ti is not None:
-            ti = self._atleast_1d_jax(ti)
-            if ti.size == 1:
-                ti = jnp.full_like(ws, ti)
-            if ti.shape != ws.shape:
-                raise ValueError(
-                    f"Turbulence intensity shape {ti.shape} "
-                    f"does not match wind speed shape {ws.shape}."
-                )
+
+        sc = self._preprocess_ambient_conditions(wt_x, wt_y, ws, wd, ti)
+        wt_x, wt_y, ws_amb, wd, ti = sc
 
         if fm_x is None or fm_y is None:
             grid_res = 100
@@ -297,17 +309,15 @@ class WakeSimulation:
 
         result = self(wt_x, wt_y, ws, wd, ti)
 
+        dw, cw = self._get_downwind_crosswind_distances(wd, wt_x, wt_y, fm_x, fm_y)
+
         return jax.vmap(
-            lambda _ws, _wd, _ws_eff, _ti: self.model.compute_deficit(
+            lambda _ws_amb, _dw, _cw, _ws_eff, _ti_eff: self.deficit(
                 _ws_eff,
-                SimulationContext(
-                    result.ctx.xs, result.ctx.ys, _ws, _wd, self.turbine, _ti
-                ),
-                xs_r=fm_x,
-                ys_r=fm_y,
-                ti_eff=_ti,
+                _ti_eff,
+                SimulationContext(self.turbine, _dw, _cw, _ws_amb, _ti_eff),
             )
-        )(ws, wd, result.effective_ws, result.effective_ti), (fm_x, fm_y)
+        )(ws_amb, dw, cw, result.effective_ws, result.effective_ti)[0], (fm_x, fm_y)
 
     def _simulate_vmap(
         self, ctx: SimulationContext
@@ -386,10 +396,10 @@ class WakeSimulation:
         # turbine object; let's seee what happens
         # cts = ctx.turbine.ct(ws_eff)
 
-        ws_eff = self.deficit(ws_eff, ti_eff, ctx)
+        ws_eff, wake_radius = self.deficit(ws_eff, ti_eff, ctx)
 
         if self.turbulence:
-            ti_eff = self.turbulence(ws_eff, ti_eff, ctx)
+            ti_eff = self.turbulence(ws_eff, ti_eff, ctx, wake_radius)
 
         return ws_eff, ti_eff
 

@@ -24,8 +24,11 @@ class NOJDeficit(WakeDeficit):
         self.k = k
         self.ct2a = ct2a
 
-    def compute_deficit(
-        self, ws_eff: jnp.ndarray, ti_eff: jnp.ndarray | None, ctx: SimulationContext
+    def compute(
+        self,
+        ws_eff: jnp.ndarray,
+        ti_eff: jnp.ndarray | None,
+        ctx: SimulationContext,
     ) -> jnp.ndarray:
         """Computes the wake deficit using the NOJ model.
 
@@ -39,17 +42,17 @@ class NOJDeficit(WakeDeficit):
         Returns:
             An array of updated effective wind speeds at each turbine.
         """
-        wake_rad = (ctx.turbine.rotor_diameter / 2) + self.k * ctx.dw
-        # mask upstream turbines within wake cone
-        mask = (ctx.dw > 0) & (jnp.abs(ctx.cw) < wake_rad)
+        _ = ti_eff  # unused
 
-        eps = get_float_eps()
+        wake_radius = (ctx.turbine.rotor_diameter / 2) + self.k * ctx.dw
 
-        deficit_matrix = (
+        all2all_deficit_matrix = (
             2
             * self.ct2a(ctx.turbine.ct(ws_eff))
-            * ((ctx.turbine.rotor_diameter / 2) / jnp.maximum(wake_rad, eps)) ** 2
+            * (
+                (ctx.turbine.rotor_diameter / 2)
+                / jnp.maximum(wake_radius, get_float_eps())
+            )
+            ** 2
         )
-        deficit_matrix = jnp.where(mask, deficit_matrix, 0.0)
-
-        return deficit_matrix
+        return ctx.ws * all2all_deficit_matrix, wake_radius

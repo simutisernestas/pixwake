@@ -30,13 +30,11 @@ class CrespoHernandez(WakeTurbulence):
     c: list[float] = field(default_factory=lambda: [0.73, 0.8325, -0.0325, -0.32])
     ct2a: callable = ct2a_madsen
 
-    def calc_added_turbulence(
+    def added_turbulence(
         self,
+        ws_eff: jnp.ndarray,
+        ti_eff: jnp.ndarray | None,
         ctx: SimulationContext,
-        dw: jnp.ndarray,
-        cw: jnp.ndarray,
-        wake_radius: jnp.ndarray,
-        ct: jnp.ndarray | None = None,
     ) -> jnp.ndarray:
         """Calculate wake-added turbulence using Crespo-Hernandez formula.
 
@@ -55,19 +53,21 @@ class CrespoHernandez(WakeTurbulence):
         Returns:
             Added turbulence intensity (n_receivers, n_sources).
         """
+        _ = ti_eff  # unused
+
         # Convert to induction factor with numerical safeguard
+        ct = ctx.turbine.ct(ws_eff)  # (n_sources,)
         induction_factor = jnp.maximum(self.ct2a(ct), 1e-10)
 
         # Safeguard downwind distance for power law
-        dw_safe = jnp.maximum(dw, 1e-10)
+        dw_safe = jnp.maximum(ctx.dw, 1e-10)
 
         # Normalized downwind distance
         distance_normalized = dw_safe / ctx.turbine.rotor_diameter
 
-        # Apply Crespo-Hernandez formula using AMBIENT TI
+        # Apply Crespo-Hernandez formula using ambient ti Eq (21) in paper
         c0, c1, c2, c3 = self.c
         ti_ambient = ctx.ti  # scalar
-        assert ti_ambient is not None
         ti_added = (
             c0
             * induction_factor[None, :] ** c1
@@ -75,9 +75,4 @@ class CrespoHernandez(WakeTurbulence):
             * distance_normalized**c3
         )
 
-        # Apply spatial mask: inside wake and downstream only
-        is_inside_wake = jnp.abs(cw) < wake_radius
-        is_downstream = dw > 0
-        mask = is_inside_wake & is_downstream
-
-        return jnp.where(mask, ti_added, 0.0)
+        return ti_added

@@ -52,32 +52,25 @@ class WakeTurbulence:
 
     def __call__(
         self,
+        ws_eff: jnp.ndarray,
+        ti_eff: jnp.ndarray | None,
         ctx: SimulationContext,
-        dw: jnp.ndarray,
-        cw: jnp.ndarray,
         wake_radius: jnp.ndarray,
-        ct: jnp.ndarray,
     ) -> jnp.ndarray:
-        ti_added = self.calc_added_turbulence(
-            ctx=ctx,
-            dw=dw,
-            cw=cw,
-            wake_radius=wake_radius,
-            ct=ct,
-        )
+        ti_added_m = self.added_turbulence(ws_eff, ti_eff, ctx)
+        inside_wake = (ctx.dw > 0.0) & (jnp.abs(ctx.cw) < wake_radius)
+        ti_added_m = jnp.where(inside_wake, ti_added_m, 0.0)
+
         # Combine ambient and added turbulence
-        assert ctx.ti is not None
-        ti_ambient = jnp.full_like(ct, ctx.ti)
-        return self.superposition(ti_ambient, ti_added)
+        ti_ambient = jnp.full_like(ti_eff, ctx.ti)
+        return self.superposition(ti_ambient, ti_added_m)
 
     @abstractmethod
-    def calc_added_turbulence(
+    def added_turbulence(
         self,
+        ws_eff: jnp.ndarray,
+        ti_eff: jnp.ndarray | None,
         ctx: SimulationContext,
-        dw: jnp.ndarray,
-        cw: jnp.ndarray,
-        wake_radius: jnp.ndarray,
-        ct: jnp.ndarray,
     ) -> jnp.ndarray:
         """Calculate wake-added turbulence intensity.
 

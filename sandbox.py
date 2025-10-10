@@ -38,24 +38,25 @@ xs, ys, ws, wd, _, turbine = rect_grid_params(nx=5, ny=4)
 
 for deficit_model, requires_ti in [
     (NOJDeficit(k=0.05), False),
+    (BastankhahGaussianDeficit(), False),
     (BastankhahGaussianDeficit(), True),
     (NiayifarGaussianDeficit(), True),
 ]:
-    s = time.time()
-    turbulence_model = CrespoHernandez()
-    turb_arg = (turbulence_model) if requires_ti else {}
-    sim = WakeSimulation(turbine, deficit_model, *turb_arg, mapping_strategy="vmap")
+    for ms in ["map", "vmap", "_manual"]:
+        s = time.time()
+        turbulence_model = CrespoHernandez()
+        turb_arg = (turbulence_model,) if requires_ti else {}
+        sim = WakeSimulation(turbine, deficit_model, *turb_arg, mapping_strategy=ms)
 
-    sim_args = {
-        "wt_xs": xs,
-        "wt_ys": ys,
-        "ws_amb": jnp.full_like(xs, ws),
-        "wd": jnp.full_like(xs, wd),
-    }
-    if requires_ti:
-        sim_args["ti"] = 0.1
+        sim_args = {
+            "wt_xs": xs,
+            "wt_ys": ys,
+            "ws_amb": jnp.full_like(xs, ws),
+            "wd": jnp.full_like(xs, wd),
+        }
+        if requires_ti:
+            sim_args["ti"] = 0.1
 
-    res = sim(**sim_args)
-    e = time.time()
-    print(f"Simulation took {e - s:.2f} seconds")
-    break
+        res = sim(**sim_args)
+        e = time.time()
+        print(f"Simulation took {e - s:.2f} seconds")

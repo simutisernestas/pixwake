@@ -22,14 +22,15 @@ def simulation_result():
         ct_curve=ct_curve,
     )
     effective_wind_speed = jnp.array([[10.0, 12.0], [8.0, 6.0]])
-    ctx = SimulationContext(
-        dw=jnp.array([0]),
-        cw=jnp.array([0]),
-        ws=jnp.array([0]),
-        wd=jnp.array([0]),
-        turbine=turbine,
+
+    return SimulationResult(
+        turbine,
+        wt_x=jnp.array([[0.0, 500.0], [0.0, 500.0]]),
+        wt_y=jnp.array([[0.0, 0.0], [0.0, 0.0]]),
+        wd=jnp.array([[270.0], [270.0]]),
+        ws=jnp.array([[10.0], [10.0]]),
+        effective_ws=effective_wind_speed,
     )
-    return SimulationResult(effective_ws=effective_wind_speed, ctx=ctx)
 
 
 def test_power(simulation_result):

@@ -3,7 +3,7 @@ authors = [{ name = "ernie", email = "ernim@dtu.dk" }]
 name = "pixwake"
 requires-python = ">= 3.10"
 version = "0.1.0"
-dependencies = ["jax", "flax"]
+dependencies = ["jax"]
 
 [build-system]
 build-backend = "hatchling.build"
@@ -31,8 +31,8 @@ mypy = ">=1.17.1,<2"
 psutil = ">=7.0.0,<8"
 
 [tool.pixi.feature.test.pypi-dependencies]
-tensorboard = "*"
-xprof = "*"
+# tensorboard = "*"
+# xprof = "*"
 
 [tool.pixi.feature.format.dependencies]
 pre-commit = "*"
