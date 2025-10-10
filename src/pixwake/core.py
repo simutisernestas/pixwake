@@ -249,17 +249,16 @@ class WakeSimulation:
         Returns:
             A tuple containing the downwind and crosswind distances.
         """
-        if xs_r is None:
-            xs_r = xs_s
-        if ys_r is None:
-            ys_r = ys_s
+        xs_r = xs_s if xs_r is None else xs_r
+        ys_r = ys_s if ys_r is None else ys_r
         dx = xs_r[:, None] - xs_s[None, :]
         dy = ys_r[:, None] - ys_s[None, :]
         wd_rad = jnp.deg2rad((270.0 - wd + 180.0) % 360.0)
         cos_a = jnp.cos(wd_rad)
         sin_a = jnp.sin(wd_rad)
-        x_d = -(dx * cos_a + dy * sin_a)
-        y_d = dx * sin_a - dy * cos_a
+        # Result shape: (n_wd, n_turbines, n_turbines)
+        x_d = -(dx * cos_a[:, None, None] + dy * sin_a[:, None, None])
+        y_d = dx * sin_a[:, None, None] - dy * cos_a[:, None, None]
         return x_d, y_d
 
     def flow_map(
@@ -273,6 +272,7 @@ class WakeSimulation:
         ti: jnp.ndarray | float | None = None,
     ) -> tuple[jnp.ndarray, tuple[jnp.ndarray, jnp.ndarray]]:
         """Generates a flow map for the wind farm."""
+        raise NotImplementedError()
         ws = self._atleast_1d_jax(ws)
         wd = self._atleast_1d_jax(wd)
         if ti is not None:
@@ -315,61 +315,48 @@ class WakeSimulation:
         """Simulates multiple wind conditions using jax.vmap."""
 
         def _single_case(
-            ws: jnp.ndarray, wd: jnp.ndarray, ti: jnp.ndarray | None
-        ) -> jnp.ndarray | tuple[jnp.ndarray, jnp.ndarray]:
+            dw: jnp.ndarray, cw: jnp.ndarray, ws: jnp.ndarray, ti: jnp.ndarray | None
+        ) -> tuple[jnp.ndarray, jnp.ndarray]:
             return self._simulate_single_case(
-                SimulationContext(ctx.dw, ctx.cw, ws, wd, ctx.turbine, ti)
+                SimulationContext(ctx.turbine, dw, cw, ws, ti)
             )
 
-        return jax.vmap(_single_case)(ctx.ws, ctx.wd, ctx.ti)
+        return jax.vmap(_single_case)(ctx.dw, ctx.cw, ctx.ws, ctx.ti)
 
-    def _simulate_map(
-        self, ctx: SimulationContext
-    ) -> jnp.ndarray | tuple[jnp.ndarray, jnp.ndarray]:
+    def _simulate_map(self, ctx: SimulationContext) -> tuple[jnp.ndarray, jnp.ndarray]:
         """Simulates multiple wind conditions using jax.lax.map."""
 
         def _single_case(
             case: tuple[jnp.ndarray, jnp.ndarray | None],
         ) -> tuple[jnp.ndarray, jnp.ndarray]:
-            ws, ti = case
-            return self._simulate_single_case(
-                SimulationContext(ctx.turbine, ctx.dw, ctx.cw, ws, ti)
-            )
+            single_flow_case_ctx = SimulationContext(ctx.turbine, *case)
+            return self._simulate_single_case(single_flow_case_ctx)
 
-        return jax.lax.map(_single_case, (ctx.ws, ctx.ti))
+        return jax.lax.map(_single_case, (ctx.dw, ctx.cw, ctx.ws, ctx.ti))
 
     def _simulate_manual(
         self, ctx: SimulationContext
-    ) -> jnp.ndarray | tuple[jnp.ndarray, jnp.ndarray]:
+    ) -> tuple[jnp.ndarray, jnp.ndarray]:
         """Simulates multiple wind conditions using a manual loop (for debugging)."""
-        # Pre-allocate output arrays
         n_cases = ctx.ws.size
-        n_turbines = ctx.dw.size
+        n_turbines = ctx.dw.shape[0]
         ws_out = jnp.zeros((n_cases, n_turbines))
-        ti_out = (
-            jnp.zeros((n_cases, n_turbines))
-            if getattr(self.model, "use_effective_ti", False)
-            else None
-        )
+        ti_out = None if ctx.ti is None else jnp.zeros((n_cases, n_turbines))
 
         for i in range(n_cases):
             _ws = ctx.ws[i]
-            _wd = ctx.wd[i]
+            _dw = ctx.dw[i]
+            _cw = ctx.cw[i]
             _ti = None if ctx.ti is None else ctx.ti[i]
 
-            result = self._simulate_single_case(
-                SimulationContext(ctx.dw, ctx.cw, _ws, _wd, ctx.turbine, _ti)
+            ws_eff, ti_eff = self._simulate_single_case(
+                SimulationContext(ctx.turbine, _dw, _cw, _ws, _ti)
             )
+            ws_out = ws_out.at[i].set(ws_eff)
+            if ti_out is not None:
+                ti_out = ti_out.at[i].set(ti_eff)
 
-            if isinstance(result, tuple):
-                ws_eff, ti_eff = result
-                ws_out = ws_out.at[i].set(ws_eff)
-                if ti_out is not None:
-                    ti_out = ti_out.at[i].set(ti_eff)
-            else:
-                ws_out = ws_out.at[i].set(result)
-
-        return (ws_out, ti_out) if ti_out is not None else ws_out
+        return (ws_out, ti_out)
 
     def _simulate_single_case(
         self,
@@ -378,8 +365,9 @@ class WakeSimulation:
         """Simulates a single wind condition."""
 
         # initialize all turbines with ambient quantities
-        ws_amb = jnp.full_like(ctx.dw, ctx.ws, dtype=default_float_type())
-        ti_amb = None if ctx.ti is None else jnp.full_like(ctx.dw, ctx.ti)
+        eps = default_float_type()
+        ws_amb = jnp.full(len(ctx.dw), ctx.ws, dtype=eps)
+        ti_amb = None if ctx.ti is None else jnp.full(len(ctx.dw), ctx.ti, dtype=eps)
         x_guess = (ws_amb, ti_amb)
 
         fp_func = (  # fixed_point_debug is not traced and can be used with pydebugger
