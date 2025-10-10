@@ -4,7 +4,6 @@ import jax.numpy as jnp
 
 from ..core import SimulationContext
 from ..jax_utils import get_float_eps
-from ..turbulence.base import WakeTurbulence
 from ..utils import ct2a_madsen
 from .base import WakeDeficit
 
@@ -28,7 +27,7 @@ class BastankhahGaussianDeficit(WakeDeficit):
         ctlim: float = 0.899,
         ct2a: Callable = ct2a_madsen,
         use_effective_ws: bool = False,
-        use_radius_mask: bool = False,
+        **kwargs: Any,
     ) -> None:
         """Initialize the Bastankhah-Gaussian wake deficit model.
 
@@ -41,13 +40,12 @@ class BastankhahGaussianDeficit(WakeDeficit):
                 deficit calculation instead of ambient wind speed.
             use_radius_mask: If True, apply wake only within 2*sigma radius.
         """
-        super().__init__()
+        super().__init__(**kwargs)
         self.k = k
         self.ceps = ceps
         self.ctlim = ctlim
         self.ct2a = ct2a
         self.use_effective_ws = use_effective_ws
-        self.use_radius_mask = use_radius_mask
 
     def compute(
         self,
@@ -86,8 +84,6 @@ class BastankhahGaussianDeficit(WakeDeficit):
 
         # Dimensional wake radius (2*sigma per Niayifar)
         wake_radius = 2.0 * sigma_normalized * diameter
-        if not self.use_radius_mask:
-            wake_radius = jnp.full_like(wake_radius, jnp.inf)
 
         diameter = ctx.turbine.rotor_diameter
 

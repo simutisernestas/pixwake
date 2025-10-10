@@ -1,6 +1,10 @@
 import os
 import subprocess
 
+import pytest
+
+pytest.fail("", pytrace=False)
+
 
 def test_running_small_benchmark_against_pywake():
     test_dir = os.path.dirname(__file__)

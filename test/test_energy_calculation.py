@@ -2,7 +2,7 @@ import jax.numpy as jnp
 import pytest
 
 from pixwake import Curve, Turbine
-from pixwake.core import SimulationContext, SimulationResult
+from pixwake.core import SimulationResult
 
 
 @pytest.fixture
