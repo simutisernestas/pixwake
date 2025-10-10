@@ -7,6 +7,9 @@ from pixwake.jax_utils import get_float_eps
 from ..core import SimulationContext
 
 
+from pixwake.rotor_avg_models import RotorAvgModel
+
+
 class WakeDeficit(ABC):
     """Abstract base class for all wake deficit models.
 
@@ -17,14 +20,18 @@ class WakeDeficit(ABC):
     implemented by subclasses.
     """
 
-    def __init__(self, use_radius_mask: bool = True) -> None:
+    def __init__(
+        self, use_radius_mask: bool = True, rotor_avg_model: RotorAvgModel | None = None
+    ) -> None:
         """Initializes the `WakeDeficit` model.
 
         Args:
             use_radius_mask: A boolean indicating whether to use a radius-based
                 mask to exclude points that are clearly outside the wake.
+            rotor_avg_model: An optional rotor averaging model.
         """
         self.use_radius_mask = use_radius_mask
+        self.rotor_avg_model = rotor_avg_model
 
     def __call__(
         self,
@@ -52,8 +59,23 @@ class WakeDeficit(ABC):
         # all2all deficit matrix (n_receivers, n_sources)
         ws_deficit_m, wake_radius = self.compute(ws_eff, ti_eff, ctx)
 
+        if self.rotor_avg_model:
+            # For rotor averaging, we assume the deficit is calculated at the
+            # center of the downstream turbine.
+            centerline_ctx = SimulationContext(
+                turbine=ctx.turbine,
+                dw=ctx.dw,
+                cw=jnp.zeros_like(ctx.cw),
+                ws=ctx.ws,
+                ti=ctx.ti,
+            )
+            centerline_deficit, _ = self.compute(ws_eff, ti_eff, centerline_ctx)
+            ws_deficit_m = centerline_deficit * self.rotor_avg_model.overlapping_area_factor(
+                wake_radius, ctx.cw, ctx.turbine.rotor_diameter
+            )
+
         in_wake_mask = ctx.dw > 0.0
-        if self.use_radius_mask:  # TODO: pywake doesn't do this. Why ?
+        if self.use_radius_mask and not self.rotor_avg_model:
             in_wake_mask &= jnp.abs(ctx.cw) < wake_radius
         ws_deficit_m = jnp.where(in_wake_mask, ws_deficit_m**2, 0.0)
 

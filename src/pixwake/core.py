@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Callable, cast
 
 if TYPE_CHECKING:
+    from py_wake.wind_turbines import WindTurbines
     from pixwake.deficit.base import WakeDeficit
     from pixwake.turbulence.base import WakeTurbulence
 
@@ -54,6 +55,23 @@ class Turbine:
     hub_height: float
     power_curve: Curve
     ct_curve: Curve
+
+    @classmethod
+    def from_pywake(cls, pywake_turbine: "WindTurbines") -> "Turbine":
+        """Creates a `Turbine` object from a PyWake `WindTurbines` object."""
+        ws = jnp.linspace(0, 30, 300)
+        return cls(
+            rotor_diameter=pywake_turbine.diameter(),
+            hub_height=pywake_turbine.hub_height(),
+            power_curve=Curve(
+                wind_speed=ws,
+                values=jnp.asarray(pywake_turbine.power(ws)),
+            ),
+            ct_curve=Curve(
+                wind_speed=ws,
+                values=jnp.asarray(pywake_turbine.ct(ws)),
+            ),
+        )
 
     def power(self, ws: jnp.ndarray) -> jnp.ndarray:
         """Calculates the turbine's power output for given wind speeds.

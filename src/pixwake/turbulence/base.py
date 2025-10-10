@@ -49,6 +49,9 @@ class SqrMaxSum(Superposition):
         return jnp.sqrt(ambient**2 + max_added**2)
 
 
+from pixwake.rotor_avg_models import RotorAvgModel
+
+
 @dataclass
 class WakeTurbulence:
     """Base class for wake-added turbulence models.
@@ -59,9 +62,12 @@ class WakeTurbulence:
     Attributes:
         superposition: A `Superposition` model to combine ambient and
             wake-added turbulence.
+        rotor_avg_model: A `RotorAvgModel` to apply rotor-averaging to the
+            wake effects.
     """
 
     superposition: Superposition = field(default_factory=SqrMaxSum)
+    rotor_avg_model: RotorAvgModel | None = None
 
     def __call__(
         self,
@@ -76,6 +82,9 @@ class WakeTurbulence:
         uses the specified superposition model to combine it with the ambient
         turbulence.
 
+        If a `rotor_avg_model` is provided, it will be used to average the
+        turbulence over the rotor area.
+
         Args:
             ws_eff: The effective wind speeds at each turbine.
             ti_eff: The effective turbulence intensities at each turbine.
@@ -85,9 +94,23 @@ class WakeTurbulence:
         Returns:
             The effective turbulence intensity at each turbine.
         """
-        ti_added_m = self.added_turbulence(ws_eff, ti_eff, ctx)
-        inside_wake = (ctx.dw > 0.0) & (jnp.abs(ctx.cw) < wake_radius)
-        ti_added_m = jnp.where(inside_wake, ti_added_m, 0.0)
+        if self.rotor_avg_model:
+            centerline_ctx = SimulationContext(
+                turbine=ctx.turbine,
+                dw=ctx.dw,
+                cw=jnp.zeros_like(ctx.cw),
+                ws=ctx.ws,
+                ti=ctx.ti,
+            )
+            centerline_ti_added = self.added_turbulence(ws_eff, ti_eff, centerline_ctx)
+            ti_added_m = centerline_ti_added * self.rotor_avg_model.overlapping_area_factor(
+                wake_radius, ctx.cw, ctx.turbine.rotor_diameter
+            )
+        else:
+            # Otherwise, calculate added turbulence and apply a simple mask
+            ti_added_m = self.added_turbulence(ws_eff, ti_eff, ctx)
+            inside_wake = (ctx.dw > 0.0) & (jnp.abs(ctx.cw) < wake_radius)
+            ti_added_m = jnp.where(inside_wake, ti_added_m, 0.0)
 
         # Combine ambient and added turbulence
         ti_ambient = jnp.full(len(ctx.dw), ctx.ti)  # type: ignore
