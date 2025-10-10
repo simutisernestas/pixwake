@@ -14,13 +14,13 @@ class NOJDeficit(WakeDeficit):
     This is a simple analytical model that assumes a linearly expanding wake.
     """
 
-    def __init__(self, k: float = 0.1, ct2a: Callable = ct2a_madsen) -> None:
+    def __init__(self, k: float = 0.1, ct2a: Callable = ct2a_madsen, **kwargs) -> None:
         """Initializes the NOJDeficit.
 
         Args:
             k: The wake expansion coefficient.
         """
-        super().__init__()
+        super().__init__(**kwargs)
         self.k = k
         self.ct2a = ct2a
 

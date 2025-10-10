@@ -155,7 +155,7 @@ def test_noj_equivalence_timeseries(curves):
     pw_dx, pw_dy = wfm.aep_gradients(x=x, y=y, wd=wd, ws=ws, time=True, n_cpu=1)
     pywake_runtime = time.time() - s
 
-    model = NOJDeficit(k=wake_expansion_k)
+    model = NOJDeficit(k=wake_expansion_k, use_radius_mask=True)
     turbine = _create_pixwake_turbine(ct_curve, power_curve)
     sim = WakeSimulation(turbine, model, fpi_damp=1.0)
 
@@ -549,7 +549,7 @@ def test_effective_ti_gaussian_equivalence_timeseries_with_wake_expansion_based_
     )
 
     model = NiayifarGaussianDeficit(
-        use_effective_ws=True, use_effective_ti=True, use_radius_mask=True
+        use_effective_ws=True, use_effective_ti=True, use_radius_mask=False
     )
     turbine = _create_pixwake_turbine(ct_curve, power_curve, RD=RD, HH=HH)
     sim = WakeSimulation(
