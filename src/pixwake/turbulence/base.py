@@ -56,13 +56,13 @@ class WakeTurbulence:
         ti_eff: jnp.ndarray | None,
         ctx: SimulationContext,
         wake_radius: jnp.ndarray,
-    ) -> jnp.ndarray:
+    ) -> jnp.ndarray | None:
         ti_added_m = self.added_turbulence(ws_eff, ti_eff, ctx)
         inside_wake = (ctx.dw > 0.0) & (jnp.abs(ctx.cw) < wake_radius)
         ti_added_m = jnp.where(inside_wake, ti_added_m, 0.0)
 
         # Combine ambient and added turbulence
-        ti_ambient = jnp.full_like(ti_eff, ctx.ti)
+        ti_ambient = jnp.full(len(ctx.dw), ctx.ti)  # type: ignore
         return self.superposition(ti_ambient, ti_added_m)
 
     @abstractmethod

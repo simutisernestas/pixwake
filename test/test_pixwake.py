@@ -103,11 +103,11 @@ def test_simulate_case_two_turbines():
 
 def test_simulate_case_gradients_and_jit():
     xs, ys, ws, wd, k, turbine = rect_grid_params()
-    deficit_model = NOJDeficit(k=k)
+    deficit_model = NOJDeficit(k=k, use_radius_mask=True)
     sim = WakeSimulation(turbine, deficit_model)
 
     def f(xx, yy):
-        return sim(xx, yy, jnp.full_like(xx, ws), jnp.full_like(xx, wd)).effective_ws
+        return sim(xx, yy, jnp.full_like(xx, ws), jnp.full_like(xx, wd)).aep()
 
     check_grads(f, (xs, ys), order=1, modes=["rev"], atol=1e-2, rtol=1e-2)
 

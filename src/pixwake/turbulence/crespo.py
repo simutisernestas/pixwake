@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from typing import Callable
 
 import jax.numpy as jnp
 
@@ -28,7 +29,7 @@ class CrespoHernandez(WakeTurbulence):
     """
 
     c: list[float] = field(default_factory=lambda: [0.73, 0.8325, -0.0325, -0.32])
-    ct2a: callable = ct2a_madsen
+    ct2a: Callable = ct2a_madsen
 
     def added_turbulence(
         self,
@@ -58,21 +59,17 @@ class CrespoHernandez(WakeTurbulence):
         # Convert to induction factor with numerical safeguard
         ct = ctx.turbine.ct(ws_eff)  # (n_sources,)
         induction_factor = jnp.maximum(self.ct2a(ct), 1e-10)
-
         # Safeguard downwind distance for power law
         dw_safe = jnp.maximum(ctx.dw, 1e-10)
-
         # Normalized downwind distance
         distance_normalized = dw_safe / ctx.turbine.rotor_diameter
-
         # Apply Crespo-Hernandez formula using ambient ti Eq (21) in paper
         c0, c1, c2, c3 = self.c
         ti_ambient = ctx.ti  # scalar
         ti_added = (
             c0
             * induction_factor[None, :] ** c1
-            * ti_ambient**c2
+            * ti_ambient**c2  # type: ignore
             * distance_normalized**c3
         )
-
         return ti_added

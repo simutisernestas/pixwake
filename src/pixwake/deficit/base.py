@@ -10,7 +10,7 @@ from ..core import SimulationContext
 class WakeDeficit(ABC):
     """An abstract base class for wake models."""
 
-    def __init__(self, use_radius_mask: bool = False) -> None:
+    def __init__(self, use_radius_mask: bool = True) -> None:
         """Initializes the WakeDeficitModel."""
         self.use_radius_mask = use_radius_mask
 

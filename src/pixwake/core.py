@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, cast
 
 if TYPE_CHECKING:
     from pixwake.deficit.base import WakeDeficit
@@ -98,18 +98,14 @@ class SimulationContext:
     ws: jnp.ndarray
     ti: jnp.ndarray | None = None
 
-    def tree_flatten(self):
+    def tree_flatten(self) -> tuple[tuple, tuple]:
         children = (self.dw, self.cw, self.ws, self.ti)
         aux_data = (self.turbine,)
         return children, aux_data
 
     @classmethod
-    def tree_unflatten(self, aux_data, children):
-        return SimulationContext(*aux_data, *children)
-
-    # TODO: this might be redundant
-    # xs_r: jnp.ndarray | None = None  # for flow maps, receiver coords
-    # ys_r: jnp.ndarray | None = None  # for flow maps, receiver coords
+    def tree_unflatten(cls, aux_data: tuple, children: tuple) -> "SimulationContext":
+        return cls(*aux_data, *children)
 
 
 @dataclass
@@ -165,7 +161,7 @@ class WakeSimulation:
         self,
         turbine: Turbine,
         deficit: WakeDeficit,
-        turbulence: WakeTurbulence = None,
+        turbulence: WakeTurbulence | None = None,
         fpi_damp: float = 0.5,
         fpi_tol: float = 1e-6,
         mapping_strategy: str = "map",
@@ -231,7 +227,20 @@ class WakeSimulation:
     def _atleast_1d_jax(self, x: jnp.ndarray | float | list) -> jnp.ndarray:
         return jnp.atleast_1d(jnp.asarray(x))
 
-    def _preprocess_ambient_conditions(self, wt_xs, wt_ys, ws_amb, wd, ti):
+    def _preprocess_ambient_conditions(
+        self,
+        wt_xs: jnp.ndarray | float | list,
+        wt_ys: jnp.ndarray | float | list,
+        ws_amb: jnp.ndarray | float | list,
+        wd: jnp.ndarray | float | list,
+        ti: jnp.ndarray | float | list | None,
+    ) -> tuple[
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray | None,
+    ]:
         wt_xs = self._atleast_1d_jax(wt_xs)
         wt_ys = self._atleast_1d_jax(wt_ys)
         assert wt_xs.shape == wt_ys.shape
@@ -255,8 +264,8 @@ class WakeSimulation:
         wd: jnp.ndarray,
         xs_s: jnp.ndarray,
         ys_s: jnp.ndarray,
-        xs_r: jnp.ndarray = None,
-        ys_r: jnp.ndarray = None,
+        xs_r: jnp.ndarray | None = None,
+        ys_r: jnp.ndarray | None = None,
     ) -> tuple[jnp.ndarray, jnp.ndarray]:
         """Calculates the downwind and crosswind distances between points.
 
@@ -295,7 +304,7 @@ class WakeSimulation:
         """Generates a flow map for the wind farm."""
 
         sc = self._preprocess_ambient_conditions(wt_x, wt_y, ws, wd, ti)
-        wt_x, wt_y, ws_amb, wd, ti = sc
+        wt_x, wt_y, ws, wd, ti = sc
 
         if fm_x is None or fm_y is None:
             grid_res = 100
@@ -317,36 +326,39 @@ class WakeSimulation:
                 _ti_eff,
                 SimulationContext(self.turbine, _dw, _cw, _ws_amb, _ti_eff),
             )
-        )(ws_amb, dw, cw, result.effective_ws, result.effective_ti)[0], (fm_x, fm_y)
+        )(ws, dw, cw, result.effective_ws, result.effective_ti)[0], (fm_x, fm_y)
 
     def _simulate_vmap(
         self, ctx: SimulationContext
-    ) -> jnp.ndarray | tuple[jnp.ndarray, jnp.ndarray]:
+    ) -> tuple[jnp.ndarray, jnp.ndarray | None]:
         """Simulates multiple wind conditions using jax.vmap."""
 
         def _single_case(
             dw: jnp.ndarray, cw: jnp.ndarray, ws: jnp.ndarray, ti: jnp.ndarray | None
-        ) -> tuple[jnp.ndarray, jnp.ndarray]:
+        ) -> tuple[jnp.ndarray, jnp.ndarray | None]:
             return self._simulate_single_case(
                 SimulationContext(ctx.turbine, dw, cw, ws, ti)
             )
 
         return jax.vmap(_single_case)(ctx.dw, ctx.cw, ctx.ws, ctx.ti)
 
-    def _simulate_map(self, ctx: SimulationContext) -> tuple[jnp.ndarray, jnp.ndarray]:
+    def _simulate_map(
+        self, ctx: SimulationContext
+    ) -> tuple[jnp.ndarray, jnp.ndarray | None]:
         """Simulates multiple wind conditions using jax.lax.map."""
 
         def _single_case(
-            case: tuple[jnp.ndarray, jnp.ndarray | None],
-        ) -> tuple[jnp.ndarray, jnp.ndarray]:
-            single_flow_case_ctx = SimulationContext(ctx.turbine, *case)
+            case: tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray | None],
+        ) -> tuple[jnp.ndarray, jnp.ndarray | None]:
+            dw, cw, ws, ti = case
+            single_flow_case_ctx = SimulationContext(ctx.turbine, dw, cw, ws, ti)
             return self._simulate_single_case(single_flow_case_ctx)
 
         return jax.lax.map(_single_case, (ctx.dw, ctx.cw, ctx.ws, ctx.ti))
 
     def _simulate_manual(
         self, ctx: SimulationContext
-    ) -> tuple[jnp.ndarray, jnp.ndarray]:
+    ) -> tuple[jnp.ndarray, jnp.ndarray | None]:
         """Simulates multiple wind conditions using a manual loop (for debugging)."""
         n_cases = ctx.ws.size
         n_turbines = ctx.dw.shape[0]
@@ -364,6 +376,7 @@ class WakeSimulation:
             )
             ws_out = ws_out.at[i].set(ws_eff)
             if ti_out is not None:
+                assert ti_eff is not None
                 ti_out = ti_out.at[i].set(ti_eff)
 
         return (ws_out, ti_out)
@@ -371,13 +384,14 @@ class WakeSimulation:
     def _simulate_single_case(
         self,
         ctx: SimulationContext,
-    ) -> jnp.ndarray | tuple[jnp.ndarray, jnp.ndarray]:
+    ) -> tuple[jnp.ndarray, jnp.ndarray | None]:
         """Simulates a single wind condition."""
 
         # initialize all turbines with ambient quantities
-        eps = default_float_type()
-        ws_amb = jnp.full(len(ctx.dw), ctx.ws, dtype=eps)
-        ti_amb = None if ctx.ti is None else jnp.full(len(ctx.dw), ctx.ti, dtype=eps)
+        fdtype = default_float_type()
+        n_turbines = ctx.dw.shape[0]
+        ws_amb = jnp.full(n_turbines, ctx.ws, dtype=fdtype)
+        ti_amb = None if ctx.ti is None else jnp.full(n_turbines, ctx.ti, dtype=fdtype)
         x_guess = (ws_amb, ti_amb)
 
         fp_func = (  # fixed_point_debug is not traced and can be used with pydebugger
@@ -387,21 +401,22 @@ class WakeSimulation:
             self._solve_farm, x_guess, ctx, damp=self.fpi_damp, tol=self.fpi_tol
         )
 
-    def _solve_farm(self, effective: tuple, ctx: SimulationContext):
+    def _solve_farm(
+        self, effective: tuple, ctx: SimulationContext
+    ) -> tuple[jnp.ndarray, jnp.ndarray | None]:
         ws_eff, ti_eff = effective
+        ws_eff_new, wake_radius = self.deficit(ws_eff, ti_eff, ctx)
 
-        # TODO: maybe should recompute ct??
-        # then don't pass it to the funcs and
-        # simply compute inside the models with
-        # turbine object; let's seee what happens
-        # cts = ctx.turbine.ct(ws_eff)
-
-        ws_eff, wake_radius = self.deficit(ws_eff, ti_eff, ctx)
-
+        ti_eff_new = ti_eff
         if self.turbulence:
-            ti_eff = self.turbulence(ws_eff, ti_eff, ctx, wake_radius)
+            if ctx.ti is None:
+                raise ValueError(
+                    "Turbulence model provided but ambient TI is None in context."
+                )
+            ti_eff_new = self.turbulence(ws_eff_new, ti_eff, ctx, wake_radius)
 
-        return ws_eff, ti_eff
+        output: tuple[jnp.ndarray, jnp.ndarray | None] = (ws_eff_new, ti_eff_new)
+        return output
 
 
 @partial(
@@ -411,11 +426,11 @@ class WakeSimulation:
 )
 def fixed_point(
     f: Callable,
-    x_guess: jnp.ndarray | tuple,
-    ctx: Any,
+    x_guess: tuple[jnp.ndarray, jnp.ndarray | None],
+    ctx: SimulationContext,
     tol: float = 1e-6,
     damp: float = 0.5,
-) -> jnp.ndarray | tuple:
+) -> tuple[jnp.ndarray, jnp.ndarray | None]:
     """This function solves for a fixed point, i.e., a value `x` such that `f(x) = x`.
     In the context of wake modeling, this is used to determine the stable effective
     wind speeds within a wind farm, where the wind speed at each turbine is
@@ -468,10 +483,10 @@ def fixed_point(
 def fixed_point_fwd(
     f: Callable,
     x_guess: jnp.ndarray | tuple,
-    ctx: Any,
+    ctx: SimulationContext,
     tol: float,
     damp: float,
-) -> tuple[jnp.ndarray | tuple, tuple]:
+) -> tuple[tuple[jnp.ndarray, jnp.ndarray | None], tuple]:
     """Forward pass for the custom VJP of the fixed_point function."""
     x_star = fixed_point(f, x_guess, ctx, tol=tol, damp=damp)
     return x_star, (ctx, x_star)
@@ -479,15 +494,12 @@ def fixed_point_fwd(
 
 def fixed_point_rev(
     f: Callable, tol: float, damp: float, res: tuple, x_star_bar: jnp.ndarray | tuple
-) -> tuple[jnp.ndarray | tuple, Any]:
+) -> tuple[tuple[jnp.ndarray, jnp.ndarray | None], SimulationContext]:
     """Reverse pass for the custom VJP of the fixed_point function."""
     ctx, x_star = res
     _, vjp_a = vjp(lambda s: f(x_star, s), ctx)
 
-    def _inner_f(
-        v: jnp.ndarray | tuple,
-        _: Any,
-    ) -> jnp.ndarray | tuple:
+    def _inner_f(v: jnp.ndarray | tuple, _: Any) -> jnp.ndarray | tuple:
         """Helper function for the reverse-mode differentiation of the fixed point.
 
         This function represents the application of the Jacobian of `f` with respect
@@ -515,10 +527,10 @@ fixed_point.defvjp(fixed_point_fwd, fixed_point_rev)
 def fixed_point_debug(
     f: Callable,
     x_guess: jnp.ndarray | tuple,
-    ctx: Any,
+    ctx: SimulationContext,
     tol: float = 1e-6,
     damp: float = 0.5,
-) -> jnp.ndarray | tuple:
+) -> tuple[jnp.ndarray, jnp.ndarray | None]:
     """Finds the fixed point of a function using iterative updates.
     This function is for debugging purposes only and is not JAX-transformable.
     It uses a standard Python while loop instead of `jax.lax.while_loop`.

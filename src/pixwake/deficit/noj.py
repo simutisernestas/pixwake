@@ -14,13 +14,18 @@ class NOJDeficit(WakeDeficit):
     This is a simple analytical model that assumes a linearly expanding wake.
     """
 
-    def __init__(self, k: float = 0.1, ct2a: Callable = ct2a_madsen, **kwargs) -> None:
+    def __init__(
+        self,
+        k: float = 0.1,
+        ct2a: Callable = ct2a_madsen,
+        use_radius_mask: bool = True,
+    ) -> None:
         """Initializes the NOJDeficit.
 
         Args:
             k: The wake expansion coefficient.
         """
-        super().__init__(**kwargs)
+        super().__init__(use_radius_mask)
         self.k = k
         self.ct2a = ct2a
 
@@ -29,7 +34,7 @@ class NOJDeficit(WakeDeficit):
         ws_eff: jnp.ndarray,
         ti_eff: jnp.ndarray | None,
         ctx: SimulationContext,
-    ) -> jnp.ndarray:
+    ) -> tuple[jnp.ndarray, jnp.ndarray]:
         """Computes the wake deficit using the NOJ model.
 
         Args:
@@ -44,15 +49,11 @@ class NOJDeficit(WakeDeficit):
         """
         _ = ti_eff  # unused
 
-        wake_radius = (ctx.turbine.rotor_diameter / 2) + self.k * ctx.dw
-
+        wt = ctx.turbine
+        rr = wt.rotor_diameter / 2
+        wake_radius = (rr) + self.k * ctx.dw
         all2all_deficit_matrix = (
-            2
-            * self.ct2a(ctx.turbine.ct(ws_eff))
-            * (
-                (ctx.turbine.rotor_diameter / 2)
-                / jnp.maximum(wake_radius, get_float_eps())
-            )
-            ** 2
-        )
+            2 * self.ct2a(wt.ct(ws_eff))
+            * (rr / jnp.maximum(wake_radius, get_float_eps())) ** 2
+        )  # fmt: skip
         return ctx.ws * all2all_deficit_matrix, wake_radius
