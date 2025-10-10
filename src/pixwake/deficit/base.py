@@ -8,10 +8,22 @@ from ..core import SimulationContext
 
 
 class WakeDeficit(ABC):
-    """An abstract base class for wake models."""
+    """Abstract base class for all wake deficit models.
+
+    This class provides the basic structure for wake deficit models, which are
+    responsible for calculating the velocity deficit caused by upstream wind
+    turbines. The main logic for superposition of deficits is implemented in the
+    `__call__` method, which in turn calls the `compute` method that must be
+    implemented by subclasses.
+    """
 
     def __init__(self, use_radius_mask: bool = True) -> None:
-        """Initializes the WakeDeficitModel."""
+        """Initializes the `WakeDeficit` model.
+
+        Args:
+            use_radius_mask: A boolean indicating whether to use a radius-based
+                mask to exclude points that are clearly outside the wake.
+        """
         self.use_radius_mask = use_radius_mask
 
     def __call__(
@@ -20,17 +32,22 @@ class WakeDeficit(ABC):
         ti_eff: jnp.ndarray | None,
         ctx: SimulationContext,
     ) -> tuple[jnp.ndarray, jnp.ndarray]:
-        """A wrapper around the compute_deficit method.
+        """Calculates the effective wind speed after considering wake effects.
+
+        This method orchestrates the wake deficit calculation by calling the
+        `compute` method to get the deficit from each turbine and then
+        superposing them in quadrature to find the total deficit at each point.
 
         Args:
-            x: An array of effective wind speeds at each turbine, or a tuple of
-                (ws_eff, ti_eff).
-            ctx: The context of the simulation.
-            xs_r: An array of x-coordinates for each receiver point (optional).
-            ys_r: An array of y-coordinates for each receiver point (optional).
+            ws_eff: A JAX numpy array of the effective wind speeds at each
+                turbine.
+            ti_eff: An optional JAX numpy array of the effective turbulence
+                intensities at each turbine.
+            ctx: The simulation context.
 
         Returns:
-            The updated effective wind speeds.
+            A tuple containing the updated effective wind speeds and the wake
+            radius.
         """
         # all2all deficit matrix (n_receivers, n_sources)
         ws_deficit_m, wake_radius = self.compute(ws_eff, ti_eff, ctx)
@@ -51,18 +68,20 @@ class WakeDeficit(ABC):
         ti_eff: jnp.ndarray | None,
         ctx: SimulationContext,
     ) -> tuple[jnp.ndarray, jnp.ndarray]:  # pragma: no cover
-        """Computes the wake deficit.
+        """Computes the wake deficit from each turbine.
 
-        This method must be implemented by subclasses.
+        This abstract method must be implemented by all subclasses. It is
+        responsible for calculating the velocity deficit caused by each turbine
+        at every other turbine's location.
 
         Args:
-            ws_eff: An array of effective wind speeds at each turbine.
-            ctx: The context of the simulation.
-            xs_r: An array of x-coordinates for each receiver point (optional).
-            ys_r: An array of y-coordinates for each receiver point (optional).
-            ti_eff: An array of effective turbulence intensity at each turbine (optional).
+            ws_eff: A JAX numpy array of the effective wind speeds at each
+                turbine.
+            ti_eff: An optional JAX numpy array of the effective turbulence
+                intensities at each turbine.
+            ctx: The simulation context.
 
-        Raises:
-            NotImplementedError: If the method is not implemented by a subclass.
+        Returns:
+            A tuple containing the wake deficit matrix and the wake radius.
         """
         raise NotImplementedError

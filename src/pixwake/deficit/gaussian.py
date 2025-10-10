@@ -9,11 +9,19 @@ from .base import WakeDeficit
 
 
 class BastankhahGaussianDeficit(WakeDeficit):
-    """Bastankhah-Gaussian wake deficit model.
+    """Implements the Bastankhah-Gaussian wake deficit model.
 
-    Implementation of the Gaussian wake model from Bastankhah and Porte-Agel (2014).
-    The wake deficit is computed using a Gaussian radial profile with expansion
+    This model, proposed by Bastankhah and Porte-Agel (2014), describes the
+    wake deficit using a Gaussian radial profile. The expansion of the wake is
     proportional to the turbulence intensity.
+
+    Attributes:
+        k: Wake expansion coefficient.
+        ceps: Near-wake coefficient for initial wake expansion.
+        ctlim: Maximum thrust coefficient for numerical stability.
+        ct2a: A callable that converts thrust coefficient to induction factor.
+        use_effective_ws: A boolean indicating whether to use the effective
+            wind speed as the reference for deficit calculation.
 
     Reference:
         Bastankhah, M., & Porté-Agel, F. (2014). A new analytical model for
@@ -29,16 +37,16 @@ class BastankhahGaussianDeficit(WakeDeficit):
         use_effective_ws: bool = False,
         **kwargs: Any,
     ) -> None:
-        """Initialize the Bastankhah-Gaussian wake deficit model.
+        """Initializes the `BastankhahGaussianDeficit` model.
 
         Args:
-            k: Wake expansion coefficient (default from Bastankhah 2014).
-            ceps: Near-wake coefficient for initial wake expansion.
-            ctlim: Maximum thrust coefficient for numerical stability.
-            ct2a: Function to convert thrust coefficient to induction factor.
-            use_effective_ws: If True, use effective wind speed as reference for
-                deficit calculation instead of ambient wind speed.
-            use_radius_mask: If True, apply wake only within 2*sigma radius.
+            k: The wake expansion coefficient.
+            ceps: The near-wake coefficient for initial wake expansion.
+            ctlim: The maximum thrust coefficient for numerical stability.
+            ct2a: A callable to convert thrust coefficient to induction factor.
+            use_effective_ws: If `True`, use the effective wind speed as the
+                reference for deficit calculation.
+            **kwargs: Additional arguments passed to the parent class.
         """
         super().__init__(**kwargs)
         self.k = k
@@ -53,15 +61,15 @@ class BastankhahGaussianDeficit(WakeDeficit):
         ti_eff: jnp.ndarray | None,
         ctx: SimulationContext,
     ) -> tuple[jnp.ndarray, jnp.ndarray]:
-        """Compute wake deficits at receiver locations.
+        """Computes the wake deficit at specified locations.
 
         Args:
-            ws_eff: Effective wind speeds at source turbines (n_sources,).
-            ti_eff: Effective turbulence intensity at sources. Defaults to ctx.ti.
-            ctx: Simulation context with turbine and wind data.
+            ws_eff: The effective wind speeds at the source turbines.
+            ti_eff: The effective turbulence intensity at the source turbines.
+            ctx: The simulation context.
 
         Returns:
-            Effective wind speeds at receivers after wake deficits (n_receivers,).
+            A tuple containing the wake deficit matrix and the wake radius.
         """
         # Compute wake parameters for all source-receiver pairs
         eps = get_float_eps()
@@ -109,17 +117,25 @@ class BastankhahGaussianDeficit(WakeDeficit):
     def wake_expansion_coefficient(
         self, ti_amb: jnp.ndarray | None, ti_eff: jnp.ndarray | None
     ) -> jnp.ndarray | float:
-        """Get wake expansion coefficient (constant for Bastankhah model)."""
+        """Returns the wake expansion coefficient.
+
+        For the `BastankhahGaussianDeficit` model, this is a constant value.
+        """
         _ = (ti_amb, ti_eff)  # unused
         return self.k
 
 
 class NiayifarGaussianDeficit(BastankhahGaussianDeficit):
-    """Niayifar-Gaussian wake deficit model with TI-dependent wake expansion.
+    """Implements the Niayifar-Gaussian wake deficit model.
 
-    Extends the Bastankhah model with turbulence-intensity-dependent wake
-    expansion: k = a[0] * TI + a[1]. Optionally includes wake-added turbulence
-    effects on wake expansion.
+    This model extends the `BastankhahGaussianDeficit` by making the wake
+    expansion coefficient dependent on the turbulence intensity, following the
+    formulation `k = a[0] * TI + a[1]`.
+
+    Attributes:
+        a: A tuple `(a0, a1)` for the linear relationship between `k` and `TI`.
+        use_effective_ti: A boolean indicating whether to use the effective
+            turbulence intensity for the wake expansion calculation.
 
     Reference:
         Niayifar, A., & Porté-Agel, F. (2016). Analytical modeling of wind farms:
@@ -132,15 +148,13 @@ class NiayifarGaussianDeficit(BastankhahGaussianDeficit):
         use_effective_ti: bool = False,
         **kwargs: Any,
     ) -> None:
-        """Initialize the Niayifar-Gaussian wake deficit model.
+        """Initializes the `NiayifarGaussianDeficit` model.
 
         Args:
-            a: Tuple (a0, a1) for wake expansion: k = a0 * TI + a1.
-            use_effective_ti: If True, compute effective TI including wake-added
-                turbulence and use it for wake expansion.
-            turbulence_model: Turbulence model for computing wake-added TI.
-                Required if use_effective_ti is True.
-            **kwargs: Additional arguments passed to BastankhahGaussianDeficit.
+            a: A tuple `(a0, a1)` for the wake expansion formula.
+            use_effective_ti: If `True`, use the effective turbulence intensity
+                for the wake expansion calculation.
+            **kwargs: Additional arguments passed to the parent class.
         """
         super().__init__(**kwargs)
         self.a = a
@@ -151,7 +165,7 @@ class NiayifarGaussianDeficit(BastankhahGaussianDeficit):
         ti: jnp.ndarray | None,
         ti_eff: jnp.ndarray | None,
     ) -> jnp.ndarray | float:
-        """Calculate TI-dependent wake expansion coefficient: k = a0 * TI + a1."""
+        """Calculates the TI-dependent wake expansion coefficient."""
         ti = ti_eff if self.use_effective_ti else ti
         assert ti is not None
         a0, a1 = self.a

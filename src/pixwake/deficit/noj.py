@@ -9,9 +9,16 @@ from .base import WakeDeficit
 
 
 class NOJDeficit(WakeDeficit):
-    """A Jensen NOJ (N.O. Jensen) wake model.
+    """Implements the N.O. Jensen (NOJ) wake deficit model.
 
-    This is a simple analytical model that assumes a linearly expanding wake.
+    This is a classic and simple analytical model that assumes a linearly
+    expanding wake with a top-hat profile for the velocity deficit.
+
+    Attributes:
+        k: The wake expansion coefficient, which determines how quickly the
+            wake expands with downwind distance.
+        ct2a: A callable that converts the thrust coefficient (`Ct`) to the
+            induction factor (`a`).
     """
 
     def __init__(
@@ -20,10 +27,13 @@ class NOJDeficit(WakeDeficit):
         ct2a: Callable = ct2a_madsen,
         use_radius_mask: bool = True,
     ) -> None:
-        """Initializes the NOJDeficit.
+        """Initializes the `NOJDeficit` model.
 
         Args:
             k: The wake expansion coefficient.
+            ct2a: A callable to convert `Ct` to the induction factor.
+            use_radius_mask: A boolean indicating whether to use a radius-based
+                mask.
         """
         super().__init__(use_radius_mask)
         self.k = k
@@ -38,14 +48,14 @@ class NOJDeficit(WakeDeficit):
         """Computes the wake deficit using the NOJ model.
 
         Args:
-            ws_eff: An array of effective wind speeds at each turbine.
-            ctx: The context of the simulation.
-            xs_r: An array of x-coordinates for each receiver point (optional).
-            ys_r: An array of y-coordinates for each receiver point (optional).
-            ti_eff: An array of effective turbulence intensities (optional, not used).
+            ws_eff: A JAX numpy array of the effective wind speeds at each
+                turbine.
+            ti_eff: An optional JAX numpy array of the effective turbulence
+                intensities (not used in this model).
+            ctx: The simulation context.
 
         Returns:
-            An array of updated effective wind speeds at each turbine.
+            A tuple containing the wake deficit matrix and the wake radius.
         """
         _ = ti_eff  # unused
 

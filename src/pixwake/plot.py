@@ -13,18 +13,24 @@ def plot_flow_map(
     show: bool = True,
     ax: Axes | None = None,
 ) -> Axes:
-    """Plots a wind farm flow map.
+    """Plots a 2D flow map of a wind farm.
+
+    This function generates a contour plot of the wind speed over a specified
+    grid, and can optionally overlay the locations of the wind turbines.
+
     Args:
-        grid_x: The x-coordinates of the grid.
-        grid_y: The y-coordinates of the grid.
-        flow_map_data: The wind speed data for the flow map.
-        wt_x: The x-coordinates of the turbines (optional).
-        wt_y: The y-coordinates of the turbines (optional).
-        show: If True, calls `plt.show()`. Only has an effect if `ax` is None.
-        ax: An optional matplotlib axes to plot on. If not provided, a new
-            figure and axes are created.
+        grid_x: A JAX numpy array of the x-coordinates of the grid.
+        grid_y: A JAX numpy array of the y-coordinates of the grid.
+        flow_map_data: A JAX numpy array of the wind speed at each grid point.
+        wt_x: An optional JAX numpy array of the x-coordinates of the turbines.
+        wt_y: An optional JAX numpy array of the y-coordinates of the turbines.
+        show: If `True`, the plot is displayed. This is only active when `ax`
+            is not provided.
+        ax: An optional Matplotlib `Axes` object to plot on. If not provided, a
+            new figure and axes are created.
+
     Returns:
-        The axes on which the flow map was plotted.
+        The Matplotlib `Axes` object on which the flow map was plotted.
     """
     if grid_x.ndim != 2 or grid_y.ndim != 2:
         side_length = int(jnp.sqrt(grid_x.shape[0]))

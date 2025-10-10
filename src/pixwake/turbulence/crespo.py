@@ -11,21 +11,22 @@ from ..utils import ct2a_madsen
 
 @dataclass
 class CrespoHernandez(WakeTurbulence):
-    """Crespo-Hernandez wake-added turbulence model.
+    """Implements the Crespo-Hernandez wake-added turbulence model.
 
-    Empirical model for wake-added turbulence intensity based on thrust
-    coefficient and distance downstream. The model uses ambient turbulence
-    intensity (not effective TI) as per the original formulation.
+    This is an empirical model for calculating the turbulence intensity added
+    by a wind turbine's wake. The model is based on the thrust coefficient,
+    ambient turbulence intensity, and the downwind distance from the turbine.
+
+    Attributes:
+        c: A list of four empirical coefficients `[c0, c1, c2, c3]` used in the
+           turbulence formula: `TI_add = c0 * a^c1 * TI_amb^c2 * (x/D)^c3`.
+        ct2a: A callable that converts the thrust coefficient (`Ct`) to the
+            induction factor (`a`).
 
     Reference:
         Crespo, A., & Hernández, J. (1996). Turbulence characteristics in
         wind-turbine wakes. Journal of Wind Engineering and Industrial
         Aerodynamics, 61(1), 71-85.
-
-    Attributes:
-        c: Four empirical coefficients [c0, c1, c2, c3] for the turbulence
-           formula: TI_add = c0 * a^c1 * TI_ambient^c2 * (x/D)^c3.
-        ct2a: Function to convert thrust coefficient to induction factor.
     """
 
     c: list[float] = field(default_factory=lambda: [0.73, 0.8325, -0.0325, -0.32])
@@ -37,22 +38,19 @@ class CrespoHernandez(WakeTurbulence):
         ti_eff: jnp.ndarray | None,
         ctx: SimulationContext,
     ) -> jnp.ndarray:
-        """Calculate wake-added turbulence using Crespo-Hernandez formula.
+        """Calculates wake-added turbulence using the Crespo-Hernandez model.
 
-        Note: This model uses AMBIENT turbulence intensity in the formula,
-        not effective TI, as per the original formulation and PyWake implementation.
+        Note: This model uses the ambient turbulence intensity in its
+        calculation, not the effective TI, as per the original formulation.
 
         Args:
-            ctx: Simulation context.
-            ws_eff: Effective wind speed at sources (n_sources,).
-            dw: Downwind distances (n_receivers, n_sources).
-            cw: Crosswind distances (n_receivers, n_sources).
-            ti_eff: Effective TI at sources (unused in this model).
-            wake_radius: Wake radius (n_receivers, n_sources).
-            ct: Thrust coefficients at sources (n_sources,). Computed if not provided.
+            ws_eff: The effective wind speeds at the source turbines.
+            ti_eff: The effective turbulence intensities at the source turbines
+                (not used in this model).
+            ctx: The simulation context.
 
         Returns:
-            Added turbulence intensity (n_receivers, n_sources).
+            A JAX numpy array of the added turbulence intensity.
         """
         _ = ti_eff  # unused
 

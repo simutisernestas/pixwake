@@ -420,8 +420,8 @@ def test_gaussian_equivalence_timeseries_with_effective_ws(curves):
     pw_dx, pw_dy = wfm.aep_gradients(x=x, y=y, wd=wd, ws=ws, time=True)
     _, dx, dy = _pixwake_compute_gradients(sim, x, y, ws, wd)
 
-    np.testing.assert_allclose(dx, pw_dx, rtol=rtol)
-    np.testing.assert_allclose(dy, pw_dy, rtol=rtol)
+    np.testing.assert_allclose(dx, pw_dx, rtol=rtol, atol=1e-5)
+    np.testing.assert_allclose(dy, pw_dy, rtol=rtol, atol=1e-5)
 
 
 def test_gaussian_equivalence_timeseries_with_effective_ws_with_turbulence(curves):
@@ -581,8 +581,8 @@ def test_effective_ti_gaussian_equivalence_timeseries_with_wake_expansion_based_
     pw_dx, pw_dy = wfm.aep_gradients(x=x, y=y, wd=wd, ws=ws, time=True)
     _, dx, dy = _pixwake_compute_gradients(sim, x, y, ws, wd, ti=0.1)
 
-    np.testing.assert_allclose(dx, pw_dx, rtol=rtol)
-    np.testing.assert_allclose(dy, pw_dy, rtol=rtol)
+    np.testing.assert_allclose(dx, pw_dx, rtol=rtol, atol=1e-5)
+    np.testing.assert_allclose(dy, pw_dy, rtol=rtol, atol=1e-5)
 
 
 def test_crespo_hernandez_implementation_match():

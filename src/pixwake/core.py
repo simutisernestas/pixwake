@@ -20,11 +20,15 @@ from pixwake.jax_utils import default_float_type
 
 @dataclass
 class Curve:
-    """A dataclass to represent a curve, such as a power or thrust curve.
+    """Represents a performance curve, such as a power or thrust curve.
+
+    This dataclass stores the wind speeds and corresponding values (e.g., power
+    in kW or thrust coefficient) that define a turbine's performance
+    characteristics.
 
     Attributes:
-        wind_speed: An array of wind speeds.
-        values: An array of corresponding values (e.g., power or thrust).
+        wind_speed: A JAX numpy array of wind speeds, typically in m/s.
+        values: A JAX numpy array of the corresponding performance values.
     """
 
     wind_speed: jnp.ndarray
@@ -33,13 +37,17 @@ class Curve:
 
 @dataclass
 class Turbine:
-    """A dataclass to represent a wind turbine.
+    """Represents a wind turbine's physical and performance characteristics.
+
+    This dataclass holds all the necessary information about a wind turbine,
+    including its dimensions and performance curves.
 
     Attributes:
-        rotor_diameter: The diameter of the turbine's rotor.
-        hub_height: The height of the turbine's hub.
-        power_curve: The turbine's power curve.
-        ct_curve: The turbine's thrust coefficient curve.
+        rotor_diameter: The diameter of the turbine's rotor in meters.
+        hub_height: The height of the turbine's hub above the ground in meters.
+        power_curve: A `Curve` object representing the turbine's power curve.
+        ct_curve: A `Curve` object representing the turbine's thrust coefficient
+            curve.
     """
 
     rotor_diameter: float
@@ -48,13 +56,16 @@ class Turbine:
     ct_curve: Curve
 
     def power(self, ws: jnp.ndarray) -> jnp.ndarray:
-        """Calculates the power output of the turbine for a given wind speed.
+        """Calculates the turbine's power output for given wind speeds.
+
+        This method interpolates the power curve to find the power output for
+        each wind speed in the input array.
 
         Args:
-            ws: The wind speed(s) at which to calculate power.
+            ws: A JAX numpy array of wind speeds.
 
         Returns:
-            The power output(s) of the turbine.
+            A JAX numpy array of the corresponding power outputs.
         """
 
         def _power_single_case(_ws: jnp.ndarray) -> jnp.ndarray:
@@ -63,13 +74,16 @@ class Turbine:
         return jax.vmap(_power_single_case)(ws)
 
     def ct(self, ws: jnp.ndarray) -> jnp.ndarray:
-        """Calculates the thrust coefficient of the turbine for a given wind speed.
+        """Calculates the thrust coefficient for given wind speeds.
+
+        This method interpolates the thrust coefficient curve to find the `Ct`
+        value for each wind speed in the input array.
 
         Args:
-            ws: The wind speed(s) at which to calculate thrust coefficient.
+            ws: A JAX numpy array of wind speeds.
 
         Returns:
-            The thrust coefficient(s) of the turbine.
+            A JAX numpy array of the corresponding thrust coefficients.
         """
 
         def _ct_single_case(_ws: jnp.ndarray) -> jnp.ndarray:
@@ -81,15 +95,27 @@ class Turbine:
 @dataclass
 @register_pytree_node_class
 class SimulationContext:
-    """A dataclass to hold static context of a wind farm simulation.
+    """Holds the static context for a single wind farm simulation case.
+
+    This dataclass is a container for all the static information required to
+    run a single simulation scenario. It is designed to be compatible with JAX's
+    pytree mechanism, allowing it to be used seamlessly with transformations
+    like `jax.vmap` and `jax.lax.map`.
+
+    The `tree_flatten` and `tree_unflatten` methods are implemented to specify
+    how JAX should handle this class. Dynamic data (JAX arrays) are treated as
+
+    "children," while static data (like the `Turbine` object) are treated as
+    "auxiliary" data.
 
     Attributes:
-        xs: An array of x-coordinates for each turbine.
-        ys: An array of y-coordinates for each turbine.
-        ws: The free-stream wind speed.
-        wd: The wind direction.
-        ti: The turbulence intensity.
-        turbine: The turbine object used in the simulation.
+        turbine: The `Turbine` object used in the simulation.
+        dw: A JAX numpy array of downwind distances between all pairs of
+            turbines.
+        cw: A JAX numpy array of crosswind distances between all pairs of
+            turbines.
+        ws: The free-stream wind speed for the simulation case.
+        ti: The ambient turbulence intensity for the simulation case.
     """
 
     turbine: Turbine
@@ -99,22 +125,37 @@ class SimulationContext:
     ti: jnp.ndarray | None = None
 
     def tree_flatten(self) -> tuple[tuple, tuple]:
+        """Flattens the `SimulationContext` for JAX's pytree mechanism."""
         children = (self.dw, self.cw, self.ws, self.ti)
         aux_data = (self.turbine,)
         return children, aux_data
 
     @classmethod
     def tree_unflatten(cls, aux_data: tuple, children: tuple) -> "SimulationContext":
+        """Unflattens the `SimulationContext` for JAX's pytree mechanism."""
         return cls(*aux_data, *children)
 
 
 @dataclass
 class SimulationResult:
-    """A dataclass to hold the results of a wind farm simulation.
+    """Holds the results of a wind farm simulation.
+
+    This dataclass is a container for the output of a `WakeSimulation`,
+    providing easy access to the effective wind speeds, power output, and other
+    relevant data.
+
     Attributes:
-        effective_ws: Effective wind speeds at each turbine for each wind condition.
-        ctx: The context of the simulation.
-        effective_ti: Effective turbulence intensity at each turbine for each wind condition.
+        turbine: The `Turbine` object used in the simulation.
+        wt_x: A JAX numpy array of the x-coordinates of the wind turbines.
+        wt_y: A JAX numpy array of the y-coordinates of the wind turbines.
+        wd: A JAX numpy array of the wind directions for each simulation case.
+        ws: A JAX numpy array of the free-stream wind speeds for each case.
+        effective_ws: A JAX numpy array of the effective wind speed at each
+            turbine for each case.
+        ti: An optional JAX numpy array of the ambient turbulence intensity for
+            each case.
+        effective_ti: An optional JAX numpy array of the effective turbulence
+            intensity at each turbine for each case.
     """
 
     turbine: Turbine
@@ -131,7 +172,18 @@ class SimulationResult:
         return self.turbine.power(self.effective_ws)
 
     def aep(self, probabilities: jnp.ndarray | None = None) -> jnp.ndarray:
-        """Calculates the Annual Energy Production (AEP) of a wind farm."""
+        """Calculates the Annual Energy Production (AEP) of the wind farm.
+
+        This method computes the total AEP in GWh. If `probabilities` are not
+        provided, it assumes a uniform distribution over the simulation cases.
+
+        Args:
+            probabilities: An optional JAX numpy array of the probabilities for
+                each simulation case.
+
+        Returns:
+            The total AEP of the wind farm in GWh.
+        """
         turbine_powers = self.power() * 1e3  # W
 
         hours_in_year = 24 * 365
@@ -149,12 +201,19 @@ class SimulationResult:
 
 
 class WakeSimulation:
-    """The main class for running wind farm wake simulations.
+    """Orchestrates wind farm wake simulations.
 
-    This class orchestrates the simulation by taking a wake model and handling
-    the iterative process of solving for the effective wind speeds at each
-    turbine. It supports different mapping strategies for running simulations
-    over multiple wind conditions.
+    This is the main class for running simulations. It takes a deficit model,
+    an optional turbulence model, and a turbine definition, and then runs the
+    simulation for a given set of ambient conditions.
+
+    The core of the simulation is a fixed-point iteration that solves for the
+    stable effective wind speeds at each turbine, considering the wake
+    interactions between them.
+
+    This class supports multiple strategies for mapping over different wind
+    conditions (`vmap`, `map`, `_manual`), allowing for flexibility in terms of
+    performance and memory usage.
     """
 
     def __init__(
@@ -166,14 +225,18 @@ class WakeSimulation:
         fpi_tol: float = 1e-6,
         mapping_strategy: str = "map",
     ) -> None:
-        """Initializes the WakeSimulation.
+        """Initializes the `WakeSimulation`.
+
         Args:
-            model: The wake model to use for the simulation.
-            turbine: An optional default turbine to use for simulations.
+            turbine: A `Turbine` object representing the wind turbines in the
+                farm.
+            deficit: A `WakeDeficit` model to calculate the velocity deficit.
+            turbulence: An optional `WakeTurbulence` model to calculate the
+                added turbulence.
             fpi_damp: The damping factor for the fixed-point iteration.
-            fpi_tol: The tolerance for the fixed-point iteration.
-            mapping_strategy: The strategy to use for mapping over multiple
-                wind conditions. Can be 'vmap', 'map', or '_manual'.
+            fpi_tol: The convergence tolerance for the fixed-point iteration.
+            mapping_strategy: The JAX mapping strategy to use for multiple wind
+                conditions. Options are 'vmap', 'map', or '_manual'.
         """
         self.deficit = deficit
         self.turbine = turbine
@@ -196,16 +259,19 @@ class WakeSimulation:
         wd: jnp.ndarray,
         ti: jnp.ndarray | float | None = None,
     ) -> SimulationResult:
-        """Runs the wake simulation.
+        """Runs the wake simulation for the given ambient conditions.
+
         Args:
-            xs: An array of x-coordinates for each turbine.
-            ys: An array of y-coordinates for each turbine.
-            ws: An array of free-stream wind speeds.
-            wd: An array of wind directions.
-            x: An array of x-coordinates for flow map evaluation points (optional).
-            y: An array of y-coordinates for flow map evaluation points (optional).
+            wt_xs: A JAX numpy array of the x-coordinates of the turbines.
+            wt_ys: A JAX numpy array of the y-coordinates of the turbines.
+            ws_amb: A JAX numpy array of the free-stream wind speeds.
+            wd: A JAX numpy array of the wind directions.
+            ti: An optional JAX numpy array of the ambient turbulence
+                intensities.
+
         Returns:
-            A `SimulationResult` object containing relevant output information.
+            A `SimulationResult` object containing the results of the
+            simulation.
         """
         if self.mapping_strategy not in self.__sim_call_table.keys():
             raise ValueError(
@@ -225,6 +291,7 @@ class WakeSimulation:
         )
 
     def _atleast_1d_jax(self, x: jnp.ndarray | float | list) -> jnp.ndarray:
+        """Ensures the input is at least a 1D JAX numpy array."""
         return jnp.atleast_1d(jnp.asarray(x))
 
     def _preprocess_ambient_conditions(
@@ -241,6 +308,7 @@ class WakeSimulation:
         jnp.ndarray,
         jnp.ndarray | None,
     ]:
+        """Preprocesses and validates the ambient conditions."""
         wt_xs = self._atleast_1d_jax(wt_xs)
         wt_ys = self._atleast_1d_jax(wt_ys)
         assert wt_xs.shape == wt_ys.shape
@@ -267,14 +335,19 @@ class WakeSimulation:
         xs_r: jnp.ndarray | None = None,
         ys_r: jnp.ndarray | None = None,
     ) -> tuple[jnp.ndarray, jnp.ndarray]:
-        """Calculates the downwind and crosswind distances between points.
+        """Calculates downwind and crosswind distances between points.
+
+        This method transforms the Cartesian coordinates of source and receiver
+        points into a frame of reference aligned with the wind direction.
 
         Args:
-            xs_s: An array of x-coordinates for each source point.
-            ys_s: An array of y-coordinates for each source point.
-            xs_r: An array of x-coordinates for each receiver point.
-            ys_r: An array of y-coordinates for each receiver point.
-            wd: The wind direction.
+            wd: The wind direction in degrees.
+            xs_s: The x-coordinates of the source points.
+            ys_s: The y-coordinates of the source points.
+            xs_r: The x-coordinates of the receiver points. If `None`, the
+                source points are used.
+            ys_r: The y-coordinates of the receiver points. If `None`, the
+                source points are used.
 
         Returns:
             A tuple containing the downwind and crosswind distances.
@@ -301,7 +374,26 @@ class WakeSimulation:
         wd: jnp.ndarray | float = 270.0,
         ti: jnp.ndarray | float | None = None,
     ) -> tuple[jnp.ndarray, tuple[jnp.ndarray, jnp.ndarray]]:
-        """Generates a flow map for the wind farm."""
+        """Generates a 2D flow map of the wind farm.
+
+        This method calculates the wind speed at a grid of points in the wind
+        farm, allowing for visualization of the wake effects.
+
+        Args:
+            wt_x: The x-coordinates of the wind turbines.
+            wt_y: The y-coordinates of the wind turbines.
+            fm_x: The x-coordinates of the flow map grid. If `None`, a default
+                grid is generated.
+            fm_y: The y-coordinates of the flow map grid. If `None`, a default
+                grid is generated.
+            ws: The free-stream wind speed.
+            wd: The wind direction.
+            ti: The ambient turbulence intensity.
+
+        Returns:
+            A tuple containing the flow map wind speeds and the grid
+            coordinates.
+        """
 
         sc = self._preprocess_ambient_conditions(wt_x, wt_y, ws, wd, ti)
         wt_x, wt_y, ws, wd, ti = sc
@@ -331,7 +423,7 @@ class WakeSimulation:
     def _simulate_vmap(
         self, ctx: SimulationContext
     ) -> tuple[jnp.ndarray, jnp.ndarray | None]:
-        """Simulates multiple wind conditions using jax.vmap."""
+        """Simulates multiple wind conditions using `jax.vmap`."""
 
         def _single_case(
             dw: jnp.ndarray, cw: jnp.ndarray, ws: jnp.ndarray, ti: jnp.ndarray | None
@@ -345,7 +437,7 @@ class WakeSimulation:
     def _simulate_map(
         self, ctx: SimulationContext
     ) -> tuple[jnp.ndarray, jnp.ndarray | None]:
-        """Simulates multiple wind conditions using jax.lax.map."""
+        """Simulates multiple wind conditions using `jax.lax.map`."""
 
         def _single_case(
             case: tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray | None],
@@ -359,7 +451,7 @@ class WakeSimulation:
     def _simulate_manual(
         self, ctx: SimulationContext
     ) -> tuple[jnp.ndarray, jnp.ndarray | None]:
-        """Simulates multiple wind conditions using a manual loop (for debugging)."""
+        """Simulates multiple conditions with a Python loop (for debugging)."""
         n_cases = ctx.ws.size
         n_turbines = ctx.dw.shape[0]
         ws_out = jnp.zeros((n_cases, n_turbines))
@@ -385,8 +477,12 @@ class WakeSimulation:
         self,
         ctx: SimulationContext,
     ) -> tuple[jnp.ndarray, jnp.ndarray | None]:
-        """Simulates a single wind condition."""
+        """Simulates a single wind condition.
 
+        This method initializes the effective wind speeds and turbulence
+        intensities with the ambient conditions and then uses the `fixed_point`
+        solver to find the stable state.
+        """
         # initialize all turbines with ambient quantities
         fdtype = default_float_type()
         n_turbines = ctx.dw.shape[0]
@@ -404,6 +500,21 @@ class WakeSimulation:
     def _solve_farm(
         self, effective: tuple, ctx: SimulationContext
     ) -> tuple[jnp.ndarray, jnp.ndarray | None]:
+        """Performs one iteration of the fixed-point solver.
+
+        This method takes the current estimates of effective wind speed and
+        turbulence, calculates the new values based on the wake model, and
+        returns the updated estimates.
+
+        Args:
+            effective: A tuple containing the current effective wind speed and
+                turbulence intensity.
+            ctx: The simulation context.
+
+        Returns:
+            A tuple with the updated effective wind speed and turbulence
+            intensity.
+        """
         ws_eff, ti_eff = effective
         ws_eff_new, wake_radius = self.deficit(ws_eff, ti_eff, ctx)
 
