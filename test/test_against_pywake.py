@@ -549,7 +549,7 @@ def test_effective_ti_gaussian_equivalence_timeseries_with_wake_expansion_based_
     )
 
     model = NiayifarGaussianDeficit(
-        use_effective_ws=True, use_effective_ti=True, use_radius_mask=False
+        use_effective_ws=True, use_effective_ti=True, use_radius_mask=True
     )
     turbine = _create_pixwake_turbine(ct_curve, power_curve, RD=RD, HH=HH)
     sim = WakeSimulation(
@@ -583,3 +583,65 @@ def test_effective_ti_gaussian_equivalence_timeseries_with_wake_expansion_based_
 
     np.testing.assert_allclose(dx, pw_dx, rtol=rtol)
     np.testing.assert_allclose(dy, pw_dy, rtol=rtol)
+
+
+def test_crespo_hernandez_implementation_match():
+    py_wake_model = PyWakeCrespoHernandez()
+    n_turbines = 3
+
+    ws_eff = jnp.array([10.0])
+
+    turbine = Turbine(
+        rotor_diameter=8.0,
+        hub_height=10.0,
+        ct_curve=Curve(jnp.array([0, 25]), jnp.array([8 / 9, 0])),
+        power_curve=Curve(jnp.array([0, 25]), jnp.array([0, 1])),
+    )
+    ct_value = turbine.ct(ws_eff)[0]
+
+    dw_ijlk = np.ones((n_turbines, n_turbines, 1, 1))
+    cw_ijlk = np.ones((n_turbines, n_turbines, 1, 1))
+    D_src_il = np.ones((n_turbines, 1)) * 8.0
+    ct_ilk = np.ones((n_turbines, 1, 1)) * ct_value
+    TI_ilk = np.ones((n_turbines, 1, 1)) * 0.1
+    wake_radius_ijlk = np.ones((n_turbines, n_turbines, 1, 1)) * 4.0
+
+    pywake_ti_added = py_wake_model.calc_added_turbulence(
+        dw_ijlk=dw_ijlk,
+        cw_ijlk=cw_ijlk,
+        D_src_il=D_src_il,
+        ct_ilk=ct_ilk,
+        TI_ilk=TI_ilk,
+        D_dst_ijl=None,
+        wake_radius_ijlk=wake_radius_ijlk,
+    ).squeeze()
+
+    pywake_ti_eff_res = py_wake_model.calc_effective_TI(
+        np.ones_like(pywake_ti_added) * 0.1, pywake_ti_added
+    ).squeeze()
+
+    turbulence_model = CrespoHernandez()
+
+    dw = jnp.array(dw_ijlk[:, :, 0, 0])
+    cw = jnp.array(cw_ijlk[:, :, 0, 0])
+
+    ctx = SimulationContext(
+        dw=dw,
+        cw=cw,
+        ws=jnp.ones(n_turbines) * 8.0,
+        turbine=turbine,
+        ti=0.1,
+    )
+
+    pixwake_ti_addded = turbulence_model.added_turbulence(
+        ws_eff=ws_eff,
+        ti_eff=jnp.ones(n_turbines) * 0.1,
+        ctx=ctx,
+    )
+    pixwake_ti_eff_res = turbulence_model.superposition(
+        jnp.ones_like(pixwake_ti_addded) * 0.1, pixwake_ti_addded
+    )
+
+    tols = dict(rtol=1e-5, atol=1e-5)
+    np.testing.assert_allclose(pixwake_ti_addded, pywake_ti_added, **tols)
+    np.testing.assert_allclose(pixwake_ti_eff_res, pywake_ti_eff_res, **tols)

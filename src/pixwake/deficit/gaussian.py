@@ -86,8 +86,8 @@ class BastankhahGaussianDeficit(WakeDeficit):
 
         # Dimensional wake radius (2*sigma per Niayifar)
         wake_radius = 2.0 * sigma_normalized * diameter
-        # if not self.use_radius_mask:
-        #     wake_radius = jnp.full_like(wake_radius, jnp.inf)
+        if not self.use_radius_mask:
+            wake_radius = jnp.full_like(wake_radius, jnp.inf)
 
         diameter = ctx.turbine.rotor_diameter
 

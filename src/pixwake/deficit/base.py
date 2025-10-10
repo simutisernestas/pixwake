@@ -34,7 +34,7 @@ class WakeDeficit(ABC):
         """
         # all2all deficit matrix (n_receivers, n_sources)
         ws_deficit_m, wake_radius = self.compute(ws_eff, ti_eff, ctx)
-        in_wake_mask = (ctx.dw > 0.0) & (jnp.abs(ctx.cw) <= wake_radius)
+        in_wake_mask = (ctx.dw > 0.0) & (jnp.abs(ctx.cw) < wake_radius)
         ws_deficit_m = jnp.where(in_wake_mask, ws_deficit_m**2, 0.0)
         # superpose deficits in quadrature
         ws_deficit = jnp.sqrt(jnp.sum(ws_deficit_m, axis=1) + get_float_eps())
