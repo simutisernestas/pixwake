@@ -4,13 +4,13 @@ from typing import Callable
 import jax.numpy as jnp
 
 from pixwake.core import SimulationContext
-from pixwake.turbulence.base import TurbulenceModel
+from pixwake.turbulence.base import WakeTurbulence
 
 from ..utils import ct2a_madsen
 
 
 @dataclass
-class CrespoHernandez(TurbulenceModel):
+class CrespoHernandez(WakeTurbulence):
     """Crespo-Hernandez wake-added turbulence model.
 
     Empirical model for wake-added turbulence intensity based on thrust
@@ -31,15 +31,11 @@ class CrespoHernandez(TurbulenceModel):
     c: list[float] = field(default_factory=lambda: [0.73, 0.8325, -0.0325, -0.32])
     ct2a: Callable = ct2a_madsen
 
-    def calc_added_turbulence(
+    def added_turbulence(
         self,
-        ctx: SimulationContext,
         ws_eff: jnp.ndarray,
-        dw: jnp.ndarray,
-        cw: jnp.ndarray,
-        ti_eff: jnp.ndarray,
-        wake_radius: jnp.ndarray,
-        ct: jnp.ndarray | None = None,
+        ti_eff: jnp.ndarray | None,
+        ctx: SimulationContext,
     ) -> jnp.ndarray:
         """Calculate wake-added turbulence using Crespo-Hernandez formula.
 
@@ -58,33 +54,22 @@ class CrespoHernandez(TurbulenceModel):
         Returns:
             Added turbulence intensity (n_receivers, n_sources).
         """
-        # Compute thrust coefficient if not provided
-        if ct is None:
-            ct = ctx.turbine.ct(ws_eff)
+        _ = ti_eff  # unused
 
         # Convert to induction factor with numerical safeguard
+        ct = ctx.turbine.ct(ws_eff)  # (n_sources,)
         induction_factor = jnp.maximum(self.ct2a(ct), 1e-10)
-
         # Safeguard downwind distance for power law
-        dw_safe = jnp.maximum(dw, 1e-10)
-
+        dw_safe = jnp.maximum(ctx.dw, 1e-10)
         # Normalized downwind distance
         distance_normalized = dw_safe / ctx.turbine.rotor_diameter
-
-        # Apply Crespo-Hernandez formula using AMBIENT TI
+        # Apply Crespo-Hernandez formula using ambient ti Eq (21) in paper
         c0, c1, c2, c3 = self.c
         ti_ambient = ctx.ti  # scalar
-        assert ti_ambient is not None
         ti_added = (
             c0
             * induction_factor[None, :] ** c1
-            * ti_ambient**c2
+            * ti_ambient**c2  # type: ignore
             * distance_normalized**c3
         )
-
-        # Apply spatial mask: inside wake and downstream only
-        is_inside_wake = jnp.abs(cw) < wake_radius
-        is_downstream = dw > 0
-        mask = is_inside_wake & is_downstream
-
-        return jnp.where(mask, ti_added, 0.0)
+        return ti_added

@@ -16,8 +16,7 @@ from pixwake.plot import plot_flow_map
 )
 def sim():
     sim = WakeSimulation(
-        BastankhahGaussianDeficit(use_effective_ws=True, use_radius_mask=True),
-        turbine=Turbine(
+        Turbine(
             rotor_diameter=126.0,
             hub_height=80.0,
             power_curve=Curve(
@@ -27,6 +26,7 @@ def sim():
                 wind_speed=jnp.array([4.0, 25.0]), values=jnp.array([0.8, 0.1])
             ),
         ),
+        BastankhahGaussianDeficit(use_effective_ws=True, use_radius_mask=True),
     )
     return sim
 

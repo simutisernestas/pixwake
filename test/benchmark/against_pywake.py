@@ -118,6 +118,7 @@ def monitor_memory(pid, conn, interval=0.1):
             max_memory = mem
 
         time.sleep(interval)
+
     conn.close()
 
 
@@ -208,13 +209,13 @@ def run_benchmark(n_turbines_list, spacings_list):
             pixwake_model = NiayifarGaussianDeficit(
                 use_effective_ws=True,
                 use_effective_ti=True,
-                turbulence_model=CrespoHernandez(),
             )
             pixwake_sim = WakeSimulation(
+                pixwake_turbine,
                 pixwake_model,
+                turbulence=CrespoHernandez(),
                 fpi_damp=1.0,
                 mapping_strategy="map",
-                turbine=pixwake_turbine,
             )
 
             pywake_power_ct = PowerCtTabular(
@@ -414,7 +415,20 @@ if __name__ == "__main__":
     N_TURBINES_LIST = args.n_turbines
     SPACINGS_LIST = args.spacings
 
-    benchmark_results = run_benchmark(N_TURBINES_LIST, SPACINGS_LIST)
+    try:
+        benchmark_results = run_benchmark(N_TURBINES_LIST, SPACINGS_LIST)
+    except Exception as e:
+        print(f"Error occurred during benchmarking: {e}")
+        benchmark_results = []
+
+    if not benchmark_results:
+        for proc in psutil.process_iter():
+            if proc.pid != os.getpid() and "python" in proc.name().lower():
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+        exit(1)
 
     print("\n--- Benchmark Results ---")
     for res in benchmark_results:

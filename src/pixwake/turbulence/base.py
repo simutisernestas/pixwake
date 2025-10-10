@@ -45,45 +45,32 @@ class SqrMaxSum(Superposition):
 
 
 @dataclass
-class TurbulenceModel:
+class WakeTurbulence:
     """Base class for wake-added turbulence models."""
 
-    superposition_model: Superposition = field(default_factory=SqrMaxSum)
+    superposition: Superposition = field(default_factory=SqrMaxSum)
 
     def __call__(
         self,
-        ctx: SimulationContext,
         ws_eff: jnp.ndarray,
-        dw: jnp.ndarray,
-        cw: jnp.ndarray,
-        ti_eff: jnp.ndarray,
+        ti_eff: jnp.ndarray | None,
+        ctx: SimulationContext,
         wake_radius: jnp.ndarray,
-        ct: jnp.ndarray,
-    ) -> jnp.ndarray:
-        ti_added = self.calc_added_turbulence(
-            ctx=ctx,
-            ws_eff=ws_eff,
-            dw=dw,
-            cw=cw,
-            ti_eff=ti_eff,
-            wake_radius=wake_radius,
-            ct=ct,
-        )
+    ) -> jnp.ndarray | None:
+        ti_added_m = self.added_turbulence(ws_eff, ti_eff, ctx)
+        inside_wake = (ctx.dw > 0.0) & (jnp.abs(ctx.cw) < wake_radius)
+        ti_added_m = jnp.where(inside_wake, ti_added_m, 0.0)
+
         # Combine ambient and added turbulence
-        assert ctx.ti is not None
-        ti_ambient = jnp.full_like(ws_eff, ctx.ti)
-        return self.superposition_model(ti_ambient, ti_added)
+        ti_ambient = jnp.full(len(ctx.dw), ctx.ti)  # type: ignore
+        return self.superposition(ti_ambient, ti_added_m)
 
     @abstractmethod
-    def calc_added_turbulence(
+    def added_turbulence(
         self,
-        ctx: SimulationContext,
         ws_eff: jnp.ndarray,
-        dw: jnp.ndarray,
-        cw: jnp.ndarray,
-        ti_eff: jnp.ndarray,
-        wake_radius: jnp.ndarray,
-        ct: jnp.ndarray,
+        ti_eff: jnp.ndarray | None,
+        ctx: SimulationContext,
     ) -> jnp.ndarray:
         """Calculate wake-added turbulence intensity.
 

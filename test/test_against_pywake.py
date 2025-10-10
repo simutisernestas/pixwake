@@ -129,7 +129,7 @@ def _pixwake_compute_gradients(sim, x, y, ws, wd, ti=None, ret_grad_fn=False):
     return val, dx, dy
 
 
-def test_noj_aep_and_gradients_equivalence_timeseries(curves):
+def test_noj_equivalence_timeseries(curves):
     ct_curve, power_curve = curves
     cutin_ws, cutout_ws = 3.0, 25.0
     wake_expansion_k = 0.1
@@ -155,9 +155,9 @@ def test_noj_aep_and_gradients_equivalence_timeseries(curves):
     pw_dx, pw_dy = wfm.aep_gradients(x=x, y=y, wd=wd, ws=ws, time=True, n_cpu=1)
     pywake_runtime = time.time() - s
 
-    model = NOJDeficit(k=wake_expansion_k)
+    model = NOJDeficit(k=wake_expansion_k, use_radius_mask=True)
     turbine = _create_pixwake_turbine(ct_curve, power_curve)
-    sim = WakeSimulation(model, turbine, fpi_damp=1.0)
+    sim = WakeSimulation(turbine, model, fpi_damp=1.0)
 
     pixwake_sim_res = sim(
         jnp.asarray(x), jnp.asarray(y), jnp.asarray(ws), jnp.asarray(wd)
@@ -189,7 +189,7 @@ def test_noj_aep_and_gradients_equivalence_timeseries(curves):
     assert speedup > 2.0, speedup
 
 
-def test_noj_aep_and_gradients_equivalence_with_site_frequencies(curves):
+def test_noj_equivalence_with_site_frequencies(curves):
     ct_curve, power_curve = curves
     cutin_ws, cutout_ws = 4.0, 25.0
     wake_expansion_k = 0.1
@@ -246,7 +246,7 @@ def test_noj_aep_and_gradients_equivalence_with_site_frequencies(curves):
 
     model = NOJDeficit(k=wake_expansion_k)
     turbine = _create_pixwake_turbine(ct_curve, power_curve)
-    sim = WakeSimulation(model, turbine, fpi_damp=1.0, mapping_strategy="map")
+    sim = WakeSimulation(turbine, model, fpi_damp=1.0, mapping_strategy="map")
     pixwake_sim_res = sim(jnp.asarray(x), jnp.asarray(y), pix_ws, pix_wd)
 
     np.testing.assert_allclose(
@@ -289,7 +289,7 @@ def test_noj_aep_and_gradients_equivalence_with_site_frequencies(curves):
     assert speedup > 2.0, speedup
 
 
-def test_gaussian_aep_and_gradients_equivalence_timeseries(ct_vals, power_vals):
+def test_gaussian_equivalence_timeseries(ct_vals, power_vals):
     cutin_ws = 3.0
     cutout_ws = 25.0
     ct_pw_ws = np.arange(0.0, cutout_ws + 1.0, 1.0)
@@ -330,7 +330,7 @@ def test_gaussian_aep_and_gradients_equivalence_timeseries(ct_vals, power_vals):
         power_curve=Curve(wind_speed=power_curve[:, 0], values=power_curve[:, 1]),
         ct_curve=Curve(wind_speed=ct_curve[:, 0], values=ct_curve[:, 1]),
     )
-    sim = WakeSimulation(model, turbine, fpi_damp=1.0)
+    sim = WakeSimulation(turbine, model, fpi_damp=1.0)
     pixwake_sim_res = sim(
         jnp.asarray(x),
         jnp.asarray(y),
@@ -373,7 +373,7 @@ def test_gaussian_aep_and_gradients_equivalence_timeseries(ct_vals, power_vals):
     np.testing.assert_allclose(dy, pw_dy, rtol=rtol, atol=1e-5)
 
 
-def test_gaussian_aep_and_gradients_equivalence_timeseries_with_effective_ws(curves):
+def test_gaussian_equivalence_timeseries_with_effective_ws(curves):
     ct_curve, power_curve = curves
     cutin_ws, cutout_ws = 3.0, 25.0
     wake_expansion_k = 0.0324555
@@ -404,7 +404,7 @@ def test_gaussian_aep_and_gradients_equivalence_timeseries_with_effective_ws(cur
         k=wake_expansion_k, use_effective_ws=True, use_radius_mask=False
     )
     turbine = _create_pixwake_turbine(ct_curve, power_curve, RD=RD)
-    sim = WakeSimulation(model, turbine, fpi_damp=1.0)
+    sim = WakeSimulation(turbine, model, fpi_damp=1.0)
     pixwake_sim_res = sim(
         jnp.asarray(x), jnp.asarray(y), jnp.asarray(ws), jnp.asarray(wd)
     )
@@ -424,72 +424,59 @@ def test_gaussian_aep_and_gradients_equivalence_timeseries_with_effective_ws(cur
     np.testing.assert_allclose(dy, pw_dy, rtol=rtol)
 
 
-def test_crespo_hernandez_implementation_match():
-    py_wake_model = PyWakeCrespoHernandez()
-    n_turbines = 3
+def test_gaussian_equivalence_timeseries_with_effective_ws_with_turbulence(curves):
+    ct_curve, power_curve = curves
+    cutin_ws, cutout_ws = 3.0, 25.0
+    wake_expansion_k = 0.0324555
+    RD = 120.0
 
-    dw_ijlk = np.ones((n_turbines, n_turbines, 1, 1))
-    cw_ijlk = np.ones((n_turbines, n_turbines, 1, 1))
-    D_src_il = np.ones((n_turbines, 1)) * 8.0
-    ct_ilk = np.ones((n_turbines, 1, 1)) * 8.0 / 9.0
-    TI_ilk = np.ones((n_turbines, 1, 1)) * 0.1
-    wake_radius_ijlk = np.ones((n_turbines, n_turbines, 1, 1)) * 4.0
+    x, y = _create_turbine_layout(20, 3, spacing=RD)
+    windTurbines = _create_pywake_turbines(x, y, ct_curve, power_curve, RD=RD)
 
-    pywake_ti_res = py_wake_model.calc_added_turbulence(
-        dw_ijlk=dw_ijlk,
-        cw_ijlk=cw_ijlk,
-        D_src_il=D_src_il,
-        ct_ilk=ct_ilk,
-        TI_ilk=TI_ilk,
-        D_dst_ijl=None,
-        wake_radius_ijlk=wake_radius_ijlk,
-    ).squeeze()
-
-    pywake_ti_eff_res = py_wake_model.calc_effective_TI(
-        np.ones_like(pywake_ti_res) * 0.1, pywake_ti_res
-    ).squeeze()
-
-    turbulence_model = CrespoHernandez()
-    turbine = Turbine(
-        rotor_diameter=8.0,
-        hub_height=10.0,
-        ct_curve=Curve(jnp.array([0, 25]), jnp.array([8 / 9, 0])),
-        power_curve=Curve(jnp.array([0, 25]), jnp.array([0, 1])),
+    site = Hornsrev1Site()
+    wake_model = PyWakeBastankhahGaussianDeficit(
+        k=wake_expansion_k, use_effective_ws=True
     )
-    ctx = SimulationContext(
-        xs=jnp.array([0.0, 200.0]),
-        ys=jnp.array([0.0, 0.0]),
-        ws=jnp.array([8.0, 8.0]),
-        wd=jnp.array([0.0, 0.0]),
-        turbine=turbine,
-        ti=0.1,
+    wfm = All2AllIterative(
+        site,
+        windTurbines,
+        wake_deficitModel=wake_model,
+        superpositionModel=SquaredSum(),
+        turbulenceModel=PyWakeCrespoHernandez(),
     )
 
-    dw = jnp.array(dw_ijlk[:, :, 0, 0])
-    cw = jnp.array(cw_ijlk[:, :, 0, 0])
-    ti_amb = jnp.array(TI_ilk[:, 0, 0])
-    wake_radius = jnp.array(wake_radius_ijlk[:, :, 0, 0])
-    ct = jnp.array(ct_ilk[:, 0, 0])
+    n_timestamps = 1000
+    ws = np.random.uniform(cutin_ws, cutout_ws, size=n_timestamps)
+    wd = np.random.uniform(0, 360, size=n_timestamps)
 
-    pixwake_ti_res = turbulence_model.calc_added_turbulence(
-        ctx,
-        ws_eff=jnp.array([0.1]),
-        dw=dw,
-        cw=cw,
-        ti_eff=ti_amb,
-        wake_radius=wake_radius,
-        ct=ct,
+    sim_res = wfm(x=x, y=y, wd=wd, ws=ws, time=True, TI=0.1)
+    pywake_ws_eff = sim_res["WS_eff"].values
+
+    model = BastankhahGaussianDeficit(
+        k=wake_expansion_k,
+        use_effective_ws=True,
+        use_radius_mask=False,
     )
-    pixwake_ti_eff_res = turbulence_model.superposition_model(
-        jnp.ones_like(pixwake_ti_res) * 0.1, pixwake_ti_res
+    turbine = _create_pixwake_turbine(ct_curve, power_curve, RD=RD)
+    sim = WakeSimulation(turbine, model, CrespoHernandez(), fpi_damp=1.0)
+    pixwake_sim_res = sim(
+        jnp.asarray(x), jnp.asarray(y), jnp.asarray(ws), jnp.asarray(wd), 0.1
     )
 
-    tols = dict(rtol=1e-5, atol=1e-5)
-    np.testing.assert_allclose(pixwake_ti_res, pywake_ti_res, **tols)
-    np.testing.assert_allclose(pixwake_ti_eff_res, pywake_ti_eff_res, **tols)
+    tols = {"rtol": 1e-3, "atol": 1e-6}
+    _assert_ws_eff_close(pixwake_sim_res.effective_ws, pywake_ws_eff, **tols)
+    np.testing.assert_allclose(
+        pixwake_sim_res.aep(), sim_res.aep().sum().values, **tols
+    )
+
+    pw_dx, pw_dy = wfm.aep_gradients(x=x, y=y, wd=wd, ws=ws, time=True)
+    _, dx, dy = _pixwake_compute_gradients(sim, x, y, ws, wd, ti=0.1)
+
+    np.testing.assert_allclose(dx, pw_dx, **tols)
+    np.testing.assert_allclose(dy, pw_dy, **tols)
 
 
-def test_gaussian_aep_and_gradients_equivalence_timeseries_with_wake_expansion_based_on_ti(
+def test_gaussian_equivalence_timeseries_with_wake_expansion_based_on_ti(
     curves,
 ):
     ct_curve, power_curve = curves
@@ -519,7 +506,7 @@ def test_gaussian_aep_and_gradients_equivalence_timeseries_with_wake_expansion_b
 
     model = NiayifarGaussianDeficit(use_effective_ws=True, use_radius_mask=False)
     turbine = _create_pixwake_turbine(ct_curve, power_curve, RD=RD)
-    sim = WakeSimulation(model, turbine, fpi_damp=1.0, mapping_strategy="map")
+    sim = WakeSimulation(turbine, model, fpi_damp=1.0, mapping_strategy="map")
     pixwake_sim_res = sim(
         jnp.asarray(x), jnp.asarray(y), jnp.asarray(ws), jnp.asarray(wd), 0.1
     )
@@ -539,7 +526,7 @@ def test_gaussian_aep_and_gradients_equivalence_timeseries_with_wake_expansion_b
     np.testing.assert_allclose(dy, pw_dy, **tols)
 
 
-def test_effective_ti_gaussian_aep_and_gradients_equivalence_timeseries_with_wake_expansion_based_on_ti(
+def test_effective_ti_gaussian_equivalence_timeseries_with_wake_expansion_based_on_ti(
     curves,
 ):
     ct_curve, power_curve = curves
@@ -562,9 +549,12 @@ def test_effective_ti_gaussian_aep_and_gradients_equivalence_timeseries_with_wak
     )
 
     model = NiayifarGaussianDeficit(
-        use_effective_ws=True, use_effective_ti=True, turbulence_model=CrespoHernandez()
+        use_effective_ws=True, use_effective_ti=True, use_radius_mask=False
     )
     turbine = _create_pixwake_turbine(ct_curve, power_curve, RD=RD, HH=HH)
+    sim = WakeSimulation(
+        turbine, model, CrespoHernandez(), fpi_damp=1.0, mapping_strategy="map"
+    )
 
     n_test = 1000
     ws = np.maximum(np.random.uniform(cutin_ws, cutout_ws, size=n_test), 0.0)
@@ -572,7 +562,6 @@ def test_effective_ti_gaussian_aep_and_gradients_equivalence_timeseries_with_wak
 
     sim_res = wfm(x=x, y=y, wd=wd, ws=ws, time=True, TI=0.1, WS_eff=0)
 
-    sim = WakeSimulation(model, turbine, fpi_damp=1.0, mapping_strategy="map")
     pixwake_sim_res = sim(
         jnp.asarray(x), jnp.asarray(y), jnp.asarray(ws), jnp.asarray(wd), 0.1
     )
@@ -594,3 +583,65 @@ def test_effective_ti_gaussian_aep_and_gradients_equivalence_timeseries_with_wak
 
     np.testing.assert_allclose(dx, pw_dx, rtol=rtol)
     np.testing.assert_allclose(dy, pw_dy, rtol=rtol)
+
+
+def test_crespo_hernandez_implementation_match():
+    py_wake_model = PyWakeCrespoHernandez()
+    n_turbines = 3
+
+    ws_eff = jnp.array([10.0])
+
+    turbine = Turbine(
+        rotor_diameter=8.0,
+        hub_height=10.0,
+        ct_curve=Curve(jnp.array([0, 25]), jnp.array([8 / 9, 0])),
+        power_curve=Curve(jnp.array([0, 25]), jnp.array([0, 1])),
+    )
+    ct_value = turbine.ct(ws_eff)[0]
+
+    dw_ijlk = np.ones((n_turbines, n_turbines, 1, 1))
+    cw_ijlk = np.ones((n_turbines, n_turbines, 1, 1))
+    D_src_il = np.ones((n_turbines, 1)) * 8.0
+    ct_ilk = np.ones((n_turbines, 1, 1)) * ct_value
+    TI_ilk = np.ones((n_turbines, 1, 1)) * 0.1
+    wake_radius_ijlk = np.ones((n_turbines, n_turbines, 1, 1)) * 4.0
+
+    pywake_ti_added = py_wake_model.calc_added_turbulence(
+        dw_ijlk=dw_ijlk,
+        cw_ijlk=cw_ijlk,
+        D_src_il=D_src_il,
+        ct_ilk=ct_ilk,
+        TI_ilk=TI_ilk,
+        D_dst_ijl=None,
+        wake_radius_ijlk=wake_radius_ijlk,
+    ).squeeze()
+
+    pywake_ti_eff_res = py_wake_model.calc_effective_TI(
+        np.ones_like(pywake_ti_added) * 0.1, pywake_ti_added
+    ).squeeze()
+
+    turbulence_model = CrespoHernandez()
+
+    dw = jnp.array(dw_ijlk[:, :, 0, 0])
+    cw = jnp.array(cw_ijlk[:, :, 0, 0])
+
+    ctx = SimulationContext(
+        dw=dw,
+        cw=cw,
+        ws=jnp.ones(n_turbines) * 8.0,
+        turbine=turbine,
+        ti=0.1,
+    )
+
+    pixwake_ti_addded = turbulence_model.added_turbulence(
+        ws_eff=ws_eff,
+        ti_eff=jnp.ones(n_turbines) * 0.11,
+        ctx=ctx,
+    )
+    pixwake_ti_eff_res = turbulence_model.superposition(
+        jnp.ones_like(pixwake_ti_addded) * 0.1, pixwake_ti_addded
+    )
+
+    tols = dict(rtol=1e-5, atol=1e-5)
+    np.testing.assert_allclose(pixwake_ti_addded, pywake_ti_added, **tols)
+    np.testing.assert_allclose(pixwake_ti_eff_res, pywake_ti_eff_res, **tols)

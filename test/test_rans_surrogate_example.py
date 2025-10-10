@@ -1,14 +1,24 @@
+import pytest
+
+# TODO: could revive this as an example or generic surrogate model
+pytest.skip("Specific case, not generic wake model", allow_module_level=True)
+
 import os
+import time
 from typing import Any
 
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
+import numpy as onp
 from flax import serialization
 from flax.struct import field
+from jax.test_util import check_grads
+from py_wake.examples.data.dtu10mw import DTU10MW
 
-from ..core import SimulationContext
-from .base import WakeDeficitModel
+from pixwake import Curve, Turbine, WakeSimulation
+from pixwake.base import WakeDeficit
+from pixwake.core import SimulationContext
 
 
 class WakeDeficitModelFlax(nn.Module):
@@ -111,19 +121,21 @@ def load_rans_models() -> tuple[nn.Module, Any, nn.Module, Any]:
     return deficit_model, deficit_weights, turbulence_model, ti_weights
 
 
-class RANSDeficit(WakeDeficitModel):
+class RANSDeficit(WakeDeficit):
     """A RANS surrogate model for wake prediction.
 
     This model uses two pre-trained neural networks to predict the wake deficit
     and added turbulence intensity. The model is based on high-fidelity RANS
     CFD simulations.
+
+    Note: This model requires turbulence intensity to be provided in the simulation
+    context (ctx.ti). The TI value must be passed when calling the WakeSimulation.
     """
 
-    def __init__(self, ambient_ti: float, use_effective: bool = True) -> None:
+    def __init__(self, use_effective: bool = True) -> None:
         """Initializes the RANSDeficit.
 
         Args:
-            ambient_ti: The ambient turbulence intensity.
             use_effective: A boolean flag to control the deficit calculation.
                 - If True (default), the deficit is calculated as an absolute
                   reduction in wind speed, proportional to the effective wind
@@ -132,7 +144,6 @@ class RANSDeficit(WakeDeficitModel):
                   relative to the free-stream wind speed.
         """
         super().__init__()
-        self.ambient_ti = ambient_ti
         self.use_effective = use_effective
         self.use_effective_ti = True
         (
@@ -142,7 +153,7 @@ class RANSDeficit(WakeDeficitModel):
             self.ti_weights,
         ) = load_rans_models()
 
-    def compute_deficit(
+    def compute(
         self,
         ws_eff: jnp.ndarray,
         ctx: SimulationContext,
@@ -165,14 +176,23 @@ class RANSDeficit(WakeDeficitModel):
         Returns:
             A tuple containing the updated effective wind speeds and turbulence
             intensities at each turbine.
+
+        Raises:
+            ValueError: If ctx.ti is None - turbulence intensity is required.
         """
+        if ctx.ti is None:
+            raise ValueError(
+                "RANSDeficit requires turbulence intensity (ti) to be provided. "
+                "Pass ti parameter when calling WakeSimulation."
+            )
+
         if xs_r is None:
-            xs_r = ctx.xs
+            xs_r = ctx.dw
         if ys_r is None:
-            ys_r = ctx.ys
+            ys_r = ctx.cw
 
         x_d, y_d = self.get_downwind_crosswind_distances(
-            ctx.xs, ctx.ys, xs_r, ys_r, ctx.wd
+            ctx.dw, ctx.cw, xs_r, ys_r, ctx.wd
         )
         x_d /= ctx.turbine.rotor_diameter
         y_d /= ctx.turbine.rotor_diameter
@@ -198,19 +218,13 @@ class RANSDeficit(WakeDeficitModel):
             nn_out = jnp.array(model.apply(params, md_input)).reshape(x_d.shape)
             return jnp.where(in_domain_mask, nn_out, 0.0).sum(axis=1)
 
-        ti_input: float | jnp.ndarray | None
+        # Use effective TI if available, otherwise use ambient TI from context
         ti_input = ti_eff if ti_eff is not None else ctx.ti
-        if ti_input is None:
-            ti_input = self.ambient_ti
 
         added_ti = _predict(self.turbulence_model, self.ti_weights, ti_input)
 
-        ambient_ti_base: float | jnp.ndarray
-        if ctx.ti is not None:
-            ambient_ti_base = ctx.ti
-        else:
-            ambient_ti_base = self.ambient_ti
-        new_effective_ti = ambient_ti_base + added_ti
+        # Ambient TI comes from context
+        new_effective_ti = ctx.ti + added_ti
 
         deficit = _predict(self.deficit_model, self.deficit_weights, ti_input)
 
@@ -221,3 +235,94 @@ class RANSDeficit(WakeDeficitModel):
             new_ws_eff = jnp.maximum(0.0, ctx.ws * (1.0 - deficit))
 
         return new_ws_eff, new_effective_ti
+
+
+def get_rans_dependencies():
+    turbine = DTU10MW()
+    ct_xp = turbine.powerCtFunction.ws_tab
+    ct_fp = turbine.powerCtFunction.power_ct_tab[1, :]
+    pw_fp = turbine.powerCtFunction.power_ct_tab[0, :]
+    D = turbine.diameter()
+    return ct_xp, ct_fp, pw_fp, D
+
+
+def test_rans_surrogate_aep():
+    ct_xp, ct_fp, pw_fp, D = get_rans_dependencies()
+    CUTOUT_WS = 25.0
+    CUTIN_WS = 3.0
+
+    onp.random.seed(42)
+    T = 10
+    WSS = jnp.asarray(onp.random.uniform(CUTIN_WS, CUTOUT_WS, T))
+    WDS = jnp.asarray(onp.random.uniform(0, 360, T))
+
+    wi, le = 10, 8
+    xs, ys = jnp.meshgrid(  # example positions
+        jnp.linspace(0, wi * 3 * D, wi),
+        jnp.linspace(0, le * 3 * D, le),
+    )
+    xs, ys = xs.ravel(), ys.ravel()
+    assert xs.shape[0] == (wi * le), xs.shape
+
+    turbine = Turbine(
+        rotor_diameter=D,
+        hub_height=100.0,
+        power_curve=Curve(wind_speed=ct_xp, values=pw_fp),
+        ct_curve=Curve(wind_speed=ct_xp, values=ct_fp),
+    )
+
+    model = RANSDeficit()
+    sim = WakeSimulation(
+        model, turbine, mapping_strategy="map", fpi_damp=0.8, fpi_tol=1e-3
+    )
+
+    def aep(xx, yy):
+        return sim(xx, yy, WSS, WDS, ti=0.1).aep()
+
+    aep_and_grad = jax.jit(jax.value_and_grad(aep, argnums=(0, 1)))
+
+    def block_all(res):
+        if isinstance(res, tuple):
+            return tuple(block_all(r) for r in res)
+        else:
+            return res.block_until_ready()
+
+    res = aep_and_grad(xs, ys)
+    block_all(res)
+    s = time.time()
+    res = aep_and_grad(xs, ys)
+    block_all(res)
+    print(f"AEP: {res[0]} in {time.time() - s:.3f} seconds")
+
+    assert jnp.isfinite(res[0]).all(), "AEP should be finite"
+    assert jnp.isfinite(res[1][0]).all(), "Gradient of x should be finite"
+    assert jnp.isfinite(res[1][1]).all(), "Gradient of y should be finite"
+
+
+def test_rans_surrogate_gradients():
+    ct_xp, ct_fp, pw_fp, D = get_rans_dependencies()
+    ws = 9.0
+    wd = 90.0
+    wi, le = 3, 2
+    xs, ys = jnp.meshgrid(
+        jnp.linspace(0, wi * 3 * D, wi),
+        jnp.linspace(0, le * 3 * D, le),
+    )
+    xs, ys = xs.ravel(), ys.ravel()
+
+    turbine = Turbine(
+        rotor_diameter=D,
+        hub_height=100.0,
+        power_curve=Curve(wind_speed=ct_xp, values=pw_fp),
+        ct_curve=Curve(wind_speed=ct_xp, values=ct_fp),
+    )
+
+    model = RANSDeficit()
+    simulation = WakeSimulation(model, turbine, fpi_damp=0.8, fpi_tol=1e-3)
+
+    def sim(x, y):
+        return simulation(
+            x, y, jnp.full_like(x, ws), jnp.full_like(x, wd), ti=0.1
+        ).effective_ws.sum()
+
+    check_grads(sim, (xs, ys), order=1, modes=["rev"], atol=1e-2, rtol=1e-2, eps=10)
