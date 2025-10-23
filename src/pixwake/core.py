@@ -184,6 +184,9 @@ class SimulationResult:
         Returns:
             The total AEP of the wind farm in GWh.
         """
+        # TODO: power values can have arbitrary units;
+        # these scaling factors should be parameters probably
+        # or not consider units at all here. Now assuming power in kW...
         turbine_powers = self.power() * 1e3  # W
 
         hours_in_year = 24 * 365
@@ -194,6 +197,9 @@ class SimulationResult:
             return (
                 turbine_powers * hours_in_year * gwh_conversion_factor
             ).sum() / self.effective_ws.shape[0]
+
+        probabilities = probabilities.reshape(-1, 1)
+        assert probabilities.shape[0] == turbine_powers.shape[0]
 
         return (
             turbine_powers * probabilities * hours_in_year * gwh_conversion_factor
