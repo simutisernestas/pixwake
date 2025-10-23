@@ -248,50 +248,89 @@ def run_benchmark(bench_target: BenchTarget, n_turbines_list, spacings_list):
     return results
 
 
-def plot_results(results):
+def plot_results():
     """Plots the benchmark results and saves them to files."""
-    if not results:
-        print("No results to plot.")
+    import glob
+
+    import xarray as xr
+
+    files = glob.glob("benchout/benchmark_*.nc")
+    if not files:
+        print("No benchmark files found in 'benchout/'.")
         return
 
-    df = pd.DataFrame(results)
-    spacings = df["spacing"].unique()
+    try:
+        datasets = [xr.open_dataset(f) for f in files]
+        ds = xr.concat(datasets, dim="target")
+    except ValueError as e:
+        print(f"Could not merge datasets: {e}")
+        print("This might be because the coordinates are not consistent across files.")
+        print(
+            "Please ensure that all benchmark runs were performed with the same settings."
+        )
+        return
 
-    df["pywake_total_time_ts"] = df["pywake_aep_time_ts"] + df["pywake_grad_time_ts"]
-    df["pixwake_total_time_ts"] = df["pixwake_aep_time_ts"] + df["pixwake_grad_time_ts"]
+    df = ds.to_dataframe().reset_index()
+    df["total_time"] = df["aep_time"] + df["grad_time"]
 
-    plot_configs = {
-        "AEP_Time-Series": ("pywake_aep_time_ts", "pixwake_aep_time_ts"),
-        "Gradient_Time-Series": ("pywake_grad_time_ts", "pixwake_grad_time_ts"),
-        "Total_Time-Series": ("pywake_total_time_ts", "pixwake_total_time_ts"),
-    }
+    targets = df["target"].unique()
+    if len(targets) < 2:
+        print(
+            "Both 'pywake' and 'pixwake' benchmark results are required for plotting."
+        )
+        print(f"Found targets: {targets}")
+        return
 
-    for name, (pywake_col, pixwake_col) in plot_configs.items():
-        plt.figure(figsize=(10, 6))
+    spacings = sorted(df["spacing"].unique())
+
+    fig, axes = plt.subplots(2, 1, figsize=(10, 12), sharex=True)
+
+    # Plot runtime
+    ax = axes[0]
+    for target in targets:
         for spacing in spacings:
-            df_spacing = df[df["spacing"] == spacing].sort_values("n_turbines")
-            plt.plot(
-                df_spacing["n_turbines"],
-                df_spacing[pywake_col],
-                "o-",
-                label=f"PyWake {spacing}D",
-            )
-            plt.plot(
-                df_spacing["n_turbines"],
-                df_spacing[pixwake_col],
-                "o-",
-                label=f"PixWake {spacing}D",
-            )
-        plt.xlabel("Number of Turbines")
-        plt.ylabel("Runtime (s)")
-        plt.title(f"{name.replace('_', ' ')} Runtime Comparison (All Spacings)")
-        plt.legend()
-        plt.grid(True, which="both", ls="--")
-        plt.yscale("log")
-        filename = f"figures/benchmark_{name.lower()}_all_spacings.png"
-        plt.savefig(filename, dpi=300)
-        print(f"Saved plot: {filename}")
-        plt.close()
+            subset = df[(df["target"] == target) & (df["spacing"] == spacing)]
+            subset = subset.sort_values("n_turbines")
+            if not subset.empty:
+                ax.plot(
+                    subset["n_turbines"],
+                    subset["total_time"],
+                    "o-",
+                    label=f"{target.capitalize()} {spacing}D",
+                )
+
+    ax.set_ylabel("Total Runtime (s)")
+    ax.set_title("Benchmark: Runtime Comparison")
+    ax.legend()
+    ax.grid(True, which="both", ls="--")
+    ax.set_yscale("log")
+
+    # Plot memory usage
+    ax = axes[1]
+    for target in targets:
+        for spacing in spacings:
+            subset = df[(df["target"] == target) & (df["spacing"] == spacing)]
+            subset = subset.sort_values("n_turbines")
+            if not subset.empty:
+                ax.plot(
+                    subset["n_turbines"],
+                    subset["mem_usage_max"],
+                    "o-",
+                    label=f"{target.capitalize()} {spacing}D",
+                )
+
+    ax.set_xlabel("Number of Turbines")
+    ax.set_ylabel("Max Memory Usage (MiB)")
+    ax.set_title("Benchmark: Memory Usage Comparison")
+    ax.legend()
+    ax.grid(True, which="both", ls="--")
+    ax.set_yscale("log")
+
+    plt.tight_layout()
+    filename = "figures/benchmark_comparison.png"
+    plt.savefig(filename, dpi=300)
+    print(f"Saved plot: {filename}")
+    plt.close()
 
 
 if __name__ == "__main__":
@@ -318,10 +357,22 @@ if __name__ == "__main__":
         "--target",
         type=str,
         choices=[BenchTarget.PYWAKE, BenchTarget.PIXWAKE],
-        default=BenchTarget.PYWAKE,
+        default=None,
         help="Benchmark target: 'pywake' or 'pixwake'.",
     )
+    parser.add_argument(
+        "--plot",
+        action="store_true",
+        help="Plot benchmark results from 'benchout' folder.",
+    )
     args = parser.parse_args()
+
+    if args.plot:
+        plot_results()
+        exit()
+
+    if not args.target:
+        raise ValueError("Either --plot or --target must be specified.")
 
     benchmark_results = run_benchmark(args.target, args.n_turbines, args.spacings)
 
