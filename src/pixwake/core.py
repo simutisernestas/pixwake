@@ -229,7 +229,7 @@ class WakeSimulation:
         turbulence: WakeTurbulence | None = None,
         fpi_damp: float = 0.5,
         fpi_tol: float = 1e-6,
-        mapping_strategy: str = "map",
+        mapping_strategy: str = "auto",
     ) -> None:
         """Initializes the `WakeSimulation`.
 
@@ -251,7 +251,15 @@ class WakeSimulation:
         self.fpi_damp = fpi_damp
         self.fpi_tol = fpi_tol
 
+        def __auto_mapping() -> Callable:
+            return (
+                self._simulate_map
+                if jax.default_backend() == "cpu"
+                else self._simulate_vmap
+            )
+
         self.__sim_call_table: dict[str, Callable] = {
+            "auto": __auto_mapping(),
             "vmap": self._simulate_vmap,
             "map": self._simulate_map,  # more memory efficient than vmap
             "_manual": self._simulate_manual,  # debug/profile purposes only
