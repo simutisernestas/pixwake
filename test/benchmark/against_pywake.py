@@ -115,8 +115,8 @@ def benchmark_pywake(
 
     def get_pywake_n_cpu(n_turbines, max_cpu=32):
         """Scales the number of CPUs for PyWake based on the number of turbines."""
-        available_cpu_cores = (
-            int(os.environ.get("LSB_DJOB_NUMPROC")) or os.cpu_count() or 1
+        available_cpu_cores = int(
+            os.environ.get("LSB_DJOB_NUMPROC") or os.cpu_count() or 1
         )
         n_cpu_at_50 = 4
         max_out_at = 200
