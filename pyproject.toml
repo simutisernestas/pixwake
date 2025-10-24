@@ -29,6 +29,7 @@ pytest-cov = "*"
 py-wake = ">=2.6.12,<3"
 mypy = ">=1.17.1,<2"
 psutil = ">=7.0.0,<8"
+memory_profiler = ">=0.61.0,<0.62"
 
 [tool.pixi.feature.test.pypi-dependencies]
 # tensorboard = "*"

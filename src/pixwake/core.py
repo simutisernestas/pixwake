@@ -184,6 +184,9 @@ class SimulationResult:
         Returns:
             The total AEP of the wind farm in GWh.
         """
+        # TODO: power values can have arbitrary units;
+        # these scaling factors should be parameters probably
+        # or not consider units at all here. Now assuming power in kW...
         turbine_powers = self.power() * 1e3  # W
 
         hours_in_year = 24 * 365
@@ -194,6 +197,9 @@ class SimulationResult:
             return (
                 turbine_powers * hours_in_year * gwh_conversion_factor
             ).sum() / self.effective_ws.shape[0]
+
+        probabilities = probabilities.reshape(-1, 1)
+        assert probabilities.shape[0] == turbine_powers.shape[0]
 
         return (
             turbine_powers * probabilities * hours_in_year * gwh_conversion_factor
@@ -223,7 +229,7 @@ class WakeSimulation:
         turbulence: WakeTurbulence | None = None,
         fpi_damp: float = 0.5,
         fpi_tol: float = 1e-6,
-        mapping_strategy: str = "map",
+        mapping_strategy: str = "auto",
     ) -> None:
         """Initializes the `WakeSimulation`.
 
@@ -245,7 +251,15 @@ class WakeSimulation:
         self.fpi_damp = fpi_damp
         self.fpi_tol = fpi_tol
 
+        def __auto_mapping() -> Callable:
+            return (
+                self._simulate_map
+                if jax.default_backend() == "cpu"
+                else self._simulate_vmap
+            )
+
         self.__sim_call_table: dict[str, Callable] = {
+            "auto": __auto_mapping(),
             "vmap": self._simulate_vmap,
             "map": self._simulate_map,  # more memory efficient than vmap
             "_manual": self._simulate_manual,  # debug/profile purposes only

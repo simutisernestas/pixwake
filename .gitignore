@@ -10,3 +10,4 @@ figures/
 .coverage*
 htmlcov/
 coverage.xml
+benchout/

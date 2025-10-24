@@ -150,10 +150,8 @@ def test_noj_equivalence_timeseries(curves):
     ws = np.random.uniform(cutin_ws, cutout_ws, size=n_timestamps)
     wd = np.random.uniform(0, 360, size=n_timestamps)
 
-    s = time.time()
     sim_res = wfm(x=x, y=y, wd=wd, ws=ws, time=True, n_cpu=1)
     pw_dx, pw_dy = wfm.aep_gradients(x=x, y=y, wd=wd, ws=ws, time=True, n_cpu=1)
-    pywake_runtime = time.time() - s
 
     model = NOJDeficit(k=wake_expansion_k, use_radius_mask=True)
     turbine = _create_pixwake_turbine(ct_curve, power_curve)
@@ -175,18 +173,13 @@ def test_noj_equivalence_timeseries(curves):
         sim, x, y, ws, wd, ret_grad_fn=True
     )
 
-    s = time.time()
     _, (px_dx, px_dy) = grad_fn(jnp.asarray(x), jnp.asarray(y))
     px_dx.block_until_ready()
     px_dy.block_until_ready()
-    pixwake_runtime = time.time() - s
 
     assert np.isfinite(px_dx).all() and np.isfinite(px_dy).all()
     np.testing.assert_allclose(px_dx, pw_dx, atol=1e-6)
     np.testing.assert_allclose(px_dy, pw_dy, atol=1e-6)
-
-    speedup = pywake_runtime / pixwake_runtime
-    assert speedup > 2.0, speedup
 
 
 def test_noj_equivalence_with_site_frequencies(curves):
@@ -236,10 +229,8 @@ def test_noj_equivalence_with_site_frequencies(curves):
     ws = np.arange(cutin_ws, cutout_ws + 1)
     wd = np.arange(0, 360, 45)
 
-    s = time.time()
     sim_res = wfm(x=x, y=y, wd=wd, ws=ws, n_cpu=1, WS_eff=0)
     pw_dx, pw_dy = wfm.aep_gradients(x=x, y=y, wd=wd, ws=ws, n_cpu=1, WS_eff=0)
-    pywake_runtime = time.time() - s
 
     pix_ws, pix_wd = jnp.meshgrid(ws, wd)
     pix_wd, pix_ws = pix_wd.flatten(), pix_ws.flatten()
@@ -273,20 +264,15 @@ def test_noj_equivalence_with_site_frequencies(curves):
     dy.block_until_ready()
     val.block_until_ready()
 
-    s = time.time()
     val, (px_dx, px_dy) = grad_and_value_fn(jnp.asarray(x), jnp.asarray(y))
     dx.block_until_ready()
     dy.block_until_ready()
     val.block_until_ready()
-    pixwake_runtime = time.time() - s
 
     rtol = 1e-2
     assert np.isfinite(px_dx).all() and np.isfinite(px_dy).all()
     np.testing.assert_allclose(px_dx, pw_dx, rtol=rtol)
     np.testing.assert_allclose(px_dy, pw_dy, rtol=rtol)
-
-    speedup = pywake_runtime / pixwake_runtime
-    assert speedup > 2.0, speedup
 
 
 def test_gaussian_equivalence_timeseries(ct_vals, power_vals):
