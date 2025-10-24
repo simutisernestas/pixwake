@@ -72,16 +72,6 @@ def generate_wind_rose_data(
     return ws_grid.flatten(), wd_grid.flatten(), prob_grid.flatten()
 
 
-def get_pywake_n_cpu(n_turbines, max_cpu=32):
-    """Scales the number of CPUs for PyWake based on the number of turbines."""
-    n_cpu_at_50 = 4
-    max_out_at = 200
-    n_cpu = n_cpu_at_50 + (max_cpu - n_cpu_at_50) * (n_turbines - 50) / (
-        max_out_at - 50
-    )
-    return max(4, min(max_cpu, int(np.round(n_cpu))))
-
-
 def get_turbine_curves():
     """Returns power and CT curves for the turbine."""
     # fmt: off
@@ -122,6 +112,27 @@ def benchmark_pywake(
         ),
         turbulenceModel=PyWakeCrespoHernandez(),
     )
+
+    def get_pywake_n_cpu(n_turbines, max_cpu=32):
+        """Scales the number of CPUs for PyWake based on the number of turbines."""
+        available_cpu_cores = int(os.environ.get("LSB_DJOB_NUMPROC")) or os.cpu_count() or 1
+        n_cpu_at_50 = 4
+        max_out_at = 200
+        # linear scaling between 50 and max_out_at turbines
+        n_cpu = n_cpu_at_50 + (max_cpu - n_cpu_at_50) * (n_turbines - 50) / (
+            max_out_at - 50
+        )
+        return min(
+            max(
+                1,
+                min(
+                    max_cpu,
+                    int(np.round(n_cpu)),
+                ),
+            ),
+            available_cpu_cores,
+        )
+
     n_cpu = get_pywake_n_cpu(n_turbines)
 
     start = time.time()
@@ -165,7 +176,6 @@ def benchmark_pixwake(
         pixwake_model,
         turbulence=CrespoHernandez(),
         fpi_damp=1.0,
-        mapping_strategy="map",
     )
 
     @jax.jit
@@ -248,15 +258,14 @@ def run_benchmark(bench_target: BenchTarget, n_turbines_list, spacings_list):
     return results
 
 
-def plot_results():
+def plot_results(run_id: str):
     """Plots the benchmark results and saves them to files."""
     import glob
-
     import xarray as xr
 
-    files = glob.glob("benchout/benchmark_*.nc")
+    files = glob.glob(f"benchout/{run_id}/benchmark_*.nc")
     if not files:
-        print("No benchmark files found in 'benchout/'.")
+        print(f"No benchmark files found in 'benchout/{run_id}/'.")
         return
 
     try:
@@ -283,7 +292,7 @@ def plot_results():
 
     spacings = sorted(df["spacing"].unique())
 
-    fig, axes = plt.subplots(2, 1, figsize=(10, 12), sharex=True)
+    _, axes = plt.subplots(2, 1, figsize=(10, 12), sharex=True)
 
     # Plot runtime
     ax = axes[0]
@@ -327,17 +336,13 @@ def plot_results():
     ax.set_yscale("log")
 
     plt.tight_layout()
-    filename = "figures/benchmark_comparison.png"
+    filename = f"benchout/{run_id}/benchmark_comparison_{int(time.time())}.png"
     plt.savefig(filename, dpi=300)
     print(f"Saved plot: {filename}")
     plt.close()
 
 
 if __name__ == "__main__":
-    os.makedirs("figures", exist_ok=True)
-
-    # multiprocessing.set_start_method("spawn", force=True)
-
     parser = argparse.ArgumentParser(description="Benchmark PixWake vs PyWake.")
     parser.add_argument(
         "--n_turbines",
@@ -361,6 +366,12 @@ if __name__ == "__main__":
         help="Benchmark target: 'pywake' or 'pixwake'.",
     )
     parser.add_argument(
+        "--run_id",
+        type=str,
+        required=True,
+        help="Run identifier for output files.",
+    )
+    parser.add_argument(
         "--plot",
         action="store_true",
         help="Plot benchmark results from 'benchout' folder.",
@@ -368,7 +379,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.plot:
-        plot_results()
+        plot_results(args.run_id)
         exit()
 
     if not args.target:
@@ -410,4 +421,7 @@ if __name__ == "__main__":
     print("\n", ds)
 
     os.makedirs("benchout", exist_ok=True)
-    ds.to_netcdf(f"benchout/benchmark_{args.target}_{int(time.time())}.nc")
+    os.makedirs(f"benchout/{args.run_id}", exist_ok=True)
+    ds.to_netcdf(
+        f"benchout/{args.run_id}/benchmark_{args.target}_{int(time.time())}.nc"
+    )
