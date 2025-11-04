@@ -5,7 +5,7 @@ import pytest
 from jax.test_util import check_grads
 
 from pixwake import Curve, Turbine
-from pixwake.core import SimulationContext, WakeSimulation, fixed_point
+from pixwake.core import WakeSimulation, fixed_point
 from pixwake.deficit import (
     BastankhahGaussianDeficit,
     NiayifarGaussianDeficit,

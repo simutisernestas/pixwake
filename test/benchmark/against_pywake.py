@@ -5,7 +5,6 @@ from dataclasses import dataclass
 
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 from memory_profiler import memory_usage
 from py_wake.deficit_models.gaussian import (
     NiayifarGaussianDeficit as PyWakeNiayifarGaussianDeficit,
