@@ -17,8 +17,6 @@ platforms = ["win-64", "linux-64", "linux-aarch64", "osx-arm64"]
 [tool.pixi.pypi-dependencies]
 pixwake = { path = ".", editable = true }
 
-[tool.pixi.tasks]
-
 [tool.pixi.dependencies]
 python = "<3.15"
 
@@ -28,12 +26,7 @@ pytest-xdist = "*"
 pytest-cov = "*"
 py-wake = ">=2.6.12,<3"
 mypy = ">=1.17.1,<2"
-psutil = ">=7.0.0,<8"
 memory_profiler = ">=0.61.0,<0.62"
-
-[tool.pixi.feature.test.pypi-dependencies]
-# tensorboard = "*"
-# xprof = "*"
 
 [tool.pixi.feature.format.dependencies]
 pre-commit = "*"
