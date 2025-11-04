@@ -546,8 +546,8 @@ class WakeSimulation:
 
 @partial(
     custom_vjp,
-    nondiff_argnums=(0,),
-    nondiff_argnames=["tol", "damp"],
+    nondiff_argnums=(0, 3, 4),  # older jax syntax for rocm
+    # nondiff_argnames=["tol", "damp"],
 )
 def fixed_point(
     f: Callable,
