@@ -48,11 +48,18 @@ test = "pytest test/ --cov=src/pixwake -n auto --dist worksteal"
 [tool.pixi.feature.cuda.target.linux-64.pypi-dependencies]
 jax = { version = "*", extras = ["cuda12"] }
 
+[tool.pixi.feature.rocm.target.linux-64.pypi-dependencies]
+jax = { version = "==0.5.0", extras = ["rocm"] }
+
+[tool.pixi.feature.rocm.target.linux-64.dependencies]
+python = "<3.13"
+
 [tool.pixi.environments]
 default = ["test", "format"]
 test = ["test"]
 format = { features = ["format"], no-default-feature = true }
 cuda = ["cuda", "test"]
+rocm = ["rocm", "test"]
 
 [tool.coverage.report]
 fail_under = 95
