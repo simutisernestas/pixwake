@@ -4,6 +4,7 @@ import jax.numpy as jnp
 
 from ..core import SimulationContext
 from ..jax_utils import get_float_eps
+from ..rotor_avg import RotorAvg
 from ..utils import ct2a_madsen
 from .base import WakeDeficit
 
@@ -35,6 +36,7 @@ class BastankhahGaussianDeficit(WakeDeficit):
         ctlim: float = 0.899,
         ct2a: Callable = ct2a_madsen,
         use_effective_ws: bool = False,
+        rotor_avg_model: RotorAvg | None = None,
         **kwargs: Any,
     ) -> None:
         """Initializes the `BastankhahGaussianDeficit` model.
@@ -46,9 +48,10 @@ class BastankhahGaussianDeficit(WakeDeficit):
             ct2a: A callable to convert thrust coefficient to induction factor.
             use_effective_ws: If `True`, use the effective wind speed as the
                 reference for deficit calculation.
+            rotor_avg_model: An optional rotor averaging model.
             **kwargs: Additional arguments passed to the parent class.
         """
-        super().__init__(**kwargs)
+        super().__init__(rotor_avg_model=rotor_avg_model, **kwargs)
         self.k = k
         self.ceps = ceps
         self.ctlim = ctlim
@@ -86,8 +89,18 @@ class BastankhahGaussianDeficit(WakeDeficit):
 
         # Wake width parameter (normalized by diameter)
         k_expansion = jnp.asarray(self.wake_expansion_coefficient(ctx.ti, ti_eff))
+
+        if ctx.dw.ndim > 2:
+            epsilon = epsilon.reshape(1, -1, 1, 1, 1)
+            ct = ct.reshape(1, -1, 1, 1, 1)
+            ws_reference = ws_eff.reshape(1, -1, 1, 1, 1)
+        else:
+            epsilon = epsilon[None, :]
+            ct = ct[None, :]
+            ws_reference = ws_eff[None, :]
+
         sigma_normalized = (
-            k_expansion * ctx.dw / diameter + epsilon[None, :]
+            k_expansion * ctx.dw / diameter + epsilon
         )  # (n_receivers, n_sources)
 
         # Dimensional wake radius (2*sigma per Niayifar)
@@ -96,7 +109,7 @@ class BastankhahGaussianDeficit(WakeDeficit):
         diameter = ctx.turbine.rotor_diameter
 
         # Effective thrust coefficient accounting for wake expansion
-        ct_effective = ct[None, :] / (8.0 * sigma_normalized**2 + eps)
+        ct_effective = ct / (8.0 * sigma_normalized**2 + eps)
 
         # Centerline deficit (as fraction of reference wind speed)
         centerline_deficit = jnp.minimum(1.0, 2.0 * self.ct2a(ct_effective))
@@ -110,9 +123,11 @@ class BastankhahGaussianDeficit(WakeDeficit):
 
         # Convert to absolute deficit (m/s)
         ws_reference = (
-            ws_eff if self.use_effective_ws else jnp.full_like(ws_eff, ctx.ws)
+            ws_reference
+            if self.use_effective_ws
+            else jnp.full_like(ws_reference, ctx.ws)
         )
-        return deficit_fraction * ws_reference[None, :], wake_radius
+        return deficit_fraction * ws_reference, wake_radius
 
     def wake_expansion_coefficient(
         self, ti_amb: jnp.ndarray | None, ti_eff: jnp.ndarray | None
@@ -146,6 +161,7 @@ class NiayifarGaussianDeficit(BastankhahGaussianDeficit):
         self,
         a: tuple[float, float] = (0.38, 4e-3),
         use_effective_ti: bool = False,
+        rotor_avg_model: RotorAvg | None = None,
         **kwargs: Any,
     ) -> None:
         """Initializes the `NiayifarGaussianDeficit` model.
@@ -154,9 +170,10 @@ class NiayifarGaussianDeficit(BastankhahGaussianDeficit):
             a: A tuple `(a0, a1)` for the wake expansion formula.
             use_effective_ti: If `True`, use the effective turbulence intensity
                 for the wake expansion calculation.
+            rotor_avg_model: An optional rotor averaging model.
             **kwargs: Additional arguments passed to the parent class.
         """
-        super().__init__(**kwargs)
+        super().__init__(rotor_avg_model=rotor_avg_model, **kwargs)
         self.a = a
         self.use_effective_ti = use_effective_ti
 
