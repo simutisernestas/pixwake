@@ -63,68 +63,10 @@ class WakeDeficit(ABC):
             radius.
         """
         if self.rotor_avg_model:
-            # The compute function is defined on a single point in space,
-            # but the rotor average model needs to evaluate it at multiple
-            # points on the rotor disk. We create a partial function that
-            # captures the current state (ws_eff, ti_eff, ctx) and can be
-            # called with just the spatial coordinates.
-            def compute_at_point(
-                dw: jnp.ndarray,
-                cw: jnp.ndarray,
-                ws_eff: jnp.ndarray,
-                ti_eff: jnp.ndarray | None,
-                ctx: SimulationContext,
-            ) -> tuple[jnp.ndarray, jnp.ndarray]:
-                # We need to create a new context for each point on the rotor
-                # disk. We do this by replacing the downwind and crosswind
-                # distances in the original context with the new values.
-                # The rest of the context remains the same.
-                new_ctx = SimulationContext(
-                    turbine=ctx.turbine,
-                    dw=dw,
-                    cw=cw,
-                    ws=ctx.ws,
-                    ti=ctx.ti,
-                )
-                return self.compute(ws_eff, ti_eff, new_ctx)
-
-            # The rotor average model expects the function to be called with
-            # specific argument names, so we wrap the call in a lambda.
-            # The `unbatched_compute` function is now a closure that can be
-            # passed to the rotor average model.
-            unbatched_compute = partial(
-                compute_at_point, ws_eff=ws_eff, ti_eff=ti_eff, ctx=ctx
-            )
-
-            # Reshape inputs to be compatible with the rotor average model,
-            # which expects dimensions for wind direction and wind speed cases.
-            # In the context of this function, we are only dealing with a single
-            # case, so we add dummy dimensions.
-            n_receivers, n_sources = ctx.dw.shape
-            D_dst = jnp.full((n_receivers, 1, 1), ctx.turbine.rotor_diameter)
-            dw = ctx.dw.reshape(n_receivers, n_sources, 1, 1)
-            cw = ctx.cw.reshape(n_receivers, n_sources, 1, 1)
-            dh = jnp.zeros_like(cw)
-
-            # Call the rotor average model to get the rotor-averaged deficit.
-            # The model will call our `unbatched_compute` function at multiple
-            # points on the rotor disk and average the results.
             ws_deficit_m, wake_radius = self.rotor_avg_model(
-                lambda **kwargs: unbatched_compute(
-                    dw=kwargs["dw_ijlk"],
-                    cw=jnp.sqrt(kwargs["hcw_ijlk"] ** 2 + kwargs["dh_ijlk"] ** 2),
-                ),
-                D_dst_ijl=D_dst,
-                dw_ijlk=dw,
-                hcw_ijlk=cw,
-                dh_ijlk=dh,
+                self.compute, ws_eff, ti_eff, ctx
             )
-            # Squeeze the dummy dimensions for wind direction and wind speed.
-            ws_deficit_m = ws_deficit_m.squeeze(axis=-1).squeeze(axis=-1)
-            wake_radius = wake_radius.squeeze(axis=-1).squeeze(axis=-1)
         else:
-            # If no rotor average model is provided, just call the compute
-            # method directly.
             ws_deficit_m, wake_radius = self.compute(ws_eff, ti_eff, ctx)
 
         in_wake_mask = ctx.dw > 0.0
