@@ -115,6 +115,7 @@ class CGIRotorAvg(RotorAvg):
             self.nodes_y,
             self.weights,
         ) = self._get_cgi_nodes_and_weights(n_points)
+        self._cache = {}
 
     @staticmethod
     def _get_cgi_nodes_and_weights(
@@ -148,45 +149,33 @@ class CGIRotorAvg(RotorAvg):
     ) -> jax.Array | tuple[jax.Array, ...]:
         """Computes the rotor-averaged value of `func`.
 
-        This method evaluates the function `func` at a set of predefined
-        integration points on the rotor disk and computes a weighted average of
-        the results. The integration points and weights are determined by the
-        CGI method.
+        This method handles all dimensional reshaping internally, so `func`
+        doesn't need to know about rotor averaging.
 
         Args:
-            func: The function to be rotor-averaged. It is expected to have a
-                signature `func(ws_eff, ti_eff, ctx)`, where `ws_eff` and
-                `ti_eff` are the effective wind speed and turbulence intensity,
-                and `ctx` is the simulation context.
+            func: The function to be rotor-averaged. It should work with
+                standard 2D arrays (n_receivers, n_sources).
             ws_eff: The effective wind speeds at each turbine.
             ti_eff: The effective turbulence intensities at each turbine.
-            ctx: The simulation context, containing information about the
-                wind farm layout, wind conditions, etc.
+            ctx: The simulation context.
 
         Returns:
             The rotor-averaged value of the function `func`.
         """
-        # Get the diameter of the destination turbines
-        n_receivers, n_sources = ctx.dw.shape
-        D_dst = jnp.full((n_receivers, n_sources), ctx.turbine.rotor_diameter)
-        R_dst = D_dst / 2.0
+        R_dst = ctx.turbine.rotor_diameter / 2.0
 
-        # Create a new axis for the integration points
+        # Expand to integration points: (n_receivers, n_sources, n_points)
         dw = ctx.dw[..., jnp.newaxis]
         cw = ctx.cw[..., jnp.newaxis]
-        # Get the offsets for the integration points
-        node_x_offset = self.nodes_x.reshape(1, 1, -1) * R_dst[..., jnp.newaxis]
-        node_y_offset = self.nodes_y.reshape(1, 1, -1) * R_dst[..., jnp.newaxis]
 
-        # Calculate the new crosswind and downwind distances for each
-        # integration point
+        node_x_offset = self.nodes_x.reshape(1, 1, -1) * R_dst
+        node_y_offset = self.nodes_y.reshape(1, 1, -1) * R_dst
+
         hcw_at_nodes = cw + node_x_offset
         dh_at_nodes = 0.0 + node_y_offset
-
-        # The downwind distance is the same for all integration points
         dw_at_nodes = jnp.broadcast_to(dw, hcw_at_nodes.shape)
 
-        # Create a new simulation context for the integration points
+        # Create context for integration points
         ctx_nodes = SimulationContext(
             turbine=ctx.turbine,
             dw=dw_at_nodes,
@@ -194,13 +183,32 @@ class CGIRotorAvg(RotorAvg):
             ws=ctx.ws,
             ti=ctx.ti,
         )
-        # Evaluate the function at the integration points
-        value_at_nodes, aux = func(ws_eff, ti_eff, ctx_nodes)
-        # aux variables should be the same for all points...
-        aux = aux[:, :, 0]
 
-        # Compute the weighted average of the values at the integration points
+        if id(func) not in self._cache:
+            # Evaluate func at each integration point by vmapping over last axis
+            def eval_single_point(dw_single, cw_single):
+                ctx_single = SimulationContext(
+                    turbine=ctx.turbine,
+                    dw=dw_single,
+                    cw=cw_single,
+                    ws=ctx.ws,
+                    ti=ctx.ti,
+                )
+                return func(ws_eff, ti_eff, ctx_single)
+
+            # TODO: cache vmapped function for performance
+            # Map over integration points (last dimension)
+            self._cache[id(func)] = jax.vmap(
+                eval_single_point,
+                in_axes=2,
+                out_axes=2,
+            )
+
+        value_at_nodes, aux_at_nodes = self._cache[id(func)](dw_at_nodes, ctx_nodes.cw)
+
+        # Take first aux value (should be same for all points)
+        aux = aux_at_nodes[:, :, 0]
+
+        # Weighted average over integration points
         weights_broadcast = self.weights.reshape(1, 1, -1)
-
-        # Weighted sum over last dimension (integration points)
         return jnp.sum(value_at_nodes * weights_broadcast, axis=-1), aux

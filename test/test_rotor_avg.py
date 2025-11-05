@@ -74,25 +74,34 @@ def test_cgi_rotor_avg_against_pywake(
 ):
     """Test the CGI rotor averaging model against the PyWake implementation."""
 
-    if pw_deficit_model is PyWakeNOJDeficit:  # TODO:
-        pytest.xfail("NOJ model differences not yet resolved.")
+    # if pw_deficit_model is PyWakeNOJDeficit:  # TODO:
+    #     pytest.xfail("NOJ model differences not yet resolved.")
 
     wind_turbines = v80_wt()
     rotor_avg_model = CGIRotorAvg(n_points=n_points)
     deficit_model = px_deficit_model(rotor_avg_model=rotor_avg_model, **px_kwargs)
 
-    xs = [0, 200, 400]
-    ys = [0, 0, 50]
+    def _create_turbine_layout(width, length, spacing_x=3e2, spacing_y=3e2):
+        x, y = jnp.meshgrid(
+            jnp.linspace(0, width * spacing_x, width),
+            jnp.linspace(0, length * spacing_y, length),
+        )
+        return x.flatten().tolist(), y.flatten().tolist()
+
+    xs, ys = _create_turbine_layout(3, 3, spacing_y=50)
+    ws = [10.0]
+    wd = [270.0]
+    ti = [0.05]
 
     sim = WakeSimulation(
-        wind_turbines, deficit_model, fpi_damp=1.0, turbulence=CrespoHernandez()
+        wind_turbines, deficit_model, fpi_damp=0.5, turbulence=CrespoHernandez()
     )
     sim_res = sim(
         wt_xs=jnp.array(xs),
         wt_ys=jnp.array(ys),
-        wd=jnp.array([270.0]),
-        ws_amb=jnp.array([10.0]),
-        ti=jnp.array([0.05]),
+        wd=jnp.array(wd),
+        ws_amb=jnp.array(ws),
+        ti=jnp.array(ti),
     )
     ws_eff_pixwake = sim_res.effective_ws
 
@@ -108,7 +117,7 @@ def test_cgi_rotor_avg_against_pywake(
         superpositionModel=SquaredSum(),
         turbulenceModel=PyWakeCrespoHernandez(rotorAvgModel=None),
     )
-    sim_res_pw = wfm(x=xs, y=ys, wd=270, ws=10, WS_eff=0, TI=0.05)
+    sim_res_pw = wfm(x=xs, y=ys, wd=wd, ws=ws, TI=ti, WS_eff=0)
     ws_eff_pywake = sim_res_pw.WS_eff_ilk
 
     assert jnp.allclose(ws_eff_pixwake, ws_eff_pywake.T, atol=1e-5, rtol=1e-5)

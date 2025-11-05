@@ -88,18 +88,9 @@ class BastankhahGaussianDeficit(WakeDeficit):
         # Wake width parameter (normalized by diameter)
         k_expansion = jnp.asarray(self.wake_expansion_coefficient(ctx.ti, ti_eff))
 
-        if ctx.dw.ndim > 2:  # Rotor-averaged deficit
-            # Reshape source-turbine dependent quantities to be broadcastable with
-            # the integration points dimension.
-            epsilon = epsilon[None, :, None]
-            ct = ct[None, :, None]
-            ws_reference = ws_eff[None, :, None]
-            k_expansion = jnp.atleast_1d(k_expansion)[None, :, None]
-        else:
-            # Prepare for broadcasting without rotor averaging
-            epsilon = epsilon[None, :]
-            ct = ct[None, :]
-            ws_reference = ws_eff[None, :]
+        epsilon = epsilon[None, :]
+        ct = ct[None, :]
+        ws_reference = ws_eff[None, :]
 
         sigma_normalized = (
             k_expansion * ctx.dw / diameter + epsilon
