@@ -118,11 +118,15 @@ class SimulationContext:
         ti: The ambient turbulence intensity for the simulation case.
     """
 
+    # site variables
     turbine: Turbine
     dw: jnp.ndarray
     cw: jnp.ndarray
     ws: jnp.ndarray
     ti: jnp.ndarray | None = None
+
+    # wake properties (set by deficit model)
+    # wake_radius: jnp.ndarray | None = None # TODO: add wake radius here ?
 
     def tree_flatten(self) -> tuple[tuple, tuple]:
         """Flattens the `SimulationContext` for JAX's pytree mechanism."""

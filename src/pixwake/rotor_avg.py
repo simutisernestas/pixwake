@@ -52,16 +52,14 @@ _CGI_NODES_AND_WEIGHTS = {
             pm * jnp.array([1 / 2, 1 / 2, 1 / 6]),
         ]
     ).T,
-    21: lambda pm: jnp.concatenate(
+    21: lambda _: jnp.concatenate(
         [
             jnp.array([[0, 0, 1 / 9]]),
             jnp.array(
                 [
                     [
-                        jnp.sqrt((6 - jnp.sqrt(6)) / 10)
-                        * jnp.cos(2 * jnp.pi * k / 10),
-                        jnp.sqrt((6 - jnp.sqrt(6)) / 10)
-                        * jnp.sin(2 * jnp.pi * k / 10),
+                        jnp.sqrt((6 - jnp.sqrt(6)) / 10) * jnp.cos(2 * jnp.pi * k / 10),
+                        jnp.sqrt((6 - jnp.sqrt(6)) / 10) * jnp.sin(2 * jnp.pi * k / 10),
                         (16 + jnp.sqrt(6)) / 360,
                     ]
                     for k in range(1, 11)
@@ -70,10 +68,8 @@ _CGI_NODES_AND_WEIGHTS = {
             jnp.array(
                 [
                     [
-                        jnp.sqrt((6 + jnp.sqrt(6)) / 10)
-                        * jnp.cos(2 * jnp.pi * k / 10),
-                        jnp.sqrt((6 + jnp.sqrt(6)) / 10)
-                        * jnp.sin(2 * jnp.pi * k / 10),
+                        jnp.sqrt((6 + jnp.sqrt(6)) / 10) * jnp.cos(2 * jnp.pi * k / 10),
+                        jnp.sqrt((6 + jnp.sqrt(6)) / 10) * jnp.sin(2 * jnp.pi * k / 10),
                         (16 - jnp.sqrt(6)) / 360,
                     ]
                     for k in range(1, 11)
@@ -199,12 +195,12 @@ class CGIRotorAvg(RotorAvg):
             ti=ctx.ti,
         )
         # Evaluate the function at the integration points
-        values_at_nodes = func(ws_eff, ti_eff, ctx_nodes)
+        value_at_nodes, aux = func(ws_eff, ti_eff, ctx_nodes)
+        # aux variables should be the same for all points...
+        aux = aux[:, :, 0]
 
         # Compute the weighted average of the values at the integration points
         weights_broadcast = self.weights.reshape(1, 1, -1)
 
         # Weighted sum over last dimension (integration points)
-        return jax.tree.map(
-            lambda x: jnp.sum(x * weights_broadcast, axis=-1), values_at_nodes
-        )
+        return jnp.sum(value_at_nodes * weights_broadcast, axis=-1), aux

@@ -1,8 +1,5 @@
 from abc import ABC, abstractmethod
-from functools import partial
-from typing import Callable
 
-import jax
 import jax.numpy as jnp
 
 from pixwake.jax_utils import get_float_eps

@@ -4,7 +4,6 @@ import jax.numpy as jnp
 
 from ..core import SimulationContext
 from ..jax_utils import get_float_eps
-from ..rotor_avg import RotorAvg
 from ..utils import ct2a_madsen
 from .base import WakeDeficit
 
@@ -36,7 +35,6 @@ class BastankhahGaussianDeficit(WakeDeficit):
         ctlim: float = 0.899,
         ct2a: Callable = ct2a_madsen,
         use_effective_ws: bool = False,
-        rotor_avg_model: RotorAvg | None = None,
         **kwargs: Any,
     ) -> None:
         """Initializes the `BastankhahGaussianDeficit` model.
@@ -51,7 +49,7 @@ class BastankhahGaussianDeficit(WakeDeficit):
             rotor_avg_model: An optional rotor averaging model.
             **kwargs: Additional arguments passed to the parent class.
         """
-        super().__init__(rotor_avg_model=rotor_avg_model, **kwargs)
+        super().__init__(**kwargs)
         self.k = k
         self.ceps = ceps
         self.ctlim = ctlim
@@ -96,6 +94,7 @@ class BastankhahGaussianDeficit(WakeDeficit):
             epsilon = epsilon[None, :, None]
             ct = ct[None, :, None]
             ws_reference = ws_eff[None, :, None]
+            k_expansion = jnp.atleast_1d(k_expansion)[None, :, None]
         else:
             # Prepare for broadcasting without rotor averaging
             epsilon = epsilon[None, :]
@@ -164,7 +163,6 @@ class NiayifarGaussianDeficit(BastankhahGaussianDeficit):
         self,
         a: tuple[float, float] = (0.38, 4e-3),
         use_effective_ti: bool = False,
-        rotor_avg_model: RotorAvg | None = None,
         **kwargs: Any,
     ) -> None:
         """Initializes the `NiayifarGaussianDeficit` model.
@@ -176,7 +174,7 @@ class NiayifarGaussianDeficit(BastankhahGaussianDeficit):
             rotor_avg_model: An optional rotor averaging model.
             **kwargs: Additional arguments passed to the parent class.
         """
-        super().__init__(rotor_avg_model=rotor_avg_model, **kwargs)
+        super().__init__(**kwargs)
         self.a = a
         self.use_effective_ti = use_effective_ti
 
