@@ -23,7 +23,7 @@ from pixwake.turbulence import CrespoHernandez
 jcfg.update("jax_enable_x64", True)
 
 
-def v80_jax():
+def v80_wt():
     """Returns a V80 turbine object."""
 
     wind_turbines = V80()
@@ -55,7 +55,7 @@ def v80_jax():
             PyWakeBastankhahGaussianDeficit,
             {},
             BastankhahGaussianDeficit,
-            {},
+            {"use_radius_mask": False},
         ),
         (
             PyWakeNiayifarGaussianDeficit,
@@ -77,7 +77,7 @@ def test_cgi_rotor_avg_against_pywake(
     if pw_deficit_model is PyWakeNOJDeficit:  # TODO:
         pytest.xfail("NOJ model differences not yet resolved.")
 
-    wind_turbines = v80_jax()
+    wind_turbines = v80_wt()
     rotor_avg_model = CGIRotorAvg(n_points=n_points)
     deficit_model = px_deficit_model(rotor_avg_model=rotor_avg_model, **px_kwargs)
 
@@ -111,4 +111,4 @@ def test_cgi_rotor_avg_against_pywake(
     sim_res_pw = wfm(x=xs, y=ys, wd=270, ws=10, WS_eff=0, TI=0.05)
     ws_eff_pywake = sim_res_pw.WS_eff_ilk
 
-    assert jnp.allclose(ws_eff_pixwake, ws_eff_pywake.T, atol=1e-5)
+    assert jnp.allclose(ws_eff_pixwake, ws_eff_pywake.T, atol=1e-5, rtol=1e-5)
