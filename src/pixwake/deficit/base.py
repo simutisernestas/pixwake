@@ -111,7 +111,8 @@ class WakeDeficit(ABC):
             # points on the rotor disk and average the results.
             ws_deficit_m, wake_radius = self.rotor_avg_model(
                 lambda **kwargs: unbatched_compute(
-                    dw=kwargs["dw_ijlk"], cw=kwargs["hcw_ijlk"]
+                    dw=kwargs["dw_ijlk"],
+                    cw=jnp.sqrt(kwargs["hcw_ijlk"] ** 2 + kwargs["dh_ijlk"] ** 2),
                 ),
                 D_dst_ijl=D_dst,
                 dw_ijlk=dw,

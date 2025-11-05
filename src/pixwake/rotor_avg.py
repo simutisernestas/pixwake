@@ -184,9 +184,7 @@ class CGIRotorAvg(RotorAvg):
         dh_at_nodes = dh_ijlk_expanded + node_y_offset  # vertical offset
 
         # Downwind distance doesn't change across rotor
-        dw_at_nodes = jnp.broadcast_to(
-            dw_ijlk[..., jnp.newaxis], cw_at_nodes.shape
-        )
+        dw_at_nodes = jnp.broadcast_to(dw_ijlk[..., jnp.newaxis], cw_at_nodes.shape)
 
         # Prepare kwargs for function evaluation at all points
         eval_kwargs = kwargs.copy()
