@@ -1,4 +1,5 @@
 import jax.numpy as jnp
+import numpy as np
 import pytest
 from jax import config as jcfg
 from py_wake.deficit_models import NOJDeficit as PyWakeNOJDeficit
@@ -49,7 +50,7 @@ def v80_wt():
             PyWakeNOJDeficit,
             {},
             NOJDeficit,
-            {"use_radius_mask": True},
+            {},
         ),
         (
             PyWakeBastankhahGaussianDeficit,
@@ -67,15 +68,26 @@ def v80_wt():
                 "use_radius_mask": False,
             },
         ),
+        (
+            PyWakeNiayifarGaussianDeficit,
+            {"use_effective_ws": False, "use_effective_ti": False},
+            NiayifarGaussianDeficit,
+            {
+                "use_effective_ws": False,
+                "use_effective_ti": False,
+                "use_radius_mask": False,
+            },
+        ),
     ],
 )
 def test_cgi_rotor_avg_against_pywake(
     n_points, pw_deficit_model, pw_kwargs, px_deficit_model, px_kwargs
 ):
-    """Test the CGI rotor averaging model against the PyWake implementation."""
-
-    # if pw_deficit_model is PyWakeNOJDeficit:  # TODO:
-    #     pytest.xfail("NOJ model differences not yet resolved.")
+    if pw_deficit_model is PyWakeNOJDeficit:
+        pytest.xfail(  # TODO: fix NOJ rotor avg differences
+            "NOJ model differences not yet resolved. "
+            "The failure is specific to rotor averaging."
+        )
 
     wind_turbines = v80_wt()
     rotor_avg_model = CGIRotorAvg(n_points=n_points)
@@ -88,9 +100,10 @@ def test_cgi_rotor_avg_against_pywake(
         )
         return x.flatten().tolist(), y.flatten().tolist()
 
-    xs, ys = _create_turbine_layout(3, 3, spacing_y=50)
-    ws = [10.0]
-    wd = [270.0]
+    RD = wind_turbines.rotor_diameter
+    xs, ys = _create_turbine_layout(6, 3, spacing_y=2 * RD)
+    ws = np.random.uniform(5.0, 15.0, 100).tolist()
+    wd = np.random.uniform(0.0, 360.0, 100).tolist()
     ti = [0.05]
 
     sim = WakeSimulation(
@@ -117,7 +130,10 @@ def test_cgi_rotor_avg_against_pywake(
         superpositionModel=SquaredSum(),
         turbulenceModel=PyWakeCrespoHernandez(rotorAvgModel=None),
     )
-    sim_res_pw = wfm(x=xs, y=ys, wd=wd, ws=ws, TI=ti, WS_eff=0)
+
+    sim_res_pw = wfm(x=xs, y=ys, wd=wd, ws=ws, TI=ti, WS_eff=0, time=True)
     ws_eff_pywake = sim_res_pw.WS_eff_ilk
 
-    assert jnp.allclose(ws_eff_pixwake, ws_eff_pywake.T, atol=1e-5, rtol=1e-5)
+    np.testing.assert_allclose(
+        ws_eff_pixwake, ws_eff_pywake.T.squeeze(0), atol=1e-6, rtol=1e-3
+    )

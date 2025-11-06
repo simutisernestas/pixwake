@@ -65,6 +65,7 @@ def plot_flow_map(
     ax.set_title("Wind Farm Flow Map")
     ax.set_xlabel("x-coordinates")
     ax.set_ylabel("y-coordinates")
+    ax.set_aspect("equal", adjustable="box")
 
     if show_plot:
         plt.show()

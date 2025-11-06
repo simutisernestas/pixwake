@@ -25,7 +25,6 @@ class NOJDeficit(WakeDeficit):
         self,
         k: float = 0.1,
         ct2a: Callable = ct2a_madsen,
-        use_radius_mask: bool = True,
         **kwargs: Any,
     ) -> None:
         """Initializes the `NOJDeficit` model.
@@ -36,7 +35,8 @@ class NOJDeficit(WakeDeficit):
             use_radius_mask: A boolean indicating whether to use a radius-based
                 mask.
         """
-        super().__init__(use_radius_mask, **kwargs)
+        kwargs["use_radius_mask"] = True
+        super().__init__(**kwargs)
         self.k = k
         self.ct2a = ct2a
 

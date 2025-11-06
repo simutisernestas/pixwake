@@ -417,7 +417,7 @@ class WakeSimulation:
         wt_x, wt_y, ws, wd, ti = sc
 
         if fm_x is None or fm_y is None:
-            grid_res = 100
+            grid_res = 200
             x_min, x_max = jnp.min(wt_x) - 200, jnp.max(wt_x) + 200
             y_min, y_max = jnp.min(wt_y) - 200, jnp.max(wt_y) + 200
             grid_x, grid_y = jnp.meshgrid(

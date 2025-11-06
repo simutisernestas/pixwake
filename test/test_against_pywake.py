@@ -1,8 +1,6 @@
 import jax
 import jax.numpy as jnp
 import numpy as np
-
-asarray_method = np.asarray
 import pytest
 import xarray as xr
 from jax import config as jcfg
@@ -30,6 +28,7 @@ from pixwake.deficit import (
 )
 from pixwake.turbulence import CrespoHernandez
 
+asarray_method = np.asarray
 np.random.seed(42)
 jcfg.update("jax_enable_x64", True)
 np.asarray = asarray_method

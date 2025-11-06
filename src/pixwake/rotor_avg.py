@@ -115,7 +115,7 @@ class CGIRotorAvg(RotorAvg):
             self.nodes_y,
             self.weights,
         ) = self._get_cgi_nodes_and_weights(n_points)
-        self._cache = {}
+        self._cache: dict[int, Callable] = {}
 
     @staticmethod
     def _get_cgi_nodes_and_weights(
@@ -172,21 +172,15 @@ class CGIRotorAvg(RotorAvg):
         node_y_offset = self.nodes_y.reshape(1, 1, -1) * R_dst
 
         hcw_at_nodes = cw + node_x_offset
-        dh_at_nodes = 0.0 + node_y_offset
+        dh_at_nodes = 0.0 + node_y_offset  # TODO: 0 should be ctx.dh
         dw_at_nodes = jnp.broadcast_to(dw, hcw_at_nodes.shape)
-
-        # Create context for integration points
-        ctx_nodes = SimulationContext(
-            turbine=ctx.turbine,
-            dw=dw_at_nodes,
-            cw=jnp.sqrt(hcw_at_nodes**2 + dh_at_nodes**2),
-            ws=ctx.ws,
-            ti=ctx.ti,
-        )
+        cw_at_nodes = jnp.sqrt(hcw_at_nodes**2 + dh_at_nodes**2)
 
         if id(func) not in self._cache:
             # Evaluate func at each integration point by vmapping over last axis
-            def eval_single_point(dw_single, cw_single):
+            def eval_single_point(
+                dw_single: jax.Array, cw_single: jax.Array
+            ) -> tuple[jax.Array, jax.Array]:
                 ctx_single = SimulationContext(
                     turbine=ctx.turbine,
                     dw=dw_single,
@@ -196,16 +190,15 @@ class CGIRotorAvg(RotorAvg):
                 )
                 return func(ws_eff, ti_eff, ctx_single)
 
-            # TODO: cache vmapped function for performance
             # Map over integration points (last dimension)
             self._cache[id(func)] = jax.vmap(
-                eval_single_point,
-                in_axes=2,
-                out_axes=2,
+                eval_single_point, in_axes=(2, 2), out_axes=(2, 2)
             )
 
-        value_at_nodes, aux_at_nodes = self._cache[id(func)](dw_at_nodes, ctx_nodes.cw)
-
+        value_at_nodes, aux_at_nodes = self._cache[id(func)](
+            dw_at_nodes,
+            cw_at_nodes,
+        )
         # Take first aux value (should be same for all points)
         aux = aux_at_nodes[:, :, 0]
 

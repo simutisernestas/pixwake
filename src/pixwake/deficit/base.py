@@ -59,12 +59,11 @@ class WakeDeficit(ABC):
             A tuple containing the updated effective wind speeds and the wake
             radius.
         """
-        if self.rotor_avg_model:
-            ws_deficit_m, wake_radius = self.rotor_avg_model(
-                self.compute, ws_eff, ti_eff, ctx
-            )
-        else:
-            ws_deficit_m, wake_radius = self.compute(ws_eff, ti_eff, ctx)
+        ws_deficit_m, wake_radius = (
+            self.rotor_avg_model(self.compute, ws_eff, ti_eff, ctx)
+            if self.rotor_avg_model
+            else self.compute(ws_eff, ti_eff, ctx)
+        )
 
         in_wake_mask = ctx.dw > 0.0
         if self.use_radius_mask:  # TODO: pywake doesn't do this. Why ?
