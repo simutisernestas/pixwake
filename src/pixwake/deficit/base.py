@@ -56,28 +56,30 @@ class WakeDeficit(ABC):
             ctx: The simulation context.
 
         Returns:
-            A tuple containing the updated effective wind speeds and the wake
-            radius.
+            A tuple containing the updated effective wind speeds and the
+            simulation context with added wake radius.
         """
-        ctx.wake_radius = self.wake_radius(ws_eff, ti_eff, ctx)
+        ctx.wake_radius = self._wake_radius(ws_eff, ti_eff, ctx)
 
         ws_deficit_m = (
-            self.rotor_avg_model(self.compute, ws_eff, ti_eff, ctx)
+            self.rotor_avg_model(self._deficit, ws_eff, ti_eff, ctx)
             if self.rotor_avg_model
-            else self.compute(ws_eff, ti_eff, ctx)
+            else self._deficit(ws_eff, ti_eff, ctx)
         )
 
         in_wake_mask = ctx.dw > 0.0
         if self.use_radius_mask:
             in_wake_mask &= jnp.abs(ctx.cw) < ctx.wake_radius
-        ws_deficit_m = jnp.where(in_wake_mask, ws_deficit_m**2, 0.0)
 
         # superpose deficits in quadrature
-        ws_deficit = jnp.sqrt(jnp.sum(ws_deficit_m, axis=1) + get_float_eps())
+        ws_deficit = jnp.sqrt(
+            jnp.sum(jnp.where(in_wake_mask, ws_deficit_m**2, 0.0), axis=1)
+            + get_float_eps()
+        )
         return jnp.maximum(0.0, ctx.ws - ws_deficit), ctx
 
     @abstractmethod
-    def compute(
+    def _deficit(
         self,
         ws_eff: jnp.ndarray,
         ti_eff: jnp.ndarray | None,
@@ -102,7 +104,7 @@ class WakeDeficit(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def wake_radius(
+    def _wake_radius(
         self,
         ws_eff: jnp.ndarray,
         ti_eff: jnp.ndarray | None,

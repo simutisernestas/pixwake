@@ -15,14 +15,6 @@ class BastankhahGaussianDeficit(WakeDeficit):
     wake deficit using a Gaussian radial profile. The expansion of the wake is
     proportional to the turbulence intensity.
 
-    Attributes:
-        k: Wake expansion coefficient.
-        ceps: Near-wake coefficient for initial wake expansion.
-        ctlim: Maximum thrust coefficient for numerical stability.
-        ct2a: A callable that converts thrust coefficient to induction factor.
-        use_effective_ws: A boolean indicating whether to use the effective
-            wind speed as the reference for deficit calculation.
-
     Reference:
         Bastankhah, M., & Porté-Agel, F. (2014). A new analytical model for
         wind-turbine wakes. Renewable Energy, 70, 116-123.
@@ -46,7 +38,6 @@ class BastankhahGaussianDeficit(WakeDeficit):
             ct2a: A callable to convert thrust coefficient to induction factor.
             use_effective_ws: If `True`, use the effective wind speed as the
                 reference for deficit calculation.
-            rotor_avg_model: An optional rotor averaging model.
             **kwargs: Additional arguments passed to the parent class.
         """
         super().__init__(**kwargs)
@@ -86,22 +77,12 @@ class BastankhahGaussianDeficit(WakeDeficit):
 
         return sigma_normalized, ct
 
-    def compute(
+    def _deficit(
         self,
         ws_eff: jnp.ndarray,
         ti_eff: jnp.ndarray | None,
         ctx: SimulationContext,
     ) -> tuple[jnp.ndarray, jnp.ndarray]:
-        """Computes the wake deficit at specified locations.
-
-        Args:
-            ws_eff: The effective wind speeds at the source turbines.
-            ti_eff: The effective turbulence intensity at the source turbines.
-            ctx: The simulation context.
-
-        Returns:
-            A tuple containing the wake deficit matrix and the wake radius.
-        """
         feps = get_float_eps()
         sigma_normalized, ct = self.__wake_params(ws_eff, ti_eff, ctx)
 
@@ -137,7 +118,7 @@ class BastankhahGaussianDeficit(WakeDeficit):
         _ = (ti_amb, ti_eff)  # unused
         return self.k
 
-    def wake_radius(
+    def _wake_radius(
         self,
         ws_eff: jnp.ndarray,
         ti_eff: jnp.ndarray | None,
@@ -154,11 +135,6 @@ class NiayifarGaussianDeficit(BastankhahGaussianDeficit):
     This model extends the `BastankhahGaussianDeficit` by making the wake
     expansion coefficient dependent on the turbulence intensity, following the
     formulation `k = a[0] * TI + a[1]`.
-
-    Attributes:
-        a: A tuple `(a0, a1)` for the linear relationship between `k` and `TI`.
-        use_effective_ti: A boolean indicating whether to use the effective
-            turbulence intensity for the wake expansion calculation.
 
     Reference:
         Niayifar, A., & Porté-Agel, F. (2016). Analytical modeling of wind farms:
@@ -177,7 +153,6 @@ class NiayifarGaussianDeficit(BastankhahGaussianDeficit):
             a: A tuple `(a0, a1)` for the wake expansion formula.
             use_effective_ti: If `True`, use the effective turbulence intensity
                 for the wake expansion calculation.
-            rotor_avg_model: An optional rotor averaging model.
             **kwargs: Additional arguments passed to the parent class.
         """
         super().__init__(**kwargs)

@@ -13,12 +13,6 @@ class NOJDeficit(WakeDeficit):
 
     This is a classic and simple analytical model that assumes a linearly
     expanding wake with a top-hat profile for the velocity deficit.
-
-    Attributes:
-        k: The wake expansion coefficient, which determines how quickly the
-            wake expands with downwind distance.
-        ct2a: A callable that converts the thrust coefficient (`Ct`) to the
-            induction factor (`a`).
     """
 
     def __init__(
@@ -32,32 +26,19 @@ class NOJDeficit(WakeDeficit):
         Args:
             k: The wake expansion coefficient.
             ct2a: A callable to convert `Ct` to the induction factor.
-            use_radius_mask: A boolean indicating whether to use a radius-based
-                mask.
+            **kwargs: Additional arguments passed to the parent class.
         """
-        kwargs["use_radius_mask"] = True
+        kwargs["use_radius_mask"] = True  # enforce radius mask for NOJ model
         super().__init__(**kwargs)
         self.k = k
         self.ct2a = ct2a
 
-    def compute(
+    def _deficit(
         self,
         ws_eff: jnp.ndarray,
         ti_eff: jnp.ndarray | None,
         ctx: SimulationContext,
     ) -> tuple[jnp.ndarray, jnp.ndarray]:
-        """Computes the wake deficit using the NOJ model.
-
-        Args:
-            ws_eff: A JAX numpy array of the effective wind speeds at each
-                turbine.
-            ti_eff: An optional JAX numpy array of the effective turbulence
-                intensities (not used in this model).
-            ctx: The simulation context.
-
-        Returns:
-            A tuple containing the wake deficit matrix and the wake radius.
-        """
         _ = ti_eff  # unused
 
         wt = ctx.turbine
@@ -68,7 +49,7 @@ class NOJDeficit(WakeDeficit):
         )  # fmt: skip
         return ctx.ws * all2all_deficit_matrix
 
-    def wake_radius(
+    def _wake_radius(
         self,
         ws_eff: jnp.ndarray,
         ti_eff: jnp.ndarray | None,

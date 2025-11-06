@@ -84,7 +84,7 @@ class WakeTurbulence:
         Returns:
             The effective turbulence intensity at each turbine.
         """
-        ti_added_m = self.added_turbulence(ws_eff, ti_eff, ctx)
+        ti_added_m = self._added_turbulence(ws_eff, ti_eff, ctx)
         inside_wake = (ctx.dw > 0.0) & (jnp.abs(ctx.cw) < ctx.wake_radius)
         ti_added_m = jnp.where(inside_wake, ti_added_m, 0.0)
 
@@ -93,7 +93,7 @@ class WakeTurbulence:
         return self.superposition(ti_ambient, ti_added_m)
 
     @abstractmethod
-    def added_turbulence(
+    def _added_turbulence(
         self,
         ws_eff: jnp.ndarray,
         ti_eff: jnp.ndarray | None,

@@ -616,7 +616,7 @@ def test_crespo_hernandez_implementation_match():
         ti=0.1,
     )
 
-    pixwake_ti_addded = turbulence_model.added_turbulence(
+    pixwake_ti_addded = turbulence_model._added_turbulence(
         ws_eff=ws_eff,
         ti_eff=jnp.ones(n_turbines) * 0.11,
         ctx=ctx,
