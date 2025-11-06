@@ -43,8 +43,7 @@ def get_all_deficit_models():
 
     models = []
     for name in names:
-        if isinstance(name, str):
-            obj = getattr(mod, name, None)
+        obj = getattr(mod, name, None)
         assert obj is not None
         instance = obj()
         models.append(instance)

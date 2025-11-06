@@ -109,12 +109,11 @@ class SimulationContext:
 
     Attributes:
         turbine: The `Turbine` object used in the simulation.
-        dw: A JAX numpy array of downwind distances between all pairs of
-            turbines.
-        cw: A JAX numpy array of crosswind distances between all pairs of
-            turbines.
+        dw: A JAX numpy array of downwind distances between all pairs of turbines.
+        cw: A JAX numpy array of crosswind distances between all pairs of turbines.
         ws: The free-stream wind speed for the simulation case.
         ti: The ambient turbulence intensity for the simulation case.
+        wake_radius: The wake radius at each turbine, set by the deficit model
     """
 
     # site variables

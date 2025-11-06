@@ -172,7 +172,7 @@ def benchmark_pixwake(
         use_effective_ws=True,
         use_effective_ti=True,
         # from pixwake.rotor_avg import CGIRotorAvg
-        # rotor_avg_model=CGIRotorAvg(21), TOOD: run benchmark with rotor avg
+        # rotor_avg_model=CGIRotorAvg(21), TODO: run benchmark with rotor avg
     )
     pixwake_sim = WakeSimulation(
         pixwake_turbine,

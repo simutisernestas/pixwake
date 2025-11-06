@@ -81,16 +81,12 @@ _CGI_NODES_AND_WEIGHTS = {
 
 
 class CGIRotorAvg(RotorAvg):
-    """
-    Standalone implementation of CGI (Composite Gauss Integration) Rotor Averaging Model
-    This implementation removes inheritance complexity and clearly explains each component.
-    CGI uses predefined integration points and weights to approximate rotor-averaged values.
-    Composite Gauss Integration Rotor Averaging Model
-    This model computes rotor-averaged quantities by evaluating a function at
-    specific points across the rotor disk and combining them with weights.
-    The CGI method uses predetermined node locations and weights optimized for
-    circular rotor averaging. Different numbers of points provide different
-    accuracy-performance tradeoffs.
+    """This model computes rotor-averaged quantities by evaluating
+    a function at specific, predetermined points (nodes) across the
+    rotor disk and combining the results using associated weights.
+    The node locations and weights are optimized for circular rotor
+    averaging, and the number of integration points (4, 7, 9, or 21)
+    allows for a tradeoff between computational accuracy and performance.
     """
 
     nodes_x: jax.Array
