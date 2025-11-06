@@ -192,16 +192,13 @@ class CGIRotorAvg(RotorAvg):
 
             # Map over integration points (last dimension)
             self._cache[id(func)] = jax.vmap(
-                eval_single_point, in_axes=(2, 2), out_axes=(2, 2)
+                eval_single_point, in_axes=(2, 2), out_axes=2
             )
 
-        value_at_nodes, aux_at_nodes = self._cache[id(func)](
+        value_at_nodes = self._cache[id(func)](
             dw_at_nodes,
             cw_at_nodes,
         )
-        # Take first aux value (should be same for all points)
-        aux = aux_at_nodes[:, :, 0]
-
         # Weighted average over integration points
         weights_broadcast = self.weights.reshape(1, 1, -1)
-        return jnp.sum(value_at_nodes * weights_broadcast, axis=-1), aux
+        return jnp.sum(value_at_nodes * weights_broadcast, axis=-1)

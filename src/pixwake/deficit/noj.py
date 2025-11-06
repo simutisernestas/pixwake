@@ -62,9 +62,18 @@ class NOJDeficit(WakeDeficit):
 
         wt = ctx.turbine
         rr = wt.rotor_diameter / 2
-        wake_radius = (rr) + self.k * ctx.dw
         all2all_deficit_matrix = (
             2 * self.ct2a(wt.ct(ws_eff))
-            * (rr / jnp.maximum(wake_radius, get_float_eps())) ** 2
+            * (rr / jnp.maximum(ctx.wake_radius, get_float_eps())) ** 2
         )  # fmt: skip
-        return ctx.ws * all2all_deficit_matrix, wake_radius
+        return ctx.ws * all2all_deficit_matrix
+
+    def wake_radius(
+        self,
+        ws_eff: jnp.ndarray,
+        ti_eff: jnp.ndarray | None,
+        ctx: SimulationContext,
+    ) -> jnp.ndarray:
+        _ = (ws_eff, ti_eff)  # unused
+        rr = ctx.turbine.rotor_diameter / 2
+        return (rr) + self.k * ctx.dw

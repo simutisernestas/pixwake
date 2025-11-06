@@ -68,7 +68,6 @@ class WakeTurbulence:
         ws_eff: jnp.ndarray,
         ti_eff: jnp.ndarray | None,
         ctx: SimulationContext,
-        wake_radius: jnp.ndarray,
     ) -> jnp.ndarray | None:
         """Calculates the effective turbulence intensity.
 
@@ -86,7 +85,7 @@ class WakeTurbulence:
             The effective turbulence intensity at each turbine.
         """
         ti_added_m = self.added_turbulence(ws_eff, ti_eff, ctx)
-        inside_wake = (ctx.dw > 0.0) & (jnp.abs(ctx.cw) < wake_radius)
+        inside_wake = (ctx.dw > 0.0) & (jnp.abs(ctx.cw) < ctx.wake_radius)
         ti_added_m = jnp.where(inside_wake, ti_added_m, 0.0)
 
         # Combine ambient and added turbulence

@@ -59,20 +59,22 @@ class WakeDeficit(ABC):
             A tuple containing the updated effective wind speeds and the wake
             radius.
         """
-        ws_deficit_m, wake_radius = (
+        ctx.wake_radius = self.wake_radius(ws_eff, ti_eff, ctx)
+
+        ws_deficit_m = (
             self.rotor_avg_model(self.compute, ws_eff, ti_eff, ctx)
             if self.rotor_avg_model
             else self.compute(ws_eff, ti_eff, ctx)
         )
 
         in_wake_mask = ctx.dw > 0.0
-        if self.use_radius_mask:  # TODO: pywake doesn't do this. Why ?
-            in_wake_mask &= jnp.abs(ctx.cw) < wake_radius
+        if self.use_radius_mask:
+            in_wake_mask &= jnp.abs(ctx.cw) < ctx.wake_radius
         ws_deficit_m = jnp.where(in_wake_mask, ws_deficit_m**2, 0.0)
 
         # superpose deficits in quadrature
         ws_deficit = jnp.sqrt(jnp.sum(ws_deficit_m, axis=1) + get_float_eps())
-        return jnp.maximum(0.0, ctx.ws - ws_deficit), wake_radius
+        return jnp.maximum(0.0, ctx.ws - ws_deficit), ctx
 
     @abstractmethod
     def compute(
@@ -96,5 +98,26 @@ class WakeDeficit(ABC):
 
         Returns:
             A tuple containing the wake deficit matrix and the wake radius.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def wake_radius(
+        self,
+        ws_eff: jnp.ndarray,
+        ti_eff: jnp.ndarray | None,
+        ctx: SimulationContext,
+    ) -> jnp.ndarray:  # pragma: no cover
+        """Calculates the wake radius for each turbine.
+
+        This abstract method must be implemented by all subclasses. It is
+        responsible for calculating the wake radius for each turbine based on
+        the simulation context.
+
+        Args:
+            ctx: The simulation context.
+
+        Returns:
+            A JAX numpy array representing the wake radius for each turbine.
         """
         raise NotImplementedError
