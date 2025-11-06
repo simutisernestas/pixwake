@@ -1,5 +1,6 @@
 from typing import Any, Callable
 
+import jax
 import jax.numpy as jnp
 
 from ..core import SimulationContext
@@ -38,8 +39,9 @@ class NOJDeficit(WakeDeficit):
         ws_eff: jnp.ndarray,
         ti_eff: jnp.ndarray | None,
         ctx: SimulationContext,
-    ) -> tuple[jnp.ndarray, jnp.ndarray]:
+    ) -> jax.Array:
         _ = ti_eff  # unused
+        assert ctx.wake_radius is not None
 
         wt = ctx.turbine
         rr = wt.rotor_diameter / 2
@@ -57,4 +59,4 @@ class NOJDeficit(WakeDeficit):
     ) -> jnp.ndarray:
         _ = (ws_eff, ti_eff)  # unused
         rr = ctx.turbine.rotor_diameter / 2
-        return (rr) + self.k * ctx.dw
+        return rr + self.k * ctx.dw

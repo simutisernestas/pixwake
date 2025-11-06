@@ -38,7 +38,7 @@ class WakeDeficit(ABC):
         ws_eff: jnp.ndarray,
         ti_eff: jnp.ndarray | None,
         ctx: SimulationContext,
-    ) -> tuple[jnp.ndarray, jnp.ndarray]:
+    ) -> tuple[jnp.ndarray, SimulationContext]:
         """Calculates the effective wind speed after considering wake effects.
 
         This method orchestrates the wake deficit calculation by calling the
@@ -84,7 +84,7 @@ class WakeDeficit(ABC):
         ws_eff: jnp.ndarray,
         ti_eff: jnp.ndarray | None,
         ctx: SimulationContext,
-    ) -> tuple[jnp.ndarray, jnp.ndarray]:  # pragma: no cover
+    ) -> jnp.ndarray:  # pragma: no cover
         """Computes the wake deficit from each turbine.
 
         This abstract method must be implemented by all subclasses. It is

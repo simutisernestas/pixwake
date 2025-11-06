@@ -83,12 +83,6 @@ def v80_wt():
 def test_cgi_rotor_avg_against_pywake(
     n_points, pw_deficit_model, pw_kwargs, px_deficit_model, px_kwargs
 ):
-    if pw_deficit_model is PyWakeNOJDeficit:
-        pytest.xfail(  # TODO: fix NOJ rotor avg differences
-            "NOJ model differences not yet resolved. "
-            "The failure is specific to rotor averaging."
-        )
-
     wind_turbines = v80_wt()
     rotor_avg_model = CGIRotorAvg(n_points=n_points)
     deficit_model = px_deficit_model(rotor_avg_model=rotor_avg_model, **px_kwargs)
@@ -133,6 +127,15 @@ def test_cgi_rotor_avg_against_pywake(
 
     sim_res_pw = wfm(x=xs, y=ys, wd=wd, ws=ws, TI=ti, WS_eff=0, time=True)
     ws_eff_pywake = sim_res_pw.WS_eff_ilk
+
+    if (
+        not jnp.allclose(ws_eff_pixwake, ws_eff_pywake.T.squeeze(0))
+        and pw_deficit_model is PyWakeNOJDeficit
+    ):
+        pytest.xfail(  # TODO: fix NOJ rotor avg differences
+            "NOJ model differences not yet resolved. "
+            "The failure is specific to rotor averaging."
+        )
 
     np.testing.assert_allclose(
         ws_eff_pixwake, ws_eff_pywake.T.squeeze(0), atol=1e-6, rtol=1e-3

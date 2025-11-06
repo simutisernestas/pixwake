@@ -52,7 +52,7 @@ class BastankhahGaussianDeficit(WakeDeficit):
         ws_eff: jnp.ndarray,
         ti_eff: jnp.ndarray | None,
         ctx: SimulationContext,
-    ):
+    ) -> tuple[jnp.ndarray, jnp.ndarray]:
         # Compute wake parameters for all source-receiver pairs
         ct = ctx.turbine.ct(ws_eff)  # (n_sources,)
         diameter = ctx.turbine.rotor_diameter
@@ -82,7 +82,7 @@ class BastankhahGaussianDeficit(WakeDeficit):
         ws_eff: jnp.ndarray,
         ti_eff: jnp.ndarray | None,
         ctx: SimulationContext,
-    ) -> tuple[jnp.ndarray, jnp.ndarray]:
+    ) -> jnp.ndarray:
         feps = get_float_eps()
         sigma_normalized, ct = self.__wake_params(ws_eff, ti_eff, ctx)
 

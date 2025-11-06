@@ -19,7 +19,7 @@ class RotorAvg(ABC):
         ws_eff: jnp.ndarray,
         ti_eff: jnp.ndarray | None,
         ctx: SimulationContext,
-    ) -> jax.Array | tuple[jax.Array, ...]:  # pragma: no cover
+    ) -> jax.Array:  # pragma: no cover
         """Computes the rotor-averaged value of a function."""
         raise NotImplementedError
 
@@ -146,7 +146,7 @@ class CGIRotorAvg(RotorAvg):
         ws_eff: jnp.ndarray,
         ti_eff: jnp.ndarray | None,
         ctx: SimulationContext,
-    ) -> jax.Array | tuple[jax.Array, ...]:
+    ) -> jax.Array:
         """Computes the rotor-averaged value of `func`.
 
         This method handles all dimensional reshaping internally, so `func`
@@ -187,6 +187,7 @@ class CGIRotorAvg(RotorAvg):
                     cw=cw_single,
                     ws=ctx.ws,
                     ti=ctx.ti,
+                    wake_radius=ctx.wake_radius,
                 )
                 return func(ws_eff, ti_eff, ctx_single)
 

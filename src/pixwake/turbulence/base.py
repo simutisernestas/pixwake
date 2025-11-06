@@ -14,7 +14,9 @@ class Superposition:
     """
 
     @abstractmethod
-    def __call__(self, ambient: jnp.ndarray, added: jnp.ndarray) -> jnp.ndarray:
+    def __call__(
+        self, ambient: jnp.ndarray, added: jnp.ndarray
+    ) -> jnp.ndarray:  # pragma: no cover
         """Combines ambient and added quantities.
 
         Args:
@@ -79,11 +81,12 @@ class WakeTurbulence:
             ws_eff: The effective wind speeds at each turbine.
             ti_eff: The effective turbulence intensities at each turbine.
             ctx: The simulation context.
-            wake_radius: The radius of the wake from each turbine.
 
         Returns:
             The effective turbulence intensity at each turbine.
         """
+        assert ctx.wake_radius is not None
+
         ti_added_m = self._added_turbulence(ws_eff, ti_eff, ctx)
         inside_wake = (ctx.dw > 0.0) & (jnp.abs(ctx.cw) < ctx.wake_radius)
         ti_added_m = jnp.where(inside_wake, ti_added_m, 0.0)
@@ -98,7 +101,7 @@ class WakeTurbulence:
         ws_eff: jnp.ndarray,
         ti_eff: jnp.ndarray | None,
         ctx: SimulationContext,
-    ) -> jnp.ndarray:
+    ) -> jnp.ndarray:  # pragma: no cover
         """Calculates the wake-added turbulence intensity.
 
         This abstract method must be implemented by subclasses to define the
