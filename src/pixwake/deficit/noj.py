@@ -1,5 +1,6 @@
-from typing import Callable
+from typing import Any, Callable
 
+import jax
 import jax.numpy as jnp
 
 from ..core import SimulationContext
@@ -13,57 +14,49 @@ class NOJDeficit(WakeDeficit):
 
     This is a classic and simple analytical model that assumes a linearly
     expanding wake with a top-hat profile for the velocity deficit.
-
-    Attributes:
-        k: The wake expansion coefficient, which determines how quickly the
-            wake expands with downwind distance.
-        ct2a: A callable that converts the thrust coefficient (`Ct`) to the
-            induction factor (`a`).
     """
 
     def __init__(
         self,
         k: float = 0.1,
         ct2a: Callable = ct2a_madsen,
-        use_radius_mask: bool = True,
+        **kwargs: Any,
     ) -> None:
         """Initializes the `NOJDeficit` model.
 
         Args:
             k: The wake expansion coefficient.
             ct2a: A callable to convert `Ct` to the induction factor.
-            use_radius_mask: A boolean indicating whether to use a radius-based
-                mask.
+            **kwargs: Additional arguments passed to the parent class.
         """
-        super().__init__(use_radius_mask)
+        kwargs["use_radius_mask"] = True  # enforce radius mask for NOJ model
+        super().__init__(**kwargs)
         self.k = k
         self.ct2a = ct2a
 
-    def compute(
+    def _deficit(
         self,
         ws_eff: jnp.ndarray,
         ti_eff: jnp.ndarray | None,
         ctx: SimulationContext,
-    ) -> tuple[jnp.ndarray, jnp.ndarray]:
-        """Computes the wake deficit using the NOJ model.
-
-        Args:
-            ws_eff: A JAX numpy array of the effective wind speeds at each
-                turbine.
-            ti_eff: An optional JAX numpy array of the effective turbulence
-                intensities (not used in this model).
-            ctx: The simulation context.
-
-        Returns:
-            A tuple containing the wake deficit matrix and the wake radius.
-        """
+    ) -> jax.Array:
         _ = ti_eff  # unused
+        assert ctx.wake_radius is not None
 
         wt = ctx.turbine
         rr = wt.rotor_diameter / 2
-        wake_radius = (rr) + self.k * ctx.dw
         all2all_deficit_matrix = (
             2 * self.ct2a(wt.ct(ws_eff))
-            * (rr / jnp.maximum(wake_radius, get_float_eps())) ** 2
+            * (rr / jnp.maximum(ctx.wake_radius, get_float_eps())) ** 2
         )  # fmt: skip
-        return ctx.ws * all2all_deficit_matrix, wake_radius
+        return ctx.ws * all2all_deficit_matrix
+
+    def _wake_radius(
+        self,
+        ws_eff: jnp.ndarray,
+        ti_eff: jnp.ndarray | None,
+        ctx: SimulationContext,
+    ) -> jnp.ndarray:
+        _ = (ws_eff, ti_eff)  # unused
+        rr = ctx.turbine.rotor_diameter / 2
+        return rr + self.k * ctx.dw

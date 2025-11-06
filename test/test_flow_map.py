@@ -92,7 +92,7 @@ def test_flow_map_no_grid(sim):
     )
 
     assert flow_map is not None
-    assert flow_map.shape == (1, 100**2)
+    assert flow_map.shape == (1, 200**2)
 
     plot_flow_map(fm_x, fm_y, flow_map[0], xs, ys, show=False)
 
@@ -105,7 +105,7 @@ def test_flow_map_no_grid_with_ti(sim):
     ti = 0.1
     flow_map, (fm_x, fm_y) = sim.flow_map(xs, ys, ti=ti)
     assert flow_map is not None
-    assert flow_map.shape == (1, 100**2)
+    assert flow_map.shape == (1, 200**2)
     plot_flow_map(fm_x, fm_y, flow_map[0], xs, ys, show=False)
 
 

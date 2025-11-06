@@ -15,14 +15,6 @@ class BastankhahGaussianDeficit(WakeDeficit):
     wake deficit using a Gaussian radial profile. The expansion of the wake is
     proportional to the turbulence intensity.
 
-    Attributes:
-        k: Wake expansion coefficient.
-        ceps: Near-wake coefficient for initial wake expansion.
-        ctlim: Maximum thrust coefficient for numerical stability.
-        ct2a: A callable that converts thrust coefficient to induction factor.
-        use_effective_ws: A boolean indicating whether to use the effective
-            wind speed as the reference for deficit calculation.
-
     Reference:
         Bastankhah, M., & Porté-Agel, F. (2014). A new analytical model for
         wind-turbine wakes. Renewable Energy, 70, 116-123.
@@ -55,64 +47,66 @@ class BastankhahGaussianDeficit(WakeDeficit):
         self.ct2a = ct2a
         self.use_effective_ws = use_effective_ws
 
-    def compute(
+    def __wake_params(
         self,
         ws_eff: jnp.ndarray,
         ti_eff: jnp.ndarray | None,
         ctx: SimulationContext,
     ) -> tuple[jnp.ndarray, jnp.ndarray]:
-        """Computes the wake deficit at specified locations.
-
-        Args:
-            ws_eff: The effective wind speeds at the source turbines.
-            ti_eff: The effective turbulence intensity at the source turbines.
-            ctx: The simulation context.
-
-        Returns:
-            A tuple containing the wake deficit matrix and the wake radius.
-        """
         # Compute wake parameters for all source-receiver pairs
-        eps = get_float_eps()
         ct = ctx.turbine.ct(ws_eff)  # (n_sources,)
         diameter = ctx.turbine.rotor_diameter
 
         # Beta coefficient from Bastankhah formulation
-        ct_limited = jnp.minimum(self.ctlim, ct)
-        sqrt_term = jnp.sqrt(jnp.maximum(eps, 1.0 - ct_limited))
+        ct_limited = jnp.minimum(self.ctlim, ct)  # less than 1.0
+        sqrt_term = jnp.sqrt(1.0 - ct_limited)
         beta = 0.5 * (1.0 + sqrt_term) / sqrt_term
 
         # Initial wake expansion (near-wake)
-        epsilon = self.ceps * jnp.sqrt(beta)  # (n_sources,)
+        w_epsilon = self.ceps * jnp.sqrt(beta)  # (n_sources,)
 
         # Wake width parameter (normalized by diameter)
         k_expansion = jnp.asarray(self.wake_expansion_coefficient(ctx.ti, ti_eff))
+
+        w_epsilon = w_epsilon[None, :]
+        ct = ct[None, :]
+
         sigma_normalized = (
-            k_expansion * ctx.dw / diameter + epsilon[None, :]
+            k_expansion * ctx.dw / diameter + w_epsilon
         )  # (n_receivers, n_sources)
 
-        # Dimensional wake radius (2*sigma per Niayifar)
-        wake_radius = 2.0 * sigma_normalized * diameter
+        return sigma_normalized, ct
 
-        diameter = ctx.turbine.rotor_diameter
+    def _deficit(
+        self,
+        ws_eff: jnp.ndarray,
+        ti_eff: jnp.ndarray | None,
+        ctx: SimulationContext,
+    ) -> jnp.ndarray:
+        feps = get_float_eps()
+        sigma_normalized, ct = self.__wake_params(ws_eff, ti_eff, ctx)
 
         # Effective thrust coefficient accounting for wake expansion
-        ct_effective = ct[None, :] / (8.0 * sigma_normalized**2 + eps)
+        ct_effective = ct / (8.0 * sigma_normalized**2 + feps)
 
         # Centerline deficit (as fraction of reference wind speed)
         centerline_deficit = jnp.minimum(1.0, 2.0 * self.ct2a(ct_effective))
 
         # Gaussian radial decay
-        sigma_dimensional = sigma_normalized * diameter
-        radial_factor = jnp.exp(-(ctx.cw**2) / (2.0 * sigma_dimensional**2 + eps))
+        sigma_dimensional = sigma_normalized * ctx.turbine.rotor_diameter
+        radial_factor = jnp.exp(-(ctx.cw**2) / (2.0 * sigma_dimensional**2 + feps))
 
         # Total deficit as fraction
         deficit_fraction = centerline_deficit * radial_factor
 
         # Convert to absolute deficit (m/s)
+        ws_reference = ws_eff[None, :]
         ws_reference = (
-            ws_eff if self.use_effective_ws else jnp.full_like(ws_eff, ctx.ws)
+            ws_reference
+            if self.use_effective_ws
+            else jnp.full_like(ws_reference, ctx.ws)
         )
-        return deficit_fraction * ws_reference[None, :], wake_radius
+        return deficit_fraction * ws_reference
 
     def wake_expansion_coefficient(
         self, ti_amb: jnp.ndarray | None, ti_eff: jnp.ndarray | None
@@ -124,6 +118,16 @@ class BastankhahGaussianDeficit(WakeDeficit):
         _ = (ti_amb, ti_eff)  # unused
         return self.k
 
+    def _wake_radius(
+        self,
+        ws_eff: jnp.ndarray,
+        ti_eff: jnp.ndarray | None,
+        ctx: SimulationContext,
+    ) -> jnp.ndarray:
+        sigma_normalized, _ = self.__wake_params(ws_eff, ti_eff, ctx)
+        # Dimensional wake radius (2*sigma per Niayifar)
+        return 2.0 * sigma_normalized * ctx.turbine.rotor_diameter
+
 
 class NiayifarGaussianDeficit(BastankhahGaussianDeficit):
     """Implements the Niayifar-Gaussian wake deficit model.
@@ -131,11 +135,6 @@ class NiayifarGaussianDeficit(BastankhahGaussianDeficit):
     This model extends the `BastankhahGaussianDeficit` by making the wake
     expansion coefficient dependent on the turbulence intensity, following the
     formulation `k = a[0] * TI + a[1]`.
-
-    Attributes:
-        a: A tuple `(a0, a1)` for the linear relationship between `k` and `TI`.
-        use_effective_ti: A boolean indicating whether to use the effective
-            turbulence intensity for the wake expansion calculation.
 
     Reference:
         Niayifar, A., & Porté-Agel, F. (2016). Analytical modeling of wind farms:

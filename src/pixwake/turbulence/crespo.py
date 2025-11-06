@@ -17,12 +17,6 @@ class CrespoHernandez(WakeTurbulence):
     by a wind turbine's wake. The model is based on the thrust coefficient,
     ambient turbulence intensity, and the downwind distance from the turbine.
 
-    Attributes:
-        c: A list of four empirical coefficients `[c0, c1, c2, c3]` used in the
-           turbulence formula: `TI_add = c0 * a^c1 * TI_amb^c2 * (x/D)^c3`.
-        ct2a: A callable that converts the thrust coefficient (`Ct`) to the
-            induction factor (`a`).
-
     Reference:
         Crespo, A., & Hernández, J. (1996). Turbulence characteristics in
         wind-turbine wakes. Journal of Wind Engineering and Industrial
@@ -32,26 +26,13 @@ class CrespoHernandez(WakeTurbulence):
     c: list[float] = field(default_factory=lambda: [0.73, 0.8325, -0.0325, -0.32])
     ct2a: Callable = ct2a_madsen
 
-    def added_turbulence(
+    def _added_turbulence(
         self,
         ws_eff: jnp.ndarray,
         ti_eff: jnp.ndarray | None,
         ctx: SimulationContext,
     ) -> jnp.ndarray:
-        """Calculates wake-added turbulence using the Crespo-Hernandez model.
-
-        Note: This model uses the ambient turbulence intensity in its
-        calculation, not the effective TI, as per the original formulation.
-
-        Args:
-            ws_eff: The effective wind speeds at the source turbines.
-            ti_eff: The effective turbulence intensities at the source turbines
-                (not used in this model).
-            ctx: The simulation context.
-
-        Returns:
-            A JAX numpy array of the added turbulence intensity.
-        """
+        """Calculates wake-added turbulence using the Crespo-Hernandez model."""
         _ = ti_eff  # unused
 
         # Convert to induction factor with numerical safeguard

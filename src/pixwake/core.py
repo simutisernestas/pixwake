@@ -104,29 +104,30 @@ class SimulationContext:
 
     The `tree_flatten` and `tree_unflatten` methods are implemented to specify
     how JAX should handle this class. Dynamic data (JAX arrays) are treated as
-
     "children," while static data (like the `Turbine` object) are treated as
     "auxiliary" data.
 
     Attributes:
         turbine: The `Turbine` object used in the simulation.
-        dw: A JAX numpy array of downwind distances between all pairs of
-            turbines.
-        cw: A JAX numpy array of crosswind distances between all pairs of
-            turbines.
+        dw: A JAX numpy array of downwind distances between all pairs of turbines.
+        cw: A JAX numpy array of crosswind distances between all pairs of turbines.
         ws: The free-stream wind speed for the simulation case.
         ti: The ambient turbulence intensity for the simulation case.
+        wake_radius: The wake radius at each turbine, set by the deficit model
     """
 
+    # site variables
     turbine: Turbine
     dw: jnp.ndarray
     cw: jnp.ndarray
     ws: jnp.ndarray
     ti: jnp.ndarray | None = None
+    # set by deficit model at runtime
+    wake_radius: jnp.ndarray | None = None
 
     def tree_flatten(self) -> tuple[tuple, tuple]:
         """Flattens the `SimulationContext` for JAX's pytree mechanism."""
-        children = (self.dw, self.cw, self.ws, self.ti)
+        children = (self.dw, self.cw, self.ws, self.ti, self.wake_radius)
         aux_data = (self.turbine,)
         return children, aux_data
 
@@ -227,7 +228,7 @@ class WakeSimulation:
         turbine: Turbine,
         deficit: WakeDeficit,
         turbulence: WakeTurbulence | None = None,
-        fpi_damp: float = 0.5,
+        fpi_damp: float = 1.0,
         fpi_tol: float = 1e-6,
         mapping_strategy: str = "auto",
     ) -> None:
@@ -413,7 +414,7 @@ class WakeSimulation:
         wt_x, wt_y, ws, wd, ti = sc
 
         if fm_x is None or fm_y is None:
-            grid_res = 100
+            grid_res = 200
             x_min, x_max = jnp.min(wt_x) - 200, jnp.max(wt_x) + 200
             y_min, y_max = jnp.min(wt_y) - 200, jnp.max(wt_y) + 200
             grid_x, grid_y = jnp.meshgrid(
@@ -530,7 +531,7 @@ class WakeSimulation:
             intensity.
         """
         ws_eff, ti_eff = effective
-        ws_eff_new, wake_radius = self.deficit(ws_eff, ti_eff, ctx)
+        ws_eff_new, ctx = self.deficit(ws_eff, ti_eff, ctx)
 
         ti_eff_new = ti_eff
         if self.turbulence:
@@ -538,7 +539,7 @@ class WakeSimulation:
                 raise ValueError(
                     "Turbulence model provided but ambient TI is None in context."
                 )
-            ti_eff_new = self.turbulence(ws_eff_new, ti_eff, ctx, wake_radius)
+            ti_eff_new = self.turbulence(ws_eff_new, ti_eff, ctx)
 
         output: tuple[jnp.ndarray, jnp.ndarray | None] = (ws_eff_new, ti_eff_new)
         return output
@@ -554,7 +555,7 @@ def fixed_point(
     x_guess: tuple[jnp.ndarray, jnp.ndarray | None],
     ctx: SimulationContext,
     tol: float = 1e-6,
-    damp: float = 0.5,
+    damp: float = 1.0,
 ) -> tuple[jnp.ndarray, jnp.ndarray | None]:
     """This function solves for a fixed point, i.e., a value `x` such that `f(x) = x`.
     In the context of wake modeling, this is used to determine the stable effective
@@ -654,7 +655,7 @@ def fixed_point_debug(
     x_guess: jnp.ndarray | tuple,
     ctx: SimulationContext,
     tol: float = 1e-6,
-    damp: float = 0.5,
+    damp: float = 1.0,
 ) -> tuple[jnp.ndarray, jnp.ndarray | None]:
     """Finds the fixed point of a function using iterative updates.
     This function is for debugging purposes only and is not JAX-transformable.
