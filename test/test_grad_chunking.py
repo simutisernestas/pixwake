@@ -64,7 +64,7 @@ def simulation_setup():
     )
 
     # Data setup
-    wt_xs, wt_ys = generate_turbine_layout(rotor_diameter)
+    wt_xs, wt_ys = generate_turbine_layout(rotor_diameter=rotor_diameter)
     ws_amb, wd_amb = generate_time_series_wind_data()
     ti = 0.1
     return sim, wt_xs, wt_ys, ws_amb, wd_amb, ti
