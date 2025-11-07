@@ -544,6 +544,79 @@ class WakeSimulation:
         output: tuple[jnp.ndarray, jnp.ndarray | None] = (ws_eff_new, ti_eff_new)
         return output
 
+    def aep_gradients_chunked(
+        self,
+        wt_xs: jnp.ndarray,
+        wt_ys: jnp.ndarray,
+        ws_amb: jnp.ndarray,
+        wd: jnp.ndarray,
+        ti: jnp.ndarray | float | None = None,
+        chunk_size: int = 100,
+        probabilities: jnp.ndarray | None = None,
+    ) -> tuple[jnp.ndarray, tuple[jnp.ndarray, jnp.ndarray]]:
+        """Computes AEP gradients with chunking to reduce memory usage.
+        Args:
+            wt_xs: Turbine x-coordinates
+            wt_ys: Turbine y-coordinates
+            ws_amb: Wind speeds (time series)
+            wd: Wind directions (time series)
+            ti: Turbulence intensity
+            chunk_size: Number of timestamps to process per chunk
+            probabilities: Optional probabilities for each timestamp
+        Returns:
+            Tuple of (total_aep, (grad_x, grad_y))
+        """
+        n_timestamps = len(ws_amb)
+        n_chunks = (n_timestamps + chunk_size - 1) // chunk_size
+
+        if not hasattr(self, "_cached_grad_chunk"):
+
+            def grad_chunk(xx, yy, ws_chunk, wd_chunk, ti_chunk, prob_chunk):
+                result = self(xx, yy, ws_chunk, wd_chunk, ti_chunk)
+                return result.aep(probabilities=prob_chunk)
+
+            self._cached_grad_chunk = jax.jit(
+                jax.value_and_grad(grad_chunk, argnums=(0, 1))
+            )
+        grad_chunk = self._cached_grad_chunk
+
+        total_aep = 0.0
+        grad_x_accum = jnp.zeros_like(wt_xs)
+        grad_y_accum = jnp.zeros_like(wt_ys)
+
+        for i in range(n_chunks):
+            start_idx = i * chunk_size
+            end_idx = min((i + 1) * chunk_size, n_timestamps)
+
+            ws_chunk = ws_amb[start_idx:end_idx]
+            wd_chunk = wd[start_idx:end_idx]
+            ti_chunk = (
+                ti
+                if ti is None
+                else (ti if isinstance(ti, float) else ti[start_idx:end_idx])
+            )
+            prob_chunk = (
+                None if probabilities is None else probabilities[start_idx:end_idx]
+            )
+
+            chunk_aep, (grad_x, grad_y) = grad_chunk(
+                wt_xs, wt_ys, ws_chunk, wd_chunk, ti_chunk, prob_chunk
+            )
+
+            # Accumulate
+            if probabilities is None:
+                weight = len(ws_chunk) / n_timestamps
+                total_aep += chunk_aep * weight
+                grad_x_accum += grad_x * weight
+                grad_y_accum += grad_y * weight
+            else:
+                # Probabilities already weighted in aep calculation
+                total_aep += chunk_aep
+                grad_x_accum += grad_x
+                grad_y_accum += grad_y
+
+        return total_aep, (grad_x_accum, grad_y_accum)
+
 
 @partial(
     custom_vjp,

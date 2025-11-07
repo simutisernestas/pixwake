@@ -1,0 +1,109 @@
+import jax
+import jax.numpy as jnp
+import numpy as np
+import pytest
+
+from pixwake import Curve, Turbine, WakeSimulation
+from pixwake.deficit import NiayifarGaussianDeficit
+from pixwake.turbulence import CrespoHernandez
+
+
+def generate_turbine_layout(n_turbines=4, spacing_D=5, rotor_diameter=120.0):
+    """Generates a simple turbine layout."""
+    x = np.arange(n_turbines) * spacing_D * rotor_diameter
+    y = np.zeros(n_turbines)
+    return jnp.array(x), jnp.array(y)
+
+
+def generate_time_series_wind_data(n_hours=250):
+    """Generates sample time-series wind data."""
+    key = jax.random.PRNGKey(0)
+    ws_key, wd_key = jax.random.split(key)
+    ws = 8.0 + 2.0 * jax.random.normal(ws_key, (n_hours,))
+    wd = 270.0 + 15.0 * jax.random.normal(wd_key, (n_hours,))
+    return ws, wd
+
+
+def get_turbine_curves():
+    """Returns simple power and CT curves."""
+    ws = jnp.arange(3.0, 26.0)
+    power = jnp.full_like(ws, 3000.0)
+    ct = jnp.full_like(ws, 0.8)
+    return ws, power, ct
+
+
+@pytest.fixture
+def simulation_setup():
+    """Provides a configured WakeSimulation and test data."""
+    # Turbine setup
+    rotor_diameter = 120.0
+    hub_height = 100.0
+    ws_curve, power_vals, ct_vals = get_turbine_curves()
+    power_curve = Curve(wind_speed=ws_curve, values=power_vals)
+    ct_curve = Curve(wind_speed=ws_curve, values=ct_vals)
+    turbine = Turbine(
+        rotor_diameter=rotor_diameter,
+        hub_height=hub_height,
+        power_curve=power_curve,
+        ct_curve=ct_curve,
+    )
+
+    # Simulation setup
+    deficit_model = NiayifarGaussianDeficit(
+        use_effective_ws=True, use_effective_ti=True
+    )
+    turbulence_model = CrespoHernandez()
+    sim = WakeSimulation(
+        turbine,
+        deficit_model,
+        turbulence=turbulence_model,
+        mapping_strategy="vmap",
+    )
+
+    # Data setup
+    wt_xs, wt_ys = generate_turbine_layout()
+    ws_amb, wd_amb = generate_time_series_wind_data()
+    ti = 0.1
+
+    return sim, wt_xs, wt_ys, ws_amb, wd_amb, ti
+
+
+def test_chunked_gradients_match(simulation_setup):
+    """
+    Tests that the chunked gradient calculation produces the same result as the
+    non-chunked (standard) gradient calculation.
+    """
+    sim, wt_xs, wt_ys, ws_amb, wd_amb, ti = simulation_setup
+
+    # 1. Standard gradient calculation
+    @jax.jit
+    def aep_fn(x, y):
+        result = sim(x, y, ws_amb, wd_amb, ti)
+        return result.aep()
+
+    aep_standard, grad_standard = jax.value_and_grad(aep_fn, argnums=(0, 1))(
+        wt_xs, wt_ys
+    )
+    grad_x_standard, grad_y_standard = grad_standard
+
+    # 2. Chunked gradient calculation
+    aep_chunked, grad_chunked = sim.aep_gradients_chunked(
+        wt_xs,
+        wt_ys,
+        ws_amb,
+        wd_amb,
+        ti=ti,
+        chunk_size=50,  # Use a chunk size smaller than the total number of hours
+    )
+    grad_x_chunked, grad_y_chunked = grad_chunked
+
+    # 3. Compare results
+    assert jnp.allclose(aep_standard, aep_chunked, rtol=1e-5), (
+        "AEP values do not match."
+    )
+    assert jnp.allclose(grad_x_standard, grad_x_chunked, rtol=1e-5), (
+        "X-gradients do not match."
+    )
+    assert jnp.allclose(grad_y_standard, grad_y_chunked, rtol=1e-5), (
+        "Y-gradients do not match."
+    )
