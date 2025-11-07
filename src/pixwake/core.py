@@ -544,6 +544,31 @@ class WakeSimulation:
         output: tuple[jnp.ndarray, jnp.ndarray | None] = (ws_eff_new, ti_eff_new)
         return output
 
+    @staticmethod
+    @partial(jax.jit, static_argnums=(0,))
+    def _aep_gradients_chunked_static(
+        sim: "WakeSimulation",
+        wt_xs: jnp.ndarray,
+        wt_ys: jnp.ndarray,
+        ws_chunk: jnp.ndarray,
+        wd_chunk: jnp.ndarray,
+        ti_chunk: jnp.ndarray | float | None = None,
+        prob_chunk: jnp.ndarray | None = None,
+    ) -> tuple[jnp.ndarray, tuple[jnp.ndarray, jnp.ndarray]]:
+        """Helper for chunked gradient calculation to allow for a single JIT trace."""
+
+        def grad_chunk(
+            xx: jnp.ndarray,
+            yy: jnp.ndarray,
+        ) -> jnp.ndarray:
+            result = sim(xx, yy, ws_chunk, wd_chunk, ti_chunk)
+            return result.aep(probabilities=prob_chunk)
+
+        # We can define and jit internal functions, as long as the parent is jitted
+        # and the inputs that would change compilation hash are static.
+        # As chunk size is now static, we only trace this once per chunk size.
+        return jax.value_and_grad(grad_chunk, argnums=(0, 1))(wt_xs, wt_ys)
+
     def aep_gradients_chunked(
         self,
         wt_xs: jnp.ndarray,
@@ -553,8 +578,9 @@ class WakeSimulation:
         ti: jnp.ndarray | float | None = None,
         chunk_size: int = 100,
         probabilities: jnp.ndarray | None = None,
-    ) -> tuple[jnp.ndarray, tuple[jnp.ndarray, jnp.ndarray]]:
+    ) -> tuple[float, tuple[jnp.ndarray, jnp.ndarray]]:
         """Computes AEP gradients with chunking to reduce memory usage.
+
         Args:
             wt_xs: Turbine x-coordinates
             wt_ys: Turbine y-coordinates
@@ -563,49 +589,60 @@ class WakeSimulation:
             ti: Turbulence intensity
             chunk_size: Number of timestamps to process per chunk
             probabilities: Optional probabilities for each timestamp
+
         Returns:
             Tuple of (total_aep, (grad_x, grad_y))
         """
+        assert chunk_size > 0, "Chunk size must be positive."
+
         n_timestamps = len(ws_amb)
         n_chunks = (n_timestamps + chunk_size - 1) // chunk_size
 
-        if not hasattr(self, "_cached_grad_chunk"):
-
-            def grad_chunk(xx, yy, ws_chunk, wd_chunk, ti_chunk, prob_chunk):
-                result = self(xx, yy, ws_chunk, wd_chunk, ti_chunk)
-                return result.aep(probabilities=prob_chunk)
-
-            self._cached_grad_chunk = jax.jit(
-                jax.value_and_grad(grad_chunk, argnums=(0, 1))
-            )
-        grad_chunk = self._cached_grad_chunk
-
         total_aep = 0.0
-        grad_x_accum = jnp.zeros_like(wt_xs)
-        grad_y_accum = jnp.zeros_like(wt_ys)
+        grad_x_accum = jnp.zeros_like(wt_xs, dtype=default_float_type())
+        grad_y_accum = jnp.zeros_like(wt_ys, dtype=default_float_type())
 
         for i in range(n_chunks):
             start_idx = i * chunk_size
             end_idx = min((i + 1) * chunk_size, n_timestamps)
+            actual_chunk_size = end_idx - start_idx
 
-            ws_chunk = ws_amb[start_idx:end_idx]
-            wd_chunk = wd[start_idx:end_idx]
-            ti_chunk = (
-                ti
-                if ti is None
-                else (ti if isinstance(ti, float) else ti[start_idx:end_idx])
+            def pad_chunk(
+                arr: jnp.ndarray | float | None,
+            ) -> jnp.ndarray | float | None:
+                if arr is None:
+                    return None
+                if isinstance(arr, float):
+                    return arr
+                pad_width = ((0, chunk_size - actual_chunk_size),) + ((0, 0),) * (
+                    arr.ndim - 1
+                )
+                return jnp.pad(arr, pad_width, "constant")
+
+            ws_chunk = pad_chunk(ws_amb[start_idx:end_idx])
+            wd_chunk = pad_chunk(wd[start_idx:end_idx])
+            ti_chunk = pad_chunk(
+                ti[start_idx:end_idx] if isinstance(ti, jnp.ndarray) else ti
             )
-            prob_chunk = (
+            prob_chunk = pad_chunk(
                 None if probabilities is None else probabilities[start_idx:end_idx]
             )
 
-            chunk_aep, (grad_x, grad_y) = grad_chunk(
-                wt_xs, wt_ys, ws_chunk, wd_chunk, ti_chunk, prob_chunk
+            # Mask padded values in probabilities
+            if prob_chunk is not None:
+                mask = jnp.arange(chunk_size) < actual_chunk_size
+                prob_chunk = jnp.where(mask, prob_chunk, 0.0)
+
+            chunk_aep, (grad_x, grad_y) = self._aep_gradients_chunked_static(
+                self, wt_xs, wt_ys, ws_chunk, wd_chunk, ti_chunk, prob_chunk
             )
 
             # Accumulate
             if probabilities is None:
-                weight = len(ws_chunk) / n_timestamps
+                # aep is already divided by number of cases, so we need to
+                # multiply back to get the sum of powers, which we then add.
+                # In the end, we divide by the total number of timestamps.
+                weight = actual_chunk_size / n_timestamps
                 total_aep += chunk_aep * weight
                 grad_x_accum += grad_x * weight
                 grad_y_accum += grad_y * weight

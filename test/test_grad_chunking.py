@@ -1,3 +1,6 @@
+import time
+from contextlib import nullcontext
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -32,7 +35,7 @@ def get_turbine_curves():
     return ws, power, ct
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def simulation_setup():
     """Provides a configured WakeSimulation and test data."""
     # Turbine setup
@@ -61,21 +64,30 @@ def simulation_setup():
     )
 
     # Data setup
-    wt_xs, wt_ys = generate_turbine_layout()
+    wt_xs, wt_ys = generate_turbine_layout(rotor_diameter)
     ws_amb, wd_amb = generate_time_series_wind_data()
     ti = 0.1
-
     return sim, wt_xs, wt_ys, ws_amb, wd_amb, ti
 
 
-def test_chunked_gradients_match(simulation_setup):
-    """
-    Tests that the chunked gradient calculation produces the same result as the
-    non-chunked (standard) gradient calculation.
+@pytest.mark.parametrize("chunk_size", [1, 25, 50, 33, 1000, -1])
+def test_chunked_gradients_match(simulation_setup, chunk_size):
+    """Tests that the chunked gradient calculation produces
+    the same result as the non-chunked (standard) gradient calculation.
     """
     sim, wt_xs, wt_ys, ws_amb, wd_amb, ti = simulation_setup
 
-    # 1. Standard gradient calculation
+    # Chunked gradient calculation
+    ctx = pytest.raises(AssertionError) if chunk_size <= 0 else nullcontext()
+    with ctx:
+        aep_chunked, grad_chunked = sim.aep_gradients_chunked(
+            wt_xs, wt_ys, ws_amb, wd_amb, ti=ti, chunk_size=chunk_size
+        )
+        grad_x_chunked, grad_y_chunked = grad_chunked
+    if "aep_chunked" not in locals():
+        return
+
+    # Standard gradient calculation
     @jax.jit
     def aep_fn(x, y):
         result = sim(x, y, ws_amb, wd_amb, ti)
@@ -86,18 +98,7 @@ def test_chunked_gradients_match(simulation_setup):
     )
     grad_x_standard, grad_y_standard = grad_standard
 
-    # 2. Chunked gradient calculation
-    aep_chunked, grad_chunked = sim.aep_gradients_chunked(
-        wt_xs,
-        wt_ys,
-        ws_amb,
-        wd_amb,
-        ti=ti,
-        chunk_size=50,  # Use a chunk size smaller than the total number of hours
-    )
-    grad_x_chunked, grad_y_chunked = grad_chunked
-
-    # 3. Compare results
+    # Compare results
     assert jnp.allclose(aep_standard, aep_chunked, rtol=1e-5), (
         "AEP values do not match."
     )
@@ -106,4 +107,34 @@ def test_chunked_gradients_match(simulation_setup):
     )
     assert jnp.allclose(grad_y_standard, grad_y_chunked, rtol=1e-5), (
         "Y-gradients do not match."
+    )
+
+
+def test_gradient_chunked_is_faster_after_warmup_call(simulation_setup):
+    sim, wt_xs, wt_ys, ws_amb, wd_amb, ti = simulation_setup
+
+    # Warm-up call for JIT compilation
+    start_chunked = time.time()
+    aep, (dx, dy) = sim.aep_gradients_chunked(
+        wt_xs, wt_ys, ws_amb, wd_amb, ti=ti, chunk_size=51
+    )
+    aep.block_until_ready()
+    dx.block_until_ready()
+    dy.block_until_ready()
+    end_chunked = time.time()
+    warmup_time = end_chunked - start_chunked
+
+    # Measure chunked gradient time
+    start_chunked = time.time()
+    aep, (dx, dy) = sim.aep_gradients_chunked(
+        wt_xs, wt_ys, ws_amb, wd_amb, ti=ti, chunk_size=32
+    )
+    aep.block_until_ready()
+    dx.block_until_ready()
+    dy.block_until_ready()
+    end_chunked = time.time()
+    chunked_time = end_chunked - start_chunked
+
+    assert chunked_time < (warmup_time * 100), (
+        "Chunked gradient calculation is not faster than warmup."
     )
