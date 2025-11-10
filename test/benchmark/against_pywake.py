@@ -179,24 +179,36 @@ def benchmark_pixwake(
         pixwake_model,
         turbulence=CrespoHernandez(),
         fpi_damp=1.0,
+        mapping_strategy="vmap",
     )
 
     @jax.jit
     def pixwake_aep_ts(xx, yy):
         return pixwake_sim(xx, yy, ws_ts, wd_ts, ti=0.1).aep()
 
-    grad_fn_ts = jax.jit(jax.value_and_grad(pixwake_aep_ts, argnums=(0, 1)))
-
+    # TODO: should investivate taking only partial gradients of only some number of turbines...
+    # TODO: should support both GPU and CPU benchmarking !!!
+    # CUDA_VISIBLE_DEVICES=0 python test/benchmark/against_pywake.py --spacings 5 --n_turbines 1024 --target pixwake --run_id $run_id
+    chunk_size = 256
     # Warmup
-    _ = pixwake_aep_ts(x, y).block_until_ready()
-    _, _ = grad_fn_ts(x, y)
+    # _ = pixwake_aep_ts(x, y).block_until_ready()
+    aep, (px_dx, px_dy) = pixwake_sim.aep_gradients_chunked(
+        x, y, ws_ts, wd_ts, ti=0.1, chunk_size=chunk_size
+    )
+    aep.block_until_ready()
+    px_dx.block_until_ready()
+    px_dy.block_until_ready()
+
+    # start = time.time()
+    # _ = pixwake_aep_ts(x, y).block_until_ready()
+    # pixwake_aep_time_ts = time.time() - start
+    pixwake_aep_time_ts = 0.0
 
     start = time.time()
-    _ = pixwake_aep_ts(x, y).block_until_ready()
-    pixwake_aep_time_ts = time.time() - start
-
-    start = time.time()
-    _, (px_dx, px_dy) = grad_fn_ts(x, y)
+    aep, (px_dx, px_dy) = pixwake_sim.aep_gradients_chunked(
+        x, y, ws_ts, wd_ts, ti=0.1, chunk_size=chunk_size
+    )
+    aep.block_until_ready()
     px_dx.block_until_ready()
     px_dy.block_until_ready()
     pixwake_grad_time_ts = time.time() - start
@@ -222,7 +234,7 @@ def run_benchmark(bench_target: BenchTarget, n_turbines_list, spacings_list):
     """Runs the full performance benchmark."""
     rotor_diameter = 120.0
     hub_height = 100.0
-    ws_ts, wd_ts = generate_time_series_wind_data(n_hours=100)
+    ws_ts, wd_ts = generate_time_series_wind_data(n_hours=1024)
     results = []
 
     for spacing in spacings_list:
