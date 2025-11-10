@@ -23,8 +23,7 @@ class Curve:
     """Represents a performance curve, such as a power or thrust curve.
 
     This dataclass stores the wind speeds and corresponding values (e.g., power
-    in kW or thrust coefficient) that define a turbine's performance
-    characteristics.
+    in kW or thrust coefficient) that define a turbine's performance characteristics.
 
     Attributes:
         wind_speed: A JAX numpy array of wind speeds, typically in m/s.
@@ -46,8 +45,7 @@ class Turbine:
         rotor_diameter: The diameter of the turbine's rotor in meters.
         hub_height: The height of the turbine's hub above the ground in meters.
         power_curve: A `Curve` object representing the turbine's power curve.
-        ct_curve: A `Curve` object representing the turbine's thrust coefficient
-            curve.
+        ct_curve: A `Curve` object representing the turbine's thrust coefficient curve.
     """
 
     rotor_diameter: float
