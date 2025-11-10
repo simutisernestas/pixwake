@@ -186,6 +186,8 @@ def benchmark_pixwake(
     def pixwake_aep_ts(xx, yy):
         return pixwake_sim(xx, yy, ws_ts, wd_ts, ti=0.1).aep()
 
+    # TODO: should investivate taking only partial gradients of only some number of turbines...
+    # TODO: should support both GPU and CPU benchmarking !!!
     # CUDA_VISIBLE_DEVICES=0 python test/benchmark/against_pywake.py --spacings 5 --n_turbines 1024 --target pixwake --run_id $run_id
     chunk_size = 256
     # Warmup
