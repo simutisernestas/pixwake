@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure, SubFigure
 
-from pixwake import Curve, Turbine
+from pixwake import Turbine
 
 
 def plot_flow_map(
@@ -75,7 +75,7 @@ def plot_flow_map(
     return ax
 
 
-def plot_power_and_thrust_curve(turbine: Turbine, show=True) -> None:
+def plot_power_and_thrust_curve(turbine: Turbine, show: bool = True) -> None:
     """
     Plots the power and thrust coefficient (Ct) curves for a given Turbine object.
 
@@ -120,8 +120,6 @@ def plot_power_and_thrust_curve(turbine: Turbine, show=True) -> None:
         f"Turbine Performance Curves\n(Rotor Diameter: {turbine.rotor_diameter}m, Hub Height: {turbine.hub_height}m)",
         fontsize=16,
     )
-    plt.tight_layout(rect=[0, 0.03, 1, 0.95])  # Adjust layout to prevent title overlap
+    plt.tight_layout(rect=(0, 0.03, 1, 0.95))  # Adjust layout to prevent title overlap
     if show:
         plt.show()
-    else:
-        plt.savefig("power_curve")

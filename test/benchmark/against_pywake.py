@@ -73,14 +73,14 @@ def generate_wind_rose_data(
 
 def get_turbine_curves():
     """Returns power and CT curves for the turbine."""
-    # fmt: off
+    # fmt:off
     ct_vals = np.array([0.80, 0.79, 0.77, 0.75, 0.72, 0.68, 0.64, 0.62, 0.61, 
                        0.60, 0.55, 0.50, 0.45, 0.40, 0.35, 0.30, 0.25, 0.20, 
                        0.18, 0.15, 0.12, 0.10, 0.10])
     power_vals = np.array([100, 300, 600, 1200, 1800, 2300, 2700, 2900,
                            2950, 3000, 3000, 3000, 3000, 3000, 3000, 3000, 3000,
                            3000, 3000, 3000, 3000, 3000, 0])
-    # fmt: on
+    # fmt:on
     ct_pw_ws = np.arange(3.0, 25.0 + 1.0, 1.0)
     return ct_pw_ws, power_vals, ct_vals
 
