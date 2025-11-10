@@ -75,8 +75,8 @@ def _create_turbine_layout(width, length, spacing=1e2):
     return x.flatten(), y.flatten()
 
 
-def _create_pywake_turbines(x, y, ct_curve, power_curve, RD=120.0, HH=100.0):
-    names = [f"WT{i}" for i in range(len(x))]
+def _create_pywake_turbines(n_turbines, ct_curve, power_curve, RD=120.0, HH=100.0):
+    names = [f"WT{i}" for i in range(n_turbines)]
     power_values_W = power_curve[:, 1] * 1000
     power_ct_func = PowerCtTabular(
         ws=power_curve[:, 0],
@@ -86,9 +86,9 @@ def _create_pywake_turbines(x, y, ct_curve, power_curve, RD=120.0, HH=100.0):
     )
     return WindTurbines(
         names=names,
-        diameters=[RD] * len(x),
-        hub_heights=[HH] * len(x),
-        powerCtFunctions=[power_ct_func] * len(x),
+        diameters=[RD] * n_turbines,
+        hub_heights=[HH] * n_turbines,
+        powerCtFunctions=[power_ct_func] * n_turbines,
     )
 
 
@@ -132,7 +132,7 @@ def test_noj_equivalence_timeseries(curves):
     wake_expansion_k = 0.1
 
     x, y = _create_turbine_layout(10, 10)
-    windTurbines = _create_pywake_turbines(x, y, ct_curve, power_curve)
+    windTurbines = _create_pywake_turbines(len(x), ct_curve, power_curve)
 
     site = Hornsrev1Site()
     wake_model = PyWakeNOJDeficit(k=wake_expansion_k, rotorAvgModel=None)
@@ -185,7 +185,7 @@ def test_noj_equivalence_with_site_frequencies(curves):
     wake_expansion_k = 0.1
 
     x, y = _create_turbine_layout(8, 8)
-    windTurbines = _create_pywake_turbines(x, y, ct_curve, power_curve)
+    windTurbines = _create_pywake_turbines(len(x), ct_curve, power_curve)
 
     # fmt:off
     wind_direction = np.array([0.0, 30.0, 60.0, 90.0, 120.0, 
@@ -282,7 +282,7 @@ def test_gaussian_equivalence_timeseries(ct_vals, power_vals):
     width = 9
     length = 9
     x, y = _create_turbine_layout(width, length, spacing=3 * 120)
-    windTurbines = _create_pywake_turbines(x, y, ct_curve, power_curve)
+    windTurbines = _create_pywake_turbines(len(x), ct_curve, power_curve)
 
     wake_expansion_k = 0.0324555
     site = Hornsrev1Site()
@@ -363,7 +363,7 @@ def test_gaussian_equivalence_timeseries_with_effective_ws(curves):
     RD = 120.0
 
     x, y = _create_turbine_layout(20, 3, spacing=RD)
-    windTurbines = _create_pywake_turbines(x, y, ct_curve, power_curve, RD=RD)
+    windTurbines = _create_pywake_turbines(len(x), ct_curve, power_curve, RD=RD)
 
     site = Hornsrev1Site()
     wake_model = PyWakeBastankhahGaussianDeficit(
@@ -414,7 +414,7 @@ def test_gaussian_equivalence_timeseries_with_effective_ws_with_turbulence(curve
     RD = 120.0
 
     x, y = _create_turbine_layout(20, 3, spacing=RD)
-    windTurbines = _create_pywake_turbines(x, y, ct_curve, power_curve, RD=RD)
+    windTurbines = _create_pywake_turbines(len(x), ct_curve, power_curve, RD=RD)
 
     site = Hornsrev1Site()
     wake_model = PyWakeBastankhahGaussianDeficit(
@@ -467,7 +467,7 @@ def test_gaussian_equivalence_timeseries_with_wake_expansion_based_on_ti(
     RD = 120.0
 
     x, y = _create_turbine_layout(20, 3, spacing=RD * 3)
-    windTurbines = _create_pywake_turbines(x, y, ct_curve, power_curve, RD=RD)
+    windTurbines = _create_pywake_turbines(len(x), ct_curve, power_curve, RD=RD)
 
     site = Hornsrev1Site()
     wake_model = PyWakeNiayifarGaussianDeficit(
@@ -517,7 +517,7 @@ def test_effective_ti_gaussian_equivalence_timeseries_with_wake_expansion_based_
     RD, HH = 120.0, 100.0
 
     x, y = _create_turbine_layout(20, 3, spacing=RD * 3)
-    windTurbines = _create_pywake_turbines(x, y, ct_curve, power_curve, RD=RD, HH=HH)
+    windTurbines = _create_pywake_turbines(len(x), ct_curve, power_curve, RD=RD, HH=HH)
 
     site = Hornsrev1Site()
     wake_model = PyWakeNiayifarGaussianDeficit(

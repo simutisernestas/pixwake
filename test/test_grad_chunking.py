@@ -70,7 +70,7 @@ def simulation_setup():
     return sim, wt_xs, wt_ys, ws_amb, wd_amb, ti
 
 
-@pytest.mark.parametrize("chunk_size", [1, 25, 50, 33, 1000, -1])
+@pytest.mark.parametrize("chunk_size", [1, 25, 37, 50, 1000, -1])
 def test_chunked_gradients_match(simulation_setup, chunk_size):
     """Tests that the chunked gradient calculation produces
     the same result as the non-chunked (standard) gradient calculation.
@@ -138,3 +138,58 @@ def test_gradient_chunked_is_faster_after_warmup_call(simulation_setup):
     assert chunked_time < (warmup_time * 100), (
         "Chunked gradient calculation is not faster than warmup."
     )
+
+
+def test_chunked_gradients_with_probabilities(simulation_setup):
+    """Test that chunked gradients work correctly with probability weights."""
+    sim, wt_xs, wt_ys, ws_amb, wd_amb, ti = simulation_setup
+
+    # Create non-uniform probabilities
+    probabilities = jnp.abs(jax.random.normal(jax.random.PRNGKey(42), (len(ws_amb),)))
+    probabilities = probabilities / probabilities.sum()
+
+    # Chunked calculation
+    aep_chunked, (grad_x_chunked, grad_y_chunked) = sim.aep_gradients_chunked(
+        wt_xs, wt_ys, ws_amb, wd_amb, ti=ti, chunk_size=50, probabilities=probabilities
+    )
+
+    # Standard calculation
+    @jax.jit
+    def aep_fn(x, y):
+        result = sim(x, y, ws_amb, wd_amb, ti)
+        return result.aep(probabilities=probabilities)
+
+    aep_standard, (grad_x_standard, grad_y_standard) = jax.value_and_grad(
+        aep_fn, argnums=(0, 1)
+    )(wt_xs, wt_ys)
+
+    assert jnp.allclose(aep_standard, aep_chunked, rtol=1e-5)
+    assert jnp.allclose(grad_x_standard, grad_x_chunked, rtol=1e-5)
+    assert jnp.allclose(grad_y_standard, grad_y_chunked, rtol=1e-5)
+
+
+def test_chunked_gradients_single_timestamp(simulation_setup):
+    """Test chunked gradients with only a single timestamp."""
+    sim, wt_xs, wt_ys, ws_amb, wd_amb, ti = simulation_setup
+
+    # Use only first timestamp
+    ws_single = ws_amb[:1]
+    wd_single = wd_amb[:1]
+
+    aep_chunked, (grad_x, grad_y) = sim.aep_gradients_chunked(
+        wt_xs, wt_ys, ws_single, wd_single, ti=ti, chunk_size=10
+    )
+
+    # Standard calculation
+    @jax.jit
+    def aep_fn(x, y):
+        result = sim(x, y, ws_single, wd_single, ti)
+        return result.aep()
+
+    aep_standard, (grad_x_standard, grad_y_standard) = jax.value_and_grad(
+        aep_fn, argnums=(0, 1)
+    )(wt_xs, wt_ys)
+
+    assert jnp.allclose(aep_standard, aep_chunked, rtol=1e-5)
+    assert jnp.allclose(grad_x_standard, grad_x, rtol=1e-5)
+    assert jnp.allclose(grad_y_standard, grad_y, rtol=1e-5)
