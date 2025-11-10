@@ -36,25 +36,25 @@ np.asarray = asarray_method
 
 @pytest.fixture
 def ct_vals():
-    # fmt: off
+    # fmt:off
     ct_vals = np.array([
         0.00, 0.00, 0.00, 0.80, 0.79, 0.77, 0.75, 0.72, 0.68, 0.64,
         0.62, 0.61, 0.60, 0.55, 0.50, 0.45, 0.40, 0.35, 0.30, 0.25,
         0.20, 0.18, 0.15, 0.12, 0.10, 0.10,
     ])
-    # fmt: on
+    # fmt:on
     return ct_vals
 
 
 @pytest.fixture
 def power_vals():
-    # fmt: off
+    # fmt:off
     power_vals = np.array([
         0, 0, 0, 100, 300, 600, 1200, 1800, 2300, 2700,
         2900, 2950, 3000, 3000, 3000, 3000, 3000, 3000,
         3000, 3000, 3000, 3000, 3000, 3000, 3000, 3000,
     ])
-    # fmt: on
+    # fmt:on
     return power_vals
 
 
