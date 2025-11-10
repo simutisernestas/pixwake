@@ -3,6 +3,8 @@ import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure, SubFigure
 
+from pixwake import Curve, Turbine
+
 
 def plot_flow_map(
     grid_x: jnp.ndarray,
@@ -71,3 +73,55 @@ def plot_flow_map(
         plt.show()
 
     return ax
+
+
+def plot_power_and_thrust_curve(turbine: Turbine, show=True) -> None:
+    """
+    Plots the power and thrust coefficient (Ct) curves for a given Turbine object.
+
+    This function creates a figure with two subplots:
+    1. The top plot shows the power curve (Power vs. Wind Speed).
+    2. The bottom plot shows the thrust coefficient curve (Ct vs. Wind Speed).
+
+    Args:
+        turbine: A pixwake Turbine object containing the power and ct curves.
+    """
+    fig, (ax1, ax2) = plt.subplots(nrows=2, ncols=1, figsize=(10, 8), sharex=True)
+
+    # --- Power Curve Plot ---
+    ax1.plot(
+        turbine.power_curve.wind_speed,
+        turbine.power_curve.values,
+        "o-",
+        color="royalblue",
+        label="Power",
+    )
+    ax1.set_ylabel("Power (kW)")
+    ax1.set_title("Power Curve")
+    ax1.grid(True, which="both", linestyle="--", linewidth=0.5)
+    ax1.legend()
+
+    # --- Thrust Coefficient Curve Plot ---
+    ax2.plot(
+        turbine.ct_curve.wind_speed,
+        turbine.ct_curve.values,
+        "o-",
+        color="seagreen",
+        label="Thrust Coefficient",
+    )
+    ax2.set_ylabel("Thrust Coefficient (Ct)")
+    ax2.set_xlabel("Wind Speed (m/s)")
+    ax2.set_title("Thrust Curve")
+    ax2.grid(True, which="both", linestyle="--", linewidth=0.5)
+    ax2.legend()
+
+    # --- Overall Figure Formatting ---
+    fig.suptitle(
+        f"Turbine Performance Curves\n(Rotor Diameter: {turbine.rotor_diameter}m, Hub Height: {turbine.hub_height}m)",
+        fontsize=16,
+    )
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95])  # Adjust layout to prevent title overlap
+    if show:
+        plt.show()
+    else:
+        plt.savefig("power_curve")
