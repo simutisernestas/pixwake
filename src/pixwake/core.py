@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import pickle
+import warnings
 from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
@@ -65,13 +66,6 @@ class Turbine:
     hub_height: jnp.ndarray | float
     power_curve: Curve
     ct_curve: Curve
-
-    # TODO: ???
-    # def __post_init__(self):
-    #     self.rotor_diameter = jnp.atleast_1d(self.rotor_diameter)
-    #     self.hub_height = jnp.atleast_1d(self.hub_height)
-    #     assert self.rotor_diameter.shape == self.hub_height.shape
-    #     assert self.rotor_diameter.ndim == 1
 
     def tree_flatten(self) -> tuple[tuple, tuple]:
         children = (
@@ -153,6 +147,9 @@ class Turbine:
         return hash_obj.hexdigest()
 
 
+Turbines = Turbine
+
+
 @dataclass
 @register_pytree_node_class
 class SimulationContext:
@@ -178,7 +175,7 @@ class SimulationContext:
     """
 
     # site variables
-    turbine: Turbine
+    turbine: Turbines
     dw: jnp.ndarray
     cw: jnp.ndarray
     ws: jnp.ndarray
@@ -205,7 +202,7 @@ class SimulationContext:
         return cls(*children)
 
 
-@dataclass
+@dataclass(frozen=True)
 class SimulationResult:
     """Holds the results of a wind farm simulation.
 
@@ -227,7 +224,6 @@ class SimulationResult:
             intensity at each turbine for each case.
     """
 
-    turbine: Turbine
     wt_x: jnp.ndarray
     wt_y: jnp.ndarray
     wd: jnp.ndarray
@@ -275,7 +271,7 @@ class SimulationResult:
         ).sum()
 
 
-@dataclass
+@dataclass(frozen=True)
 class WindFarmLayout:
     """Immutable wind farm configuration linking turbine types to positions.
 
@@ -283,23 +279,11 @@ class WindFarmLayout:
     optimization) from turbine positions (which change frequently). It maintains
     the mapping between positions and turbine types, allowing efficient layout
     optimization without reconstructing turbine specifications.
-
-    Attributes:
-        turbine: A stacked `Turbine` object containing characteristics for each
-            turbine position.
-        positions: A tuple of (x_coordinates, y_coordinates) for each turbine.
     """
 
-    turbine: Turbine
+    turbines: Turbines
     positions: tuple[jnp.ndarray, jnp.ndarray]
-
-    @staticmethod
-    def types_to_library_index(
-        turbine_library: list[Turbine],
-        turbine_types: list[str],
-    ) -> jnp.ndarray:
-        type_id_to_index = {t.type_id: i for i, t in enumerate(turbine_library)}
-        return jnp.array([type_id_to_index[tt] for tt in turbine_types], dtype=int)
+    turbine_library: list[Turbine]
 
     @classmethod
     def from_types(
@@ -330,25 +314,30 @@ class WindFarmLayout:
             layout = WindFarmLayout.from_types(
                 positions=(xs, ys),
                 turbine_library=[v80, v200],
-                types=[0, 1, 0, 1, 0, 1]  # Alternating types
+                types=[0, 1, 0, 1, 0, 1]  # Alternating types TODO: wrong!!!
             )
             ```
         """
         type_id_to_index = {t.type_id: i for i, t in enumerate(turbine_library)}
-        types_arr = jnp.array([type_id_to_index[tt] for tt in turbine_types], dtype=int)
+        assert len(type_id_to_index.keys()) == len(turbine_library), (
+            "Identical turbines found in library! It's probably not intended.. "
+            "Please check your turbine definitions.."
+        )
+        type_idxs = jnp.array([type_id_to_index[tt] for tt in turbine_types], dtype=int)
 
         xs, ys = positions
-        assert len(types_arr) == len(xs) == len(ys), (
-            f"Length mismatch: types={len(types_arr)}, xs={len(xs)}, ys={len(ys)}"
+        assert len(type_idxs) == len(xs) == len(ys), (
+            f"Length mismatch: types={len(type_idxs)}, xs={len(xs)}, ys={len(ys)}"
         )
 
-        # Stack turbine characteristics based on type indices
         def select_by_type(*turbine_attrs):
-            """Select attributes from turbine library by type index."""
-            return jnp.array([turbine_attrs[i] for i in types_arr])
+            """Stack turbine characteristics based on type indices."""
+            return jnp.array([turbine_attrs[i] for i in type_idxs])
 
-        stacked_turbine = jax.tree.map(select_by_type, *turbine_library)
-        return cls(stacked_turbine, positions)
+        # This creates new Turbine object with all attributes now being
+        # arrays of scalars and curves corresponding to different turbine types.
+        stacked_turbines = jax.tree.map(select_by_type, *turbine_library)
+        return cls(stacked_turbines, positions, turbine_library)
 
     @classmethod
     def from_turbines(
@@ -368,16 +357,12 @@ class WindFarmLayout:
         Returns:
             A `WindFarmLayout` with stacked turbine characteristics.
         """
-        xs, ys = positions
-        assert len(turbines) == len(xs) == len(ys), (
-            f"Length mismatch: turbines={len(turbines)}, xs={len(xs)}, ys={len(ys)}"
-        )
-
-        # Stack all turbine attributes
-        stacked_turbine = jax.tree.map(
-            lambda *x: jnp.stack(x) if x[0] is not None else None, *turbines
-        )
-        return cls(stacked_turbine, positions)
+        _d = {t.type_id: t for t in turbines}
+        turbine_library = list(_d.values())
+        turbine_types = [t.type_id for t in turbines]
+        if len(turbine_types) == 1:
+            warnings.warn("Only one unique turbine found in turbines list.")
+        return cls.from_types(positions, turbine_library, turbine_types)
 
     def __len__(self) -> int:
         """Returns the number of turbines in the layout."""
@@ -432,7 +417,7 @@ class WakeSimulation:
         # Handle different input types
         if isinstance(turbine, WindFarmLayout):
             self.layout = turbine
-            self.turbine = turbine.turbine
+            self.turbine = turbine.turbines
         elif isinstance(turbine, list):
             # Backward compatibility: stack list of turbines
             self.layout = None
