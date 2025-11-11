@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import pickle
 from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
@@ -18,7 +20,7 @@ from jax.tree_util import register_pytree_node_class
 from pixwake.jax_utils import default_float_type, get_float_eps
 
 
-@dataclass
+@dataclass(frozen=True)
 @register_pytree_node_class
 class Curve:
     """Represents a performance curve, such as a power or thrust curve.
@@ -44,7 +46,7 @@ class Curve:
         return cls(*children)
 
 
-@dataclass
+@dataclass(frozen=True)
 @register_pytree_node_class
 class Turbine:
     """Represents a wind turbine's physical and performance characteristics.
@@ -142,6 +144,13 @@ class Turbine:
         return jax.vmap(_interp, in_axes=(1, 0, 0), out_axes=1)(
             ws, self.ct_curve.wind_speed, self.ct_curve.values
         )
+
+    @property
+    def type_id(self) -> str:
+        # binary serialization
+        binary_data = pickle.dumps(self)
+        hash_obj = hashlib.sha256(binary_data)
+        return hash_obj.hexdigest()
 
 
 @dataclass
@@ -266,11 +275,120 @@ class SimulationResult:
         ).sum()
 
 
+@dataclass
+class WindFarmLayout:
+    """Immutable wind farm configuration linking turbine types to positions.
+
+    This class separates turbine characteristics (which rarely change during
+    optimization) from turbine positions (which change frequently). It maintains
+    the mapping between positions and turbine types, allowing efficient layout
+    optimization without reconstructing turbine specifications.
+
+    Attributes:
+        turbine: A stacked `Turbine` object containing characteristics for each
+            turbine position.
+        positions: A tuple of (x_coordinates, y_coordinates) for each turbine.
+    """
+
+    turbine: Turbine
+    positions: tuple[jnp.ndarray, jnp.ndarray]
+
+    @staticmethod
+    def types_to_library_index(
+        turbine_library: list[Turbine],
+        turbine_types: list[str],
+    ) -> jnp.ndarray:
+        type_id_to_index = {t.type_id: i for i, t in enumerate(turbine_library)}
+        return jnp.array([type_id_to_index[tt] for tt in turbine_types], dtype=int)
+
+    @classmethod
+    def from_types(
+        cls,
+        positions: tuple[jnp.ndarray, jnp.ndarray],
+        turbine_library: list[Turbine],
+        turbine_types: list[str],
+    ) -> WindFarmLayout:
+        """Create a WindFarmLayout from a library of turbine types.
+
+        This factory method constructs a layout by selecting turbine
+        characteristics from a library based on the provided type indices.
+
+        Args:
+            positions: A tuple of (x_coords, y_coords) arrays for turbine positions.
+            turbine_library: A list of `Turbine` objects representing available types.
+            types: An array of indices mapping each position to a turbine type in
+                the library.
+
+        Returns:
+            A `WindFarmLayout` with stacked turbine characteristics.
+
+        Example:
+            ```python
+            v80 = Turbine(rotor_diameter=80.0, ...)
+            v200 = Turbine(rotor_diameter=200.0, ...)
+
+            layout = WindFarmLayout.from_types(
+                positions=(xs, ys),
+                turbine_library=[v80, v200],
+                types=[0, 1, 0, 1, 0, 1]  # Alternating types
+            )
+            ```
+        """
+        type_id_to_index = {t.type_id: i for i, t in enumerate(turbine_library)}
+        types_arr = jnp.array([type_id_to_index[tt] for tt in turbine_types], dtype=int)
+
+        xs, ys = positions
+        assert len(types_arr) == len(xs) == len(ys), (
+            f"Length mismatch: types={len(types_arr)}, xs={len(xs)}, ys={len(ys)}"
+        )
+
+        # Stack turbine characteristics based on type indices
+        def select_by_type(*turbine_attrs):
+            """Select attributes from turbine library by type index."""
+            return jnp.array([turbine_attrs[i] for i in types_arr])
+
+        stacked_turbine = jax.tree.map(select_by_type, *turbine_library)
+        return cls(stacked_turbine, positions)
+
+    @classmethod
+    def from_turbines(
+        cls,
+        positions: tuple[jnp.ndarray, jnp.ndarray],
+        turbines: list[Turbine],
+    ) -> WindFarmLayout:
+        """Create a WindFarmLayout directly from a list of turbine instances.
+
+        This method is useful when you already have a turbine assigned to each
+        position and don't need to work with a type library.
+
+        Args:
+            positions: A tuple of (x_coords, y_coords) arrays for turbine positions.
+            turbines: A list of `Turbine` objects, one per position.
+
+        Returns:
+            A `WindFarmLayout` with stacked turbine characteristics.
+        """
+        xs, ys = positions
+        assert len(turbines) == len(xs) == len(ys), (
+            f"Length mismatch: turbines={len(turbines)}, xs={len(xs)}, ys={len(ys)}"
+        )
+
+        # Stack all turbine attributes
+        stacked_turbine = jax.tree.map(
+            lambda *x: jnp.stack(x) if x[0] is not None else None, *turbines
+        )
+        return cls(stacked_turbine, positions)
+
+    def __len__(self) -> int:
+        """Returns the number of turbines in the layout."""
+        return len(self.positions[0])
+
+
 class WakeSimulation:
     """Orchestrates wind farm wake simulations.
 
     This is the main class for running simulations. It takes a deficit model,
-    an optional turbulence model, and a turbine definition, and then runs the
+    an optional turbulence model, and turbine configuration, and then runs the
     simulation for a given set of ambient conditions.
 
     The core of the simulation is a fixed-point iteration that solves for the
@@ -284,7 +402,7 @@ class WakeSimulation:
 
     def __init__(
         self,
-        turbine: Turbine | list[Turbine],
+        turbine: Turbine | list[Turbine] | WindFarmLayout,
         deficit: WakeDeficit,
         turbulence: WakeTurbulence | None = None,
         fpi_damp: float = 1.0,
@@ -294,8 +412,9 @@ class WakeSimulation:
         """Initializes the `WakeSimulation`.
 
         Args:
-            turbine: A `Turbine` object representing the wind turbines in the
-                farm.
+            turbine: Either a single `Turbine`, a list of `Turbine` objects
+                (for backward compatibility), or a `WindFarmLayout` that
+                includes both turbine specs and positions.
             deficit: A `WakeDeficit` model to calculate the velocity deficit.
             turbulence: An optional `WakeTurbulence` model to calculate the
                 added turbulence.
@@ -305,16 +424,25 @@ class WakeSimulation:
                 conditions. Options are 'vmap', 'map', or '_manual'.
         """
         self.deficit = deficit
-        if isinstance(turbine, list):
-            self.turbine = jax.tree.map(
-                lambda *x: jnp.stack(x) if x[0] is not None else None, *turbine
-            )
-        else:
-            self.turbine = turbine
         self.turbulence = turbulence
         self.mapping_strategy = mapping_strategy
         self.fpi_damp = fpi_damp
         self.fpi_tol = fpi_tol
+
+        # Handle different input types
+        if isinstance(turbine, WindFarmLayout):
+            self.layout = turbine
+            self.turbine = turbine.turbine
+        elif isinstance(turbine, list):
+            # Backward compatibility: stack list of turbines
+            self.layout = None
+            self.turbine = jax.tree.map(
+                lambda *x: jnp.stack(x) if x[0] is not None else None, *turbine
+            )
+        else:
+            # Single turbine type
+            self.layout = None
+            self.turbine = turbine
 
         def __auto_mapping() -> Callable:
             return (
@@ -326,23 +454,32 @@ class WakeSimulation:
         self.__sim_call_table: dict[str, Callable] = {
             "auto": __auto_mapping(),
             "vmap": self._simulate_vmap,
-            "map": self._simulate_map,  # more memory efficient than vmap
-            "_manual": self._simulate_manual,  # debug/profile purposes only
+            "map": self._simulate_map,
+            "_manual": self._simulate_manual,
         }
 
     def __call__(
         self,
-        wt_xs: jnp.ndarray,
-        wt_ys: jnp.ndarray,
-        ws_amb: jnp.ndarray,
-        wd: jnp.ndarray,
+        wt_xs: jnp.ndarray | None = None,
+        wt_ys: jnp.ndarray | None = None,
+        ws_amb: jnp.ndarray | float | list = ...,
+        wd: jnp.ndarray | float | list = ...,
         ti: jnp.ndarray | float | None = None,
     ) -> SimulationResult:
         """Runs the wake simulation for the given ambient conditions.
 
+        If the simulation was initialized with a `WindFarmLayout`, the positions
+        from that layout are used unless explicitly overridden by providing
+        `wt_xs` and `wt_ys`. This makes it easy to run simulations with a
+        predefined layout or to override positions for layout optimization.
+
         Args:
-            wt_xs: A JAX numpy array of the x-coordinates of the turbines.
-            wt_ys: A JAX numpy array of the y-coordinates of the turbines.
+            wt_xs: Optional x-coordinates of the turbines. If `None` and a
+                `WindFarmLayout` was provided at initialization, uses the layout's
+                x-coordinates. Otherwise, must be provided.
+            wt_ys: Optional y-coordinates of the turbines. If `None` and a
+                `WindFarmLayout` was provided at initialization, uses the layout's
+                y-coordinates. Otherwise, must be provided.
             ws_amb: A JAX numpy array of the free-stream wind speeds.
             wd: A JAX numpy array of the wind directions.
             ti: An optional JAX numpy array of the ambient turbulence
@@ -351,7 +488,37 @@ class WakeSimulation:
         Returns:
             A `SimulationResult` object containing the results of the
             simulation.
+
+        Raises:
+            ValueError: If no positions are provided and no layout was defined
+                at initialization.
+
+        Example:
+            ```python
+            # With layout defined at initialization
+            layout = WindFarmLayout.from_types(...)
+            sim = WakeSimulation(layout, deficit_model)
+            result = sim(ws=ws, wd=wd)  # Uses layout positions
+
+            # Override positions for optimization
+            result = sim(wt_xs=new_xs, wt_ys=new_ys, ws=ws, wd=wd)
+
+            # Without layout (backward compatible)
+            sim = WakeSimulation(turbine, deficit_model)
+            result = sim(wt_xs=xs, wt_ys=ys, ws=ws, wd=wd)  # Must provide positions
+            ```
         """
+        # Determine which positions to use
+        if wt_xs is None or wt_ys is None:
+            if self.layout is None:
+                raise ValueError(
+                    "Turbine positions (wt_xs, wt_ys) must be provided when "
+                    "WakeSimulation is not initialized with a WindFarmLayout. "
+                    "Either pass positions to __call__ or initialize with "
+                    "WindFarmLayout."
+                )
+            wt_xs, wt_ys = self.layout.positions
+
         if self.mapping_strategy not in self.__sim_call_table.keys():
             raise ValueError(
                 f"Invalid mapping strategy: {self.mapping_strategy}. "
