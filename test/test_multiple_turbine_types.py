@@ -13,7 +13,7 @@ from py_wake.examples.data.hornsrev1 import V80, Hornsrev1Site, ct_curve, power_
 from py_wake.superposition_models import SquaredSum
 from py_wake.turbulence_models import CrespoHernandez as PyWakeCrespoHernandez
 from py_wake.wind_farm_models.engineering_models import All2AllIterative
-from py_wake.wind_turbines import WindTurbine
+from py_wake.wind_turbines import WindTurbine, WindTurbines
 from py_wake.wind_turbines.power_ct_functions import PowerCtTabular
 
 from pixwake.core import Curve, Turbine, WakeSimulation
@@ -115,7 +115,8 @@ def turbines(n_turbines):
 def test_multiple_turbine_type_simulation(
     pw_deficit_model, pw_kwargs, px_deficit_model, px_kwargs
 ):
-    pw_turbines, px_turbines = turbines(10)
+    n_turbines = 18
+    pw_turbines, px_turbines = turbines(n_turbines)
     rotor_avg_model = None
     deficit_model = px_deficit_model(rotor_avg_model=rotor_avg_model, **px_kwargs)
 
@@ -128,12 +129,15 @@ def test_multiple_turbine_type_simulation(
 
     RD = np.mean([wt.diameter() for wt in pw_turbines])
     xs, ys = _create_turbine_layout(6, 3, spacing_y=5 * RD)
+    assert len(xs) == n_turbines
+
+    np.random.seed(0)
     ws = np.random.uniform(5.0, 15.0, 100).tolist()
     wd = np.random.uniform(0.0, 360.0, 100).tolist()
     ti = [0.05]
 
     sim = WakeSimulation(
-        px_turbines, deficit_model, fpi_damp=0.5, turbulence=CrespoHernandez()
+        px_turbines, deficit_model, fpi_damp=1.0, turbulence=CrespoHernandez()
     )
     sim_res = sim(
         wt_xs=jnp.array(xs),
@@ -148,15 +152,23 @@ def test_multiple_turbine_type_simulation(
     rotor_avg_model_pw = None
     wfm = All2AllIterative(
         site_pw,
-        pw_turbines,
+        WindTurbines.from_WindTurbine_lst(pw_turbines),
         wake_deficitModel=pw_deficit_model(
             rotorAvgModel=rotor_avg_model_pw, **pw_kwargs
         ),
         superpositionModel=SquaredSum(),
         turbulenceModel=PyWakeCrespoHernandez(rotorAvgModel=None),
     )
-
-    sim_res_pw = wfm(x=xs, y=ys, wd=wd, ws=ws, TI=ti, WS_eff=0, time=True)
+    sim_res_pw = wfm(
+        x=xs,
+        y=ys,
+        wd=wd,
+        ws=ws,
+        TI=ti,
+        WS_eff=0,
+        time=True,
+        type=[i % 2 for i in range(n_turbines)],
+    )
     ws_eff_pywake = sim_res_pw.WS_eff_ilk
 
     np.testing.assert_allclose(

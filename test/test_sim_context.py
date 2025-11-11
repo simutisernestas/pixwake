@@ -88,16 +88,16 @@ def test_simulation_context_pytree_flatten_unflatten(simulation_context):
     children, aux_data = simulation_context.tree_flatten()
 
     # Verify children contains dynamic data (JAX arrays)
-    assert len(children) == 5
-    assert jnp.array_equal(children[0], simulation_context.dw)
-    assert jnp.array_equal(children[1], simulation_context.cw)
-    assert jnp.array_equal(children[2], simulation_context.ws)
-    assert jnp.array_equal(children[3], simulation_context.ti)
-    assert children[4] is None
+    assert len(children) == 6
+    assert children[0] is simulation_context.turbine
+    assert jnp.array_equal(children[1], simulation_context.dw)
+    assert jnp.array_equal(children[2], simulation_context.cw)
+    assert jnp.array_equal(children[3], simulation_context.ws)
+    assert jnp.array_equal(children[4], simulation_context.ti)
+    assert children[5] is None
 
-    # Verify aux_data contains static data (Turbine)
-    assert len(aux_data) == 1
-    assert aux_data[0] is simulation_context.turbine
+    # Verify aux_data is empty
+    assert len(aux_data) == 0
 
     # Verify unflatten reconstructs the original context
     reconstructed = SimulationContext.tree_unflatten(aux_data, children)
@@ -120,7 +120,7 @@ def test_simulation_context_with_none_ti(turbine):
 
     # Test pytree operations with None ti
     children, aux_data = ctx.tree_flatten()
-    assert children[3] is None
+    assert children[4] is None
 
     reconstructed = SimulationContext.tree_unflatten(aux_data, children)
     assert reconstructed.ti is None

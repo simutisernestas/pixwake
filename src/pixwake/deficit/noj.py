@@ -48,7 +48,7 @@ class NOJDeficit(WakeDeficit):
         all2all_deficit_matrix = (
             2 * self.ct2a(wt.ct(ws_eff))
             * (rr / jnp.maximum(ctx.wake_radius, get_float_eps())) ** 2
-        )  # fmt: skip
+        )  # fmt:skip
         return ctx.ws * all2all_deficit_matrix
 
     def _wake_radius(

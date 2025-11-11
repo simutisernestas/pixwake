@@ -15,10 +15,11 @@ from jax import custom_vjp, vjp
 from jax.lax import while_loop
 from jax.tree_util import register_pytree_node_class
 
-from pixwake.jax_utils import default_float_type
+from pixwake.jax_utils import default_float_type, get_float_eps
 
 
 @dataclass
+@register_pytree_node_class
 class Curve:
     """Represents a performance curve, such as a power or thrust curve.
 
@@ -33,8 +34,18 @@ class Curve:
     wind_speed: jnp.ndarray
     values: jnp.ndarray
 
+    def tree_flatten(self) -> tuple[tuple, tuple]:
+        children = (self.wind_speed, self.values)
+        aux_data = ()
+        return children, aux_data
+
+    @classmethod
+    def tree_unflatten(cls, _: tuple, children: tuple) -> Curve:
+        return cls(*children)
+
 
 @dataclass
+@register_pytree_node_class
 class Turbine:
     """Represents a wind turbine's physical and performance characteristics.
 
@@ -48,46 +59,89 @@ class Turbine:
         ct_curve: A `Curve` object representing the turbine's thrust coefficient curve.
     """
 
-    rotor_diameter: float
-    hub_height: float
+    rotor_diameter: jnp.ndarray | float
+    hub_height: jnp.ndarray | float
     power_curve: Curve
     ct_curve: Curve
 
+    # TODO: ???
+    # def __post_init__(self):
+    #     self.rotor_diameter = jnp.atleast_1d(self.rotor_diameter)
+    #     self.hub_height = jnp.atleast_1d(self.hub_height)
+    #     assert self.rotor_diameter.shape == self.hub_height.shape
+    #     assert self.rotor_diameter.ndim == 1
+
+    def tree_flatten(self) -> tuple[tuple, tuple]:
+        children = (
+            self.rotor_diameter,
+            self.hub_height,
+            self.power_curve,
+            self.ct_curve,
+        )
+        aux_data = ()
+        return children, aux_data
+
+    @classmethod
+    def tree_unflatten(cls, _: tuple, children: tuple) -> Turbine:
+        return cls(*children)
+
     def power(self, ws: jnp.ndarray) -> jnp.ndarray:
         """Calculates the turbine's power output for given wind speeds.
-
         This method interpolates the power curve to find the power output for
         each wind speed in the input array.
-
         Args:
             ws: A JAX numpy array of wind speeds.
-
         Returns:
             A JAX numpy array of the corresponding power outputs.
         """
 
-        def _power_single_case(_ws: jnp.ndarray) -> jnp.ndarray:
-            return jnp.interp(_ws, self.power_curve.wind_speed, self.power_curve.values)
+        def _interp(
+            _ws: jnp.ndarray, _ws_curve: jnp.ndarray, _curve_values: jnp.ndarray
+        ) -> jnp.ndarray:
+            return jnp.interp(_ws, _ws_curve, _curve_values)
 
-        return jax.vmap(_power_single_case)(ws)
+        if jnp.asarray(self.rotor_diameter).ndim == 0:
+            # Single turbine type
+            return jnp.interp(ws, self.power_curve.wind_speed, self.power_curve.values)
+
+        # Multiple turbine types
+        if ws.ndim == 1:
+            return jax.vmap(_interp, in_axes=(0, 0, 0))(
+                ws, self.power_curve.wind_speed, self.power_curve.values
+            )
+
+        return jax.vmap(_interp, in_axes=(1, 0, 0), out_axes=1)(
+            ws, self.power_curve.wind_speed, self.power_curve.values
+        )
 
     def ct(self, ws: jnp.ndarray) -> jnp.ndarray:
         """Calculates the thrust coefficient for given wind speeds.
-
         This method interpolates the thrust coefficient curve to find the `Ct`
         value for each wind speed in the input array.
-
         Args:
             ws: A JAX numpy array of wind speeds.
-
         Returns:
             A JAX numpy array of the corresponding thrust coefficients.
         """
 
-        def _ct_single_case(_ws: jnp.ndarray) -> jnp.ndarray:
-            return jnp.interp(_ws, self.ct_curve.wind_speed, self.ct_curve.values)
+        def _interp(
+            _ws: jnp.ndarray, _ws_curve: jnp.ndarray, _curve_values: jnp.ndarray
+        ) -> jnp.ndarray:
+            return jnp.interp(_ws, _ws_curve, _curve_values)
 
-        return jax.vmap(_ct_single_case)(ws)
+        if jnp.asarray(self.rotor_diameter).ndim == 0:
+            # Single turbine type
+            return jnp.interp(ws, self.ct_curve.wind_speed, self.ct_curve.values)
+
+        # Multiple turbine types
+        if ws.ndim == 1:
+            return jax.vmap(_interp, in_axes=(0, 0, 0))(
+                ws, self.ct_curve.wind_speed, self.ct_curve.values
+            )
+
+        return jax.vmap(_interp, in_axes=(1, 0, 0), out_axes=1)(
+            ws, self.ct_curve.wind_speed, self.ct_curve.values
+        )
 
 
 @dataclass
@@ -125,14 +179,21 @@ class SimulationContext:
 
     def tree_flatten(self) -> tuple[tuple, tuple]:
         """Flattens the `SimulationContext` for JAX's pytree mechanism."""
-        children = (self.dw, self.cw, self.ws, self.ti, self.wake_radius)
-        aux_data = (self.turbine,)
+        children = (
+            self.turbine,
+            self.dw,
+            self.cw,
+            self.ws,
+            self.ti,
+            self.wake_radius,
+        )
+        aux_data = ()
         return children, aux_data
 
     @classmethod
-    def tree_unflatten(cls, aux_data: tuple, children: tuple) -> "SimulationContext":
+    def tree_unflatten(cls, _: tuple, children: tuple) -> SimulationContext:
         """Unflattens the `SimulationContext` for JAX's pytree mechanism."""
-        return cls(*aux_data, *children)
+        return cls(*children)
 
 
 @dataclass
@@ -223,7 +284,7 @@ class WakeSimulation:
 
     def __init__(
         self,
-        turbine: Turbine,
+        turbine: Turbine | list[Turbine],
         deficit: WakeDeficit,
         turbulence: WakeTurbulence | None = None,
         fpi_damp: float = 1.0,
@@ -244,7 +305,12 @@ class WakeSimulation:
                 conditions. Options are 'vmap', 'map', or '_manual'.
         """
         self.deficit = deficit
-        self.turbine = turbine
+        if isinstance(turbine, list):
+            self.turbine = jax.tree.map(
+                lambda *x: jnp.stack(x) if x[0] is not None else None, *turbine
+            )
+        else:
+            self.turbine = turbine
         self.turbulence = turbulence
         self.mapping_strategy = mapping_strategy
         self.fpi_damp = fpi_damp
@@ -295,7 +361,9 @@ class WakeSimulation:
         sc = self._preprocess_ambient_conditions(wt_xs, wt_ys, ws_amb, wd, ti)
         wt_xs, wt_ys, ws_amb, wd, ti = sc
 
-        dw, cw = self._get_downwind_crosswind_distances(wd, wt_xs, wt_ys)
+        dw, cw = self._get_downwind_crosswind_distances(
+            wd, wt_xs, wt_ys, self.turbine.hub_height
+        )
         ctx = SimulationContext(self.turbine, dw, cw, ws_amb, ti)
         sim_func = self.__sim_call_table[self.mapping_strategy]
         ws_eff, ti_eff = sim_func(ctx)
@@ -345,8 +413,10 @@ class WakeSimulation:
         wd: jnp.ndarray,
         xs_s: jnp.ndarray,
         ys_s: jnp.ndarray,
+        zs_s: jnp.ndarray,
         xs_r: jnp.ndarray | None = None,
         ys_r: jnp.ndarray | None = None,
+        zs_r: jnp.ndarray | None = None,
     ) -> tuple[jnp.ndarray, jnp.ndarray]:
         """Calculates downwind and crosswind distances between points.
 
@@ -365,17 +435,26 @@ class WakeSimulation:
         Returns:
             A tuple containing the downwind and crosswind distances.
         """
+        # TODO: dirty fix
+        zs_s = jnp.atleast_1d(zs_s)
+        zs_r = jnp.atleast_1d(zs_r) if zs_r is not None else zs_s
+
         xs_r = xs_s if xs_r is None else xs_r
         ys_r = ys_s if ys_r is None else ys_r
+        zs_r = zs_s if zs_r is None else zs_r
         dx = xs_r[:, None] - xs_s[None, :]
         dy = ys_r[:, None] - ys_s[None, :]
+        dz = zs_r[:, None] - zs_s[None, :]
         wd_rad = jnp.deg2rad((270.0 - wd + 180.0) % 360.0)
         cos_a = jnp.cos(wd_rad)
         sin_a = jnp.sin(wd_rad)
         # Result shape: (n_wd, n_turbines, n_turbines)
-        x_d = -(dx * cos_a[:, None, None] + dy * sin_a[:, None, None])
-        y_d = dx * sin_a[:, None, None] - dy * cos_a[:, None, None]
-        return x_d, y_d
+        down_wind_d = -(dx * cos_a[:, None, None] + dy * sin_a[:, None, None])
+        horizontal_cross_wind_d = dx * sin_a[:, None, None] - dy * cos_a[:, None, None]
+        cross_wind_d = jnp.sqrt(
+            horizontal_cross_wind_d**2 + dz[None, :, :] ** 2 + get_float_eps()
+        )
+        return down_wind_d, cross_wind_d
 
     def flow_map(
         self,
@@ -423,7 +502,9 @@ class WakeSimulation:
 
         result = self(wt_x, wt_y, ws, wd, ti)
 
-        dw, cw = self._get_downwind_crosswind_distances(wd, wt_x, wt_y, fm_x, fm_y)
+        dw, cw = self._get_downwind_crosswind_distances(
+            wd, wt_x, wt_y, self.turbine.hub_height, fm_x, fm_y
+        )
 
         return jax.vmap(
             lambda _ws_amb, _dw, _cw, _ws_eff, _ti_eff: self.deficit(
