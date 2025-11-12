@@ -262,10 +262,10 @@ def test_mapping_strategies_give_same_results(deficit_model, requires_ti):
             "wt_xs": xs,
             "wt_ys": ys,
             "ws_amb": jnp.full_like(xs, ws),
-            "wd": jnp.full_like(xs, wd),
+            "wd_amb": jnp.full_like(xs, wd),
         }
         if requires_ti:
-            sim_args["ti"] = 0.1
+            sim_args["ti_amb"] = 0.1
 
         res = sim(**sim_args)
         results.append(res.effective_ws)

@@ -106,9 +106,9 @@ def test_cgi_rotor_avg_against_pywake(
     sim_res = sim(
         wt_xs=jnp.array(xs),
         wt_ys=jnp.array(ys),
-        wd=jnp.array(wd),
+        wd_amb=jnp.array(wd),
         ws_amb=jnp.array(ws),
-        ti=jnp.array(ti),
+        ti_amb=jnp.array(ti),
     )
     ws_eff_pixwake = sim_res.effective_ws
 

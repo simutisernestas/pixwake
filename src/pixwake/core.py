@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import pickle
-import warnings
 from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
@@ -62,24 +61,31 @@ class Turbine:
         ct_curve: A `Curve` object representing the turbine's thrust coefficient curve.
     """
 
-    rotor_diameter: jnp.ndarray | float
-    hub_height: jnp.ndarray | float
+    rotor_diameter: float | jnp.ndarray
+    hub_height: float | jnp.ndarray
     power_curve: Curve
     ct_curve: Curve
+    type_id: int | None = None
 
-    def tree_flatten(self) -> tuple[tuple, tuple]:
-        children = (
-            self.rotor_diameter,
-            self.hub_height,
-            self.power_curve,
-            self.ct_curve,
-        )
-        aux_data = ()
-        return children, aux_data
+    @property
+    def __type_id(self) -> str:
+        """Generates a unique type ID based on the turbine's serialized binary object.
 
-    @classmethod
-    def tree_unflatten(cls, _: tuple, children: tuple) -> Turbine:
-        return cls(*children)
+        With k objects hashed & n number of bits -> P(collision) = 1 - np.exp(-k**2/(2*2**n))
+
+        >>> import numpy as np
+        >>> k = 20
+        >>> n = 64
+        >>> 1 - np.exp(-k**2/(2*2**n))
+        np.float64(0.0)
+        """
+        binary_data = pickle.dumps(self)
+        hash_obj = hashlib.sha256(binary_data)
+        return int.from_bytes(hash_obj.digest()[:8])
+
+    def __post_init__(self) -> None:
+        if self.type_id is None:
+            object.__setattr__(self, "type_id", self.__type_id)
 
     def power(self, ws: jnp.ndarray) -> jnp.ndarray:
         """Calculates the turbine's power output for given wind speeds.
@@ -139,12 +145,58 @@ class Turbine:
             ws, self.ct_curve.wind_speed, self.ct_curve.values
         )
 
-    @property
-    def type_id(self) -> str:
-        # binary serialization
-        binary_data = pickle.dumps(self)
-        hash_obj = hashlib.sha256(binary_data)
-        return hash_obj.hexdigest()
+    def tree_flatten(self) -> tuple[tuple, tuple]:
+        children = (
+            self.rotor_diameter,
+            self.hub_height,
+            self.power_curve,
+            self.ct_curve,
+        )
+
+        aux_data = (self.type_id,)
+        return children, aux_data
+
+    @classmethod
+    def tree_unflatten(cls, aux_data: tuple, children: tuple) -> Turbine:
+        return cls(*children, type_id=aux_data[0])
+
+    @classmethod
+    def from_types(
+        cls,
+        turbine_library: list[Turbine],
+        turbine_types: list[int],
+    ) -> Turbines:
+        type_id_to_index = {t.type_id: i for i, t in enumerate(turbine_library)}
+        assert len(type_id_to_index.keys()) == len(turbine_library), (
+            "Identical turbines found in library! It's probably not intended.. "
+            "Please check your turbine definitions.."
+        )
+
+        selected = [turbine_library[type_id_to_index[tt]] for tt in turbine_types]
+
+        return cls(
+            rotor_diameter=jnp.array([t.rotor_diameter for t in selected]),
+            hub_height=jnp.array([t.hub_height for t in selected]),
+            power_curve=Curve(
+                wind_speed=jnp.stack([t.power_curve.wind_speed for t in selected]),
+                values=jnp.stack([t.power_curve.values for t in selected]),
+            ),
+            ct_curve=Curve(
+                wind_speed=jnp.stack([t.ct_curve.wind_speed for t in selected]),
+                values=jnp.stack([t.ct_curve.values for t in selected]),
+            ),
+            type_id=-1,
+        )
+
+        # TODO: this was way cleaner ???? doens't work :'(
+        # type_idxs = jnp.array([type_id_to_index[tt] for tt in turbine_types], dtype=int)
+        # def select_by_type(*turbine_attrs):
+        #     """Stack turbine characteristics based on type indices."""
+        #     return jnp.array([turbine_attrs[i] for i in type_idxs])
+        # # This creates new Turbine object with all attributes now being
+        # # arrays of scalars and curves corresponding to different turbine types.
+        # stacked_turbines = jax.tree.map(select_by_type, *turbine_library)
+        # return stacked_turbines
 
 
 Turbines = Turbine
@@ -224,6 +276,7 @@ class SimulationResult:
             intensity at each turbine for each case.
     """
 
+    turbine: Turbines
     wt_x: jnp.ndarray
     wt_y: jnp.ndarray
     wd: jnp.ndarray
@@ -271,104 +324,6 @@ class SimulationResult:
         ).sum()
 
 
-@dataclass(frozen=True)
-class WindFarmLayout:
-    """Immutable wind farm configuration linking turbine types to positions.
-
-    This class separates turbine characteristics (which rarely change during
-    optimization) from turbine positions (which change frequently). It maintains
-    the mapping between positions and turbine types, allowing efficient layout
-    optimization without reconstructing turbine specifications.
-    """
-
-    turbines: Turbines
-    positions: tuple[jnp.ndarray, jnp.ndarray]
-    turbine_library: list[Turbine]
-
-    @classmethod
-    def from_types(
-        cls,
-        positions: tuple[jnp.ndarray, jnp.ndarray],
-        turbine_library: list[Turbine],
-        turbine_types: list[str],
-    ) -> WindFarmLayout:
-        """Create a WindFarmLayout from a library of turbine types.
-
-        This factory method constructs a layout by selecting turbine
-        characteristics from a library based on the provided type indices.
-
-        Args:
-            positions: A tuple of (x_coords, y_coords) arrays for turbine positions.
-            turbine_library: A list of `Turbine` objects representing available types.
-            types: An array of indices mapping each position to a turbine type in
-                the library.
-
-        Returns:
-            A `WindFarmLayout` with stacked turbine characteristics.
-
-        Example:
-            ```python
-            v80 = Turbine(rotor_diameter=80.0, ...)
-            v200 = Turbine(rotor_diameter=200.0, ...)
-
-            layout = WindFarmLayout.from_types(
-                positions=(xs, ys),
-                turbine_library=[v80, v200],
-                types=[0, 1, 0, 1, 0, 1]  # Alternating types TODO: wrong!!!
-            )
-            ```
-        """
-        type_id_to_index = {t.type_id: i for i, t in enumerate(turbine_library)}
-        assert len(type_id_to_index.keys()) == len(turbine_library), (
-            "Identical turbines found in library! It's probably not intended.. "
-            "Please check your turbine definitions.."
-        )
-        type_idxs = jnp.array([type_id_to_index[tt] for tt in turbine_types], dtype=int)
-
-        xs, ys = positions
-        assert len(type_idxs) == len(xs) == len(ys), (
-            f"Length mismatch: types={len(type_idxs)}, xs={len(xs)}, ys={len(ys)}"
-        )
-
-        def select_by_type(*turbine_attrs):
-            """Stack turbine characteristics based on type indices."""
-            return jnp.array([turbine_attrs[i] for i in type_idxs])
-
-        # This creates new Turbine object with all attributes now being
-        # arrays of scalars and curves corresponding to different turbine types.
-        stacked_turbines = jax.tree.map(select_by_type, *turbine_library)
-        return cls(stacked_turbines, positions, turbine_library)
-
-    @classmethod
-    def from_turbines(
-        cls,
-        positions: tuple[jnp.ndarray, jnp.ndarray],
-        turbines: list[Turbine],
-    ) -> WindFarmLayout:
-        """Create a WindFarmLayout directly from a list of turbine instances.
-
-        This method is useful when you already have a turbine assigned to each
-        position and don't need to work with a type library.
-
-        Args:
-            positions: A tuple of (x_coords, y_coords) arrays for turbine positions.
-            turbines: A list of `Turbine` objects, one per position.
-
-        Returns:
-            A `WindFarmLayout` with stacked turbine characteristics.
-        """
-        _d = {t.type_id: t for t in turbines}
-        turbine_library = list(_d.values())
-        turbine_types = [t.type_id for t in turbines]
-        if len(turbine_types) == 1:
-            warnings.warn("Only one unique turbine found in turbines list.")
-        return cls.from_types(positions, turbine_library, turbine_types)
-
-    def __len__(self) -> int:
-        """Returns the number of turbines in the layout."""
-        return len(self.positions[0])
-
-
 class WakeSimulation:
     """Orchestrates wind farm wake simulations.
 
@@ -387,7 +342,7 @@ class WakeSimulation:
 
     def __init__(
         self,
-        turbine: Turbine | list[Turbine] | WindFarmLayout,
+        turbines: Turbine | list[Turbine],
         deficit: WakeDeficit,
         turbulence: WakeTurbulence | None = None,
         fpi_damp: float = 1.0,
@@ -395,6 +350,8 @@ class WakeSimulation:
         mapping_strategy: str = "auto",
     ) -> None:
         """Initializes the `WakeSimulation`.
+
+        # TODO: doc string incorrect
 
         Args:
             turbine: Either a single `Turbine`, a list of `Turbine` objects
@@ -413,21 +370,7 @@ class WakeSimulation:
         self.mapping_strategy = mapping_strategy
         self.fpi_damp = fpi_damp
         self.fpi_tol = fpi_tol
-
-        # Handle different input types
-        if isinstance(turbine, WindFarmLayout):
-            self.layout = turbine
-            self.turbine = turbine.turbines
-        elif isinstance(turbine, list):
-            # Backward compatibility: stack list of turbines
-            self.layout = None
-            self.turbine = jax.tree.map(
-                lambda *x: jnp.stack(x) if x[0] is not None else None, *turbine
-            )
-        else:
-            # Single turbine type
-            self.layout = None
-            self.turbine = turbine
+        self.turbines = turbines
 
         def __auto_mapping() -> Callable:
             return (
@@ -445,11 +388,12 @@ class WakeSimulation:
 
     def __call__(
         self,
-        wt_xs: jnp.ndarray | None = None,
-        wt_ys: jnp.ndarray | None = None,
-        ws_amb: jnp.ndarray | float | list = ...,
-        wd: jnp.ndarray | float | list = ...,
-        ti: jnp.ndarray | float | None = None,
+        wt_xs: jnp.ndarray,
+        wt_ys: jnp.ndarray,
+        ws_amb: jnp.ndarray | float | list,
+        wd_amb: jnp.ndarray | float | list,
+        ti_amb: jnp.ndarray | float | None = None,
+        wt_types: list[int] | None = None,
     ) -> SimulationResult:
         """Runs the wake simulation for the given ambient conditions.
 
@@ -458,6 +402,7 @@ class WakeSimulation:
         `wt_xs` and `wt_ys`. This makes it easy to run simulations with a
         predefined layout or to override positions for layout optimization.
 
+        # TODO: doc string is incorrect
         Args:
             wt_xs: Optional x-coordinates of the turbines. If `None` and a
                 `WindFarmLayout` was provided at initialization, uses the layout's
@@ -466,9 +411,8 @@ class WakeSimulation:
                 `WindFarmLayout` was provided at initialization, uses the layout's
                 y-coordinates. Otherwise, must be provided.
             ws_amb: A JAX numpy array of the free-stream wind speeds.
-            wd: A JAX numpy array of the wind directions.
-            ti: An optional JAX numpy array of the ambient turbulence
-                intensities.
+            wd_amb: A JAX numpy array of the wind directions.
+            ti_amb: An optional JAX numpy array of the ambient turbulence intensities.
 
         Returns:
             A `SimulationResult` object containing the results of the
@@ -493,34 +437,31 @@ class WakeSimulation:
             result = sim(wt_xs=xs, wt_ys=ys, ws=ws, wd=wd)  # Must provide positions
             ```
         """
-        # Determine which positions to use
-        if wt_xs is None or wt_ys is None:
-            if self.layout is None:
-                raise ValueError(
-                    "Turbine positions (wt_xs, wt_ys) must be provided when "
-                    "WakeSimulation is not initialized with a WindFarmLayout. "
-                    "Either pass positions to __call__ or initialize with "
-                    "WindFarmLayout."
-                )
-            wt_xs, wt_ys = self.layout.positions
-
         if self.mapping_strategy not in self.__sim_call_table.keys():
             raise ValueError(
                 f"Invalid mapping strategy: {self.mapping_strategy}. "
                 f"Valid options are: {self.__sim_call_table.keys()}"
             )
 
-        sc = self._preprocess_ambient_conditions(wt_xs, wt_ys, ws_amb, wd, ti)
-        wt_xs, wt_ys, ws_amb, wd, ti = sc
+        turbines = self.turbines
+        if wt_types is not None:
+            assert len(wt_xs) == len(wt_types)
+            assert isinstance(self.turbines, list)
+            turbines = Turbines.from_types(
+                turbine_library=self.turbines, turbine_types=wt_types
+            )
+
+        sc = self._preprocess_ambient_conditions(wt_xs, wt_ys, ws_amb, wd_amb, ti_amb)
+        wt_xs, wt_ys, ws_amb, wd_amb, ti_amb = sc
 
         dw, cw = self._get_downwind_crosswind_distances(
-            wd, wt_xs, wt_ys, self.turbine.hub_height
+            wd_amb, wt_xs, wt_ys, turbines.hub_height
         )
-        ctx = SimulationContext(self.turbine, dw, cw, ws_amb, ti)
+        ctx = SimulationContext(turbines, dw, cw, ws_amb, ti_amb)
         sim_func = self.__sim_call_table[self.mapping_strategy]
         ws_eff, ti_eff = sim_func(ctx)
         return SimulationResult(
-            self.turbine, wt_xs, wt_ys, wd, ws_amb, ws_eff, ti, ti_eff
+            turbines, wt_xs, wt_ys, wd_amb, ws_amb, ws_eff, ti_amb, ti_eff
         )
 
     def _atleast_1d_jax(self, x: jnp.ndarray | float | list) -> jnp.ndarray:
@@ -655,14 +596,14 @@ class WakeSimulation:
         result = self(wt_x, wt_y, ws, wd, ti)
 
         dw, cw = self._get_downwind_crosswind_distances(
-            wd, wt_x, wt_y, self.turbine.hub_height, fm_x, fm_y
+            wd, wt_x, wt_y, self.turbines.hub_height, fm_x, fm_y
         )
 
         return jax.vmap(
             lambda _ws_amb, _dw, _cw, _ws_eff, _ti_eff: self.deficit(
                 _ws_eff,
                 _ti_eff,
-                SimulationContext(self.turbine, _dw, _cw, _ws_amb, _ti_eff),
+                SimulationContext(self.turbines, _dw, _cw, _ws_amb, _ti_eff),
             )
         )(ws, dw, cw, result.effective_ws, result.effective_ti)[0], (fm_x, fm_y)
 

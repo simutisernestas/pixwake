@@ -16,7 +16,7 @@ from py_wake.wind_farm_models.engineering_models import All2AllIterative
 from py_wake.wind_turbines import WindTurbine, WindTurbines
 from py_wake.wind_turbines.power_ct_functions import PowerCtTabular
 
-from pixwake.core import Curve, Turbine, WakeSimulation, WindFarmLayout
+from pixwake.core import Curve, Turbine, WakeSimulation
 from pixwake.deficit import (
     BastankhahGaussianDeficit,
     NiayifarGaussianDeficit,
@@ -136,18 +136,21 @@ def test_multiple_turbine_type_simulation(
     wd = np.random.uniform(0.0, 360.0, 100)
     ti = jnp.array([0.05])
 
-    # Create layout using from_turbines (direct approach)
-    layout = WindFarmLayout.from_turbines(positions=(xs, ys), turbines=px_turbines)
-
     sim = WakeSimulation(
-        layout, deficit_model, fpi_damp=1.0, turbulence=CrespoHernandez()
+        px_turbines[:2], deficit_model, fpi_damp=1.0, turbulence=CrespoHernandez()
     )
 
     # Call without positions (uses layout positions)
     sim_res = sim(
-        wd=jnp.array(wd),
-        ws_amb=jnp.array(ws),
-        ti=ti,
+        xs,
+        ys,
+        jnp.array(ws),
+        jnp.array(wd),
+        ti,
+        wt_types=[
+            px_turbines[0].type_id if i % 2 == 0 else px_turbines[1].type_id
+            for i in range(n_turbines)
+        ],
     )
     ws_eff_pixwake = sim_res.effective_ws
 
@@ -181,7 +184,6 @@ def test_multiple_turbine_type_simulation(
 
 def test_layout_optimization_pattern():
     """Test the recommended pattern for layout optimization."""
-    from pixwake.core import WindFarmLayout
     from pixwake.deficit import BastankhahGaussianDeficit
 
     # Setup turbine types
@@ -204,28 +206,24 @@ def test_layout_optimization_pattern():
     ys_init = jnp.array([0.0, 0.0, 0.0, 500.0, 500.0, 500.0])
     types = [v80.type_id if i % 2 == 0 else v200.type_id for i in range(6)]
 
-    layout = WindFarmLayout.from_types(
-        positions=(xs_init, ys_init),
-        turbine_library=[v80, v200],
-        turbine_types=types,
-    )
-
     # Create simulation
     deficit = BastankhahGaussianDeficit(use_radius_mask=False)
-    sim = WakeSimulation(layout, deficit)
+    turbines = [v80, v200]
+    turbine_types = types
+    sim = WakeSimulation(turbines, deficit)
 
     # Wind conditions
     ws = jnp.array([8.0, 10.0, 12.0])
     wd = jnp.array([270.0, 270.0, 270.0])
 
     # Simulate with layout positions
-    result1 = sim(ws_amb=ws, wd=wd)
+    result1 = sim(xs_init, ys_init, ws, wd, wt_types=turbine_types)
     aep1 = result1.aep()
 
     # Simulate with perturbed positions (optimization step)
     xs_new = xs_init + jnp.array([10.0, -5.0, 0.0, 5.0, -10.0, 0.0])
     ys_new = ys_init + jnp.array([5.0, 0.0, -5.0, -10.0, 5.0, 0.0])
-    result2 = sim(wt_xs=xs_new, wt_ys=ys_new, ws_amb=ws, wd=wd)
+    result2 = sim(xs_new, ys_new, ws, wd, wt_types=turbine_types)
     aep2 = result2.aep()
 
     # Both should run without error
