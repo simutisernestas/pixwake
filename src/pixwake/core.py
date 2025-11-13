@@ -207,16 +207,15 @@ class SimulationContext:
 
     The `tree_flatten` and `tree_unflatten` methods are implemented to specify
     how JAX should handle this class. Dynamic data (JAX arrays) are treated as
-    "children," while static data (like the `Turbine` object) are treated as
-    "auxiliary" data.
+    "children," while static data are treated as "auxiliary" data.
 
     Attributes:
-        turbine: The `Turbine` object used in the simulation.
+        turbine: The `Turbine` or `Turbines` object used in the simulation.
         dw: A JAX numpy array of downwind distances between all pairs of turbines.
         cw: A JAX numpy array of crosswind distances between all pairs of turbines.
         ws: The free-stream wind speed for the simulation case.
-        ti: The ambient turbulence intensity for the simulation case.
-        wake_radius: The wake radius at each turbine, set by the deficit model
+        ti: The ambient turbulence intensity for the simulation case (optional).
+        wake_radius: The wake radius at each turbine, set by the deficit model at runtime.
     """
 
     # site variables
@@ -344,19 +343,17 @@ class WakeSimulation:
     ) -> None:
         """Initializes the `WakeSimulation`.
 
-        # TODO: doc string incorrect
-
         Args:
-            turbine: Either a single `Turbine`, a list of `Turbine` objects
-                (for backward compatibility), or a `WindFarmLayout` that
-                includes both turbine specs and positions.
+            turbines: Either a single `Turbine` object or a list of `Turbine` objects
+                representing the turbine library. When calling the simulation with `wt_types`,
+                turbines will be selected from this library.
             deficit: A `WakeDeficit` model to calculate the velocity deficit.
             turbulence: An optional `WakeTurbulence` model to calculate the
                 added turbulence.
             fpi_damp: The damping factor for the fixed-point iteration.
             fpi_tol: The convergence tolerance for the fixed-point iteration.
             mapping_strategy: The JAX mapping strategy to use for multiple wind
-                conditions. Options are 'vmap', 'map', or '_manual'.
+                conditions. Options are 'auto', 'vmap', 'map', or '_manual'.
         """
         self.deficit = deficit
         self.turbulence = turbulence
@@ -390,44 +387,36 @@ class WakeSimulation:
     ) -> SimulationResult:
         """Runs the wake simulation for the given ambient conditions.
 
-        If the simulation was initialized with a `WindFarmLayout`, the positions
-        from that layout are used unless explicitly overridden by providing
-        `wt_xs` and `wt_ys`. This makes it easy to run simulations with a
-        predefined layout or to override positions for layout optimization.
-
-        # TODO: doc string is incorrect
         Args:
-            wt_xs: Optional x-coordinates of the turbines. If `None` and a
-                `WindFarmLayout` was provided at initialization, uses the layout's
-                x-coordinates. Otherwise, must be provided.
-            wt_ys: Optional y-coordinates of the turbines. If `None` and a
-                `WindFarmLayout` was provided at initialization, uses the layout's
-                y-coordinates. Otherwise, must be provided.
-            ws_amb: A JAX numpy array of the free-stream wind speeds.
-            wd_amb: A JAX numpy array of the wind directions.
-            ti_amb: An optional JAX numpy array of the ambient turbulence intensities.
+            wt_xs: x-coordinates of the wind turbines.
+            wt_ys: y-coordinates of the wind turbines.
+            ws_amb: Free-stream wind speed(s). Can be a single value, list, or array
+                for multiple wind conditions.
+            wd_amb: Wind direction(s) in degrees. Can be a single value, list, or array
+                for multiple wind conditions.
+            ti_amb: Optional ambient turbulence intensity. Can be a single value, list,
+                or array for multiple wind conditions.
+            wt_types: Optional list of turbine type IDs corresponding to each position.
+                When provided, turbines are selected from the turbine library provided
+                at initialization. Must have the same length as wt_xs/wt_ys.
 
         Returns:
-            A `SimulationResult` object containing the results of the
-            simulation.
-
-        Raises:
-            ValueError: If no positions are provided and no layout was defined
-                at initialization.
+            A `SimulationResult` object containing the effective wind speeds, power
+            output, and other simulation results.
 
         Example:
             ```python
-            # With layout defined at initialization
-            layout = WindFarmLayout.from_types(...)
-            sim = WakeSimulation(layout, deficit_model)
-            result = sim(ws=ws, wd=wd)  # Uses layout positions
-
-            # Override positions for optimization
-            result = sim(wt_xs=new_xs, wt_ys=new_ys, ws=ws, wd=wd)
-
-            # Without layout (backward compatible)
+            # Single turbine type
+            turbine = Turbine(...)
             sim = WakeSimulation(turbine, deficit_model)
-            result = sim(wt_xs=xs, wt_ys=ys, ws=ws, wd=wd)  # Must provide positions
+            result = sim(wt_xs=xs, wt_ys=ys, ws_amb=10.0, wd_amb=270.0)
+
+            # Multiple turbine types from library
+            turbine_lib = [turbine1, turbine2]
+            sim = WakeSimulation(turbine_lib, deficit_model)
+            result = sim(wt_xs=xs, wt_ys=ys, ws_amb=10.0, wd_amb=270.0, wt_types=[
+                turbine1.type_id, turbine2.type_id, turbine1.type_id, turbine2.type_id
+            ]) # Alternating turbine types
             ```
         """
         if self.mapping_strategy not in self.__sim_call_table.keys():
@@ -513,10 +502,13 @@ class WakeSimulation:
             wd: The wind direction in degrees.
             xs_s: The x-coordinates of the source points.
             ys_s: The y-coordinates of the source points.
+            zs_s: The z-coordinates (hub heights) of the source points.
             xs_r: The x-coordinates of the receiver points. If `None`, the
                 source points are used.
             ys_r: The y-coordinates of the receiver points. If `None`, the
                 source points are used.
+            zs_r: The z-coordinates (hub heights) of the receiver points. If `None`,
+                the source points are used.
 
         Returns:
             A tuple containing the downwind and crosswind distances.
@@ -561,16 +553,16 @@ class WakeSimulation:
             wt_x: The x-coordinates of the wind turbines.
             wt_y: The y-coordinates of the wind turbines.
             fm_x: The x-coordinates of the flow map grid. If `None`, a default
-                grid is generated.
+                grid is generated based on turbine positions.
             fm_y: The y-coordinates of the flow map grid. If `None`, a default
-                grid is generated.
+                grid is generated based on turbine positions.
             ws: The free-stream wind speed.
-            wd: The wind direction.
-            ti: The ambient turbulence intensity.
+            wd: The wind direction in degrees.
+            ti: The ambient turbulence intensity (optional).
 
         Returns:
-            A tuple containing the flow map wind speeds and the grid
-            coordinates.
+            A tuple containing the flow map wind speeds (flattened array) and
+            the grid coordinates (fm_x, fm_y).
         """
 
         sc = self._preprocess_ambient_conditions(wt_x, wt_y, ws, wd, ti)
@@ -739,24 +731,25 @@ class WakeSimulation:
         wt_xs: jnp.ndarray,
         wt_ys: jnp.ndarray,
         ws_amb: jnp.ndarray,
-        wd: jnp.ndarray,
-        ti: jnp.ndarray | float | None = None,
+        wd_amb: jnp.ndarray,
+        ti_amb: jnp.ndarray | float | None = None,
         chunk_size: int = 100,
         probabilities: jnp.ndarray | None = None,
     ) -> tuple[float, tuple[jnp.ndarray, jnp.ndarray]]:
         """Computes AEP gradients with chunking to reduce memory usage.
 
+        This method processes wind conditions in chunks to avoid memory issues
+        with large time series. Each chunk is padded to the specified chunk_size
+        for consistent JIT compilation.
+
         Args:
-            wt_xs: Turbine x-coordinates
-            wt_ys: Turbine y-coordinates
-            ws_amb: Wind speeds (time series)
-            wd: Wind directions (time series)
-            ti: Turbulence intensity
-            chunk_size: Number of timestamps to process per chunk
-            probabilities: Optional probabilities for each timestamp
+            ...: __call__ arguments passed through.
+            chunk_size: Number of timestamps to process per chunk.
+            probabilities: Optional probability weights for each timestamp.
 
         Returns:
-            Tuple of (total_aep, (grad_x, grad_y))
+            Tuple of (total_aep, (grad_x, grad_y)) where gradients are with
+            respect to turbine positions.
         """
         assert chunk_size > 0, "Chunk size must be positive."
 
@@ -785,9 +778,9 @@ class WakeSimulation:
                 return jnp.pad(arr, pad_width, "constant")
 
             ws_chunk = pad_chunk(ws_amb[start_idx:end_idx])
-            wd_chunk = pad_chunk(wd[start_idx:end_idx])
+            wd_chunk = pad_chunk(wd_amb[start_idx:end_idx])
             ti_chunk = pad_chunk(
-                ti[start_idx:end_idx] if isinstance(ti, jnp.ndarray) else ti
+                ti_amb[start_idx:end_idx] if isinstance(ti_amb, jnp.ndarray) else ti_amb
             )
             prob_chunk = pad_chunk(
                 None if probabilities is None else probabilities[start_idx:end_idx]
@@ -832,7 +825,8 @@ def fixed_point(
     tol: float = 1e-6,
     damp: float = 1.0,
 ) -> tuple[jnp.ndarray, jnp.ndarray | None]:
-    """This function solves for a fixed point, i.e., a value `x` such that `f(x) = x`.
+    """Solves for a fixed point, i.e., a value `x` such that `f(x, ctx) = x`.
+
     In the context of wake modeling, this is used to determine the stable effective
     wind speeds within a wind farm, where the wind speed at each turbine is
     influenced by the wakes of others.
@@ -842,24 +836,26 @@ def fixed_point(
     optimization of wind farm layouts or control strategies.
 
     The mathematical foundation for the custom VJP is the implicit function theorem.
-    If we have a fixed-point equation `x_star = f(x_star, a)`, where `a` represents
-    the parameters of `f`, we can differentiate both sides to find the derivative
-    of `x_star` with respect to `a`.
+    If we have a fixed-point equation `x_star = f(x_star, ctx)`, where `ctx` represents
+    the simulation context, we can differentiate both sides to find the derivative
+    of `x_star` with respect to parameters in `ctx`.
 
     Args:
         f: The function to iterate, which should accept the current estimate of the
-        fixed point and the simulation context `ctx`.
-        x_guess: The initial guess for the fixed point. This can be a single array
-                or a pytree of arrays.
-        ctx: The context of the simulation, containing parameters and other data
+            fixed point and the simulation context `ctx`, returning a new estimate.
+        x_guess: The initial guess for the fixed point as a tuple of (wind_speed,
+            turbulence_intensity) where turbulence_intensity can be None.
+        ctx: The simulation context containing parameters and other data
             needed by the function `f`.
         tol: The tolerance for convergence. The iteration stops when the maximum
-            absolute difference between successive estimates is below this value.
-        damp: The damping factor for the updates, used to stabilize the iteration.
-            A value of 0.0 means no damping, while a value closer to 1.0
-            introduces more damping.
+            absolute difference between successive wind speed estimates is below this value.
+        damp: The damping factor for the updates (0.0 to 1.0), used to stabilize the
+            iteration. A value of 0.0 means no damping (full update), while 1.0 means
+            maximum damping (no update).
+
     Returns:
-        The fixed point of the function, with the same structure as `x_guess`.
+        The fixed point as a tuple of (wind_speed, turbulence_intensity) with the
+        same structure as `x_guess`.
     """
     max_iter = max(20, len(jnp.atleast_1d(jax.tree.leaves(x_guess)[0])))
 
@@ -888,7 +884,11 @@ def fixed_point_fwd(
     tol: float,
     damp: float,
 ) -> tuple[tuple[jnp.ndarray, jnp.ndarray | None], tuple]:
-    """Forward pass for the custom VJP of the fixed_point function."""
+    """Forward pass for the custom VJP of the fixed_point function.
+
+    Returns:
+        Tuple of (fixed_point_solution, residuals_for_backward_pass).
+    """
     x_star = fixed_point(f, x_guess, ctx, tol=tol, damp=damp)
     return x_star, (ctx, x_star)
 
@@ -896,7 +896,14 @@ def fixed_point_fwd(
 def fixed_point_rev(
     f: Callable, tol: float, damp: float, res: tuple, x_star_bar: jnp.ndarray | tuple
 ) -> tuple[tuple[jnp.ndarray, jnp.ndarray | None], SimulationContext]:
-    """Reverse pass for the custom VJP of the fixed_point function."""
+    """Reverse pass for the custom VJP of the fixed_point function.
+
+    Uses the implicit function theorem to compute gradients efficiently by
+    solving another fixed-point problem.
+
+    Returns:
+        Tuple of (gradient_wrt_x_guess, gradient_wrt_ctx).
+    """
     ctx, x_star = res
     _, vjp_a = vjp(lambda s: f(x_star, s), ctx)
 
@@ -933,8 +940,10 @@ def fixed_point_debug(
     damp: float = 1.0,
 ) -> tuple[jnp.ndarray, jnp.ndarray | None]:
     """Finds the fixed point of a function using iterative updates.
+
     This function is for debugging purposes only and is not JAX-transformable.
-    It uses a standard Python while loop instead of `jax.lax.while_loop`.
+    It uses a standard Python while loop instead of `jax.lax.while_loop`, making
+    it easier to debug with standard Python debuggers.
     """
     max_iter = max(20, len(jnp.atleast_1d(jax.tree.leaves(x_guess)[0])))
 
