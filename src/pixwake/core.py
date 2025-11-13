@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import pickle
 from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
@@ -15,27 +17,37 @@ from jax import custom_vjp, vjp
 from jax.lax import while_loop
 from jax.tree_util import register_pytree_node_class
 
-from pixwake.jax_utils import default_float_type
+from pixwake.jax_utils import default_float_type, get_float_eps
 
 
-@dataclass
+@dataclass(frozen=True)
+@register_pytree_node_class
 class Curve:
     """Represents a performance curve, such as a power or thrust curve.
 
     This dataclass stores the wind speeds and corresponding values (e.g., power
-    in kW or thrust coefficient) that define a turbine's performance
-    characteristics.
+    in kW or thrust coefficient) that define a turbine's performance characteristics.
 
     Attributes:
         wind_speed: A JAX numpy array of wind speeds, typically in m/s.
         values: A JAX numpy array of the corresponding performance values.
     """
 
-    wind_speed: jnp.ndarray
+    ws: jnp.ndarray
     values: jnp.ndarray
 
+    def tree_flatten(self) -> tuple[tuple, tuple]:
+        children = (self.ws, self.values)
+        aux_data = ()
+        return children, aux_data
 
-@dataclass
+    @classmethod
+    def tree_unflatten(cls, _: tuple, children: tuple) -> Curve:
+        return cls(*children)
+
+
+@dataclass(frozen=True)
+@register_pytree_node_class
 class Turbine:
     """Represents a wind turbine's physical and performance characteristics.
 
@@ -46,50 +58,140 @@ class Turbine:
         rotor_diameter: The diameter of the turbine's rotor in meters.
         hub_height: The height of the turbine's hub above the ground in meters.
         power_curve: A `Curve` object representing the turbine's power curve.
-        ct_curve: A `Curve` object representing the turbine's thrust coefficient
-            curve.
+        ct_curve: A `Curve` object representing the turbine's thrust coefficient curve.
     """
 
-    rotor_diameter: float
-    hub_height: float
+    rotor_diameter: float | jnp.ndarray
+    hub_height: float | jnp.ndarray
     power_curve: Curve
     ct_curve: Curve
+    type_id: int | None = None
+
+    @property
+    def __type_id(self) -> int:
+        """Generates a unique type ID based on the turbine's serialized binary object.
+
+        With k objects hashed & n number of bits -> P(collision) = 1 - np.exp(-k**2/(2*2**n))
+
+        >>> import numpy as np
+        >>> k = 20
+        >>> n = 64
+        >>> 1 - np.exp(-k**2/(2*2**n))
+        np.float64(0.0)
+        """
+        binary_data = pickle.dumps(self)
+        hash_obj = hashlib.sha256(binary_data)
+        return int.from_bytes(hash_obj.digest()[:8])
+
+    def __post_init__(self) -> None:
+        if self.type_id is None:
+            object.__setattr__(self, "type_id", self.__type_id)
 
     def power(self, ws: jnp.ndarray) -> jnp.ndarray:
         """Calculates the turbine's power output for given wind speeds.
-
         This method interpolates the power curve to find the power output for
         each wind speed in the input array.
-
         Args:
             ws: A JAX numpy array of wind speeds.
-
         Returns:
             A JAX numpy array of the corresponding power outputs.
         """
 
-        def _power_single_case(_ws: jnp.ndarray) -> jnp.ndarray:
-            return jnp.interp(_ws, self.power_curve.wind_speed, self.power_curve.values)
+        def _interp(
+            _ws: jnp.ndarray, _ws_curve: jnp.ndarray, _curve_values: jnp.ndarray
+        ) -> jnp.ndarray:
+            return jnp.interp(_ws, _ws_curve, _curve_values)
 
-        return jax.vmap(_power_single_case)(ws)
+        if jnp.asarray(self.rotor_diameter).ndim == 0:
+            # Single turbine type
+            return jnp.interp(ws, self.power_curve.ws, self.power_curve.values)
+
+        # Multiple turbine types
+        if ws.ndim == 1:
+            return jax.vmap(_interp, in_axes=(0, 0, 0))(
+                ws, self.power_curve.ws, self.power_curve.values
+            )
+
+        return jax.vmap(_interp, in_axes=(1, 0, 0), out_axes=1)(
+            ws, self.power_curve.ws, self.power_curve.values
+        )
 
     def ct(self, ws: jnp.ndarray) -> jnp.ndarray:
         """Calculates the thrust coefficient for given wind speeds.
-
         This method interpolates the thrust coefficient curve to find the `Ct`
         value for each wind speed in the input array.
-
         Args:
             ws: A JAX numpy array of wind speeds.
-
         Returns:
             A JAX numpy array of the corresponding thrust coefficients.
         """
 
-        def _ct_single_case(_ws: jnp.ndarray) -> jnp.ndarray:
-            return jnp.interp(_ws, self.ct_curve.wind_speed, self.ct_curve.values)
+        def _interp(
+            _ws: jnp.ndarray, _ws_curve: jnp.ndarray, _curve_values: jnp.ndarray
+        ) -> jnp.ndarray:
+            return jnp.interp(_ws, _ws_curve, _curve_values)
 
-        return jax.vmap(_ct_single_case)(ws)
+        if jnp.asarray(self.rotor_diameter).ndim == 0:
+            # Single turbine type
+            return jnp.interp(ws, self.ct_curve.ws, self.ct_curve.values)
+
+        # Multiple turbine types
+        if ws.ndim == 1:
+            return jax.vmap(_interp, in_axes=(0, 0, 0))(
+                ws, self.ct_curve.ws, self.ct_curve.values
+            )
+
+        return jax.vmap(_interp, in_axes=(1, 0, 0), out_axes=1)(
+            ws, self.ct_curve.ws, self.ct_curve.values
+        )
+
+    def tree_flatten(self) -> tuple[tuple, tuple]:
+        children = (
+            self.rotor_diameter,
+            self.hub_height,
+            self.power_curve,
+            self.ct_curve,
+        )
+        aux_data = (self.type_id,)
+        return children, aux_data
+
+    @classmethod
+    def tree_unflatten(cls, aux_data: tuple, children: tuple) -> Turbine:
+        return cls(*(*children, aux_data[0]))
+
+    @classmethod
+    def _from_types(
+        cls,
+        turbine_library: list[Turbine],
+        turbine_types: list[int],
+    ) -> Turbines:
+        """Constructs a Turbine object representing multiple turbine types.
+        Only used internally to handle multiple turbine types in simulation."""
+
+        type_id_to_index = {t.type_id: i for i, t in enumerate(turbine_library)}
+        assert len(type_id_to_index.keys()) == len(turbine_library), (
+            "Identical turbines found in library! It's probably not intended.. "
+            "Please check your turbine definitions.."
+        )
+
+        selected = [turbine_library[type_id_to_index[tt]] for tt in turbine_types]
+
+        def _construct_stacked_curve(attr_name: str) -> Curve:
+            return Curve(
+                ws=jnp.stack([getattr(t, attr_name).ws for t in selected]),
+                values=jnp.stack([getattr(t, attr_name).values for t in selected]),
+            )
+
+        return cls(
+            rotor_diameter=jnp.array([t.rotor_diameter for t in selected]),
+            hub_height=jnp.array([t.hub_height for t in selected]),
+            power_curve=_construct_stacked_curve("power_curve"),
+            ct_curve=_construct_stacked_curve("ct_curve"),
+            type_id=-1,  # no type for aggregated turbines
+        )
+
+
+Turbines = Turbine
 
 
 @dataclass
@@ -104,20 +206,19 @@ class SimulationContext:
 
     The `tree_flatten` and `tree_unflatten` methods are implemented to specify
     how JAX should handle this class. Dynamic data (JAX arrays) are treated as
-    "children," while static data (like the `Turbine` object) are treated as
-    "auxiliary" data.
+    "children," while static data are treated as "auxiliary" data.
 
     Attributes:
-        turbine: The `Turbine` object used in the simulation.
+        turbine: The `Turbine` or `Turbines` object used in the simulation.
         dw: A JAX numpy array of downwind distances between all pairs of turbines.
         cw: A JAX numpy array of crosswind distances between all pairs of turbines.
         ws: The free-stream wind speed for the simulation case.
-        ti: The ambient turbulence intensity for the simulation case.
-        wake_radius: The wake radius at each turbine, set by the deficit model
+        ti: The ambient turbulence intensity for the simulation case (optional).
+        wake_radius: The wake radius at each turbine, set by the deficit model at runtime.
     """
 
     # site variables
-    turbine: Turbine
+    turbine: Turbines
     dw: jnp.ndarray
     cw: jnp.ndarray
     ws: jnp.ndarray
@@ -127,17 +228,24 @@ class SimulationContext:
 
     def tree_flatten(self) -> tuple[tuple, tuple]:
         """Flattens the `SimulationContext` for JAX's pytree mechanism."""
-        children = (self.dw, self.cw, self.ws, self.ti, self.wake_radius)
-        aux_data = (self.turbine,)
+        children = (
+            self.turbine,
+            self.dw,
+            self.cw,
+            self.ws,
+            self.ti,
+            self.wake_radius,
+        )
+        aux_data = ()
         return children, aux_data
 
     @classmethod
-    def tree_unflatten(cls, aux_data: tuple, children: tuple) -> "SimulationContext":
+    def tree_unflatten(cls, _: tuple, children: tuple) -> SimulationContext:
         """Unflattens the `SimulationContext` for JAX's pytree mechanism."""
-        return cls(*aux_data, *children)
+        return cls(*children)
 
 
-@dataclass
+@dataclass(frozen=True)
 class SimulationResult:
     """Holds the results of a wind farm simulation.
 
@@ -159,7 +267,7 @@ class SimulationResult:
             intensity at each turbine for each case.
     """
 
-    turbine: Turbine
+    turbine: Turbines
     wt_x: jnp.ndarray
     wt_y: jnp.ndarray
     wd: jnp.ndarray
@@ -211,7 +319,7 @@ class WakeSimulation:
     """Orchestrates wind farm wake simulations.
 
     This is the main class for running simulations. It takes a deficit model,
-    an optional turbulence model, and a turbine definition, and then runs the
+    an optional turbulence model, and turbine configuration, and then runs the
     simulation for a given set of ambient conditions.
 
     The core of the simulation is a fixed-point iteration that solves for the
@@ -225,7 +333,7 @@ class WakeSimulation:
 
     def __init__(
         self,
-        turbine: Turbine,
+        turbines: Turbine | list[Turbine],
         deficit: WakeDeficit,
         turbulence: WakeTurbulence | None = None,
         fpi_damp: float = 1.0,
@@ -235,22 +343,23 @@ class WakeSimulation:
         """Initializes the `WakeSimulation`.
 
         Args:
-            turbine: A `Turbine` object representing the wind turbines in the
-                farm.
+            turbines: Either a single `Turbine` object or a list of `Turbine` objects
+                representing the turbine library. When calling the simulation with `wt_types`,
+                turbines will be selected from this library.
             deficit: A `WakeDeficit` model to calculate the velocity deficit.
             turbulence: An optional `WakeTurbulence` model to calculate the
                 added turbulence.
             fpi_damp: The damping factor for the fixed-point iteration.
             fpi_tol: The convergence tolerance for the fixed-point iteration.
             mapping_strategy: The JAX mapping strategy to use for multiple wind
-                conditions. Options are 'vmap', 'map', or '_manual'.
+                conditions. Options are 'auto', 'vmap', 'map', or '_manual'.
         """
         self.deficit = deficit
-        self.turbine = turbine
         self.turbulence = turbulence
         self.mapping_strategy = mapping_strategy
         self.fpi_damp = fpi_damp
         self.fpi_tol = fpi_tol
+        self.turbines = turbines
 
         def __auto_mapping() -> Callable:
             return (
@@ -262,31 +371,52 @@ class WakeSimulation:
         self.__sim_call_table: dict[str, Callable] = {
             "auto": __auto_mapping(),
             "vmap": self._simulate_vmap,
-            "map": self._simulate_map,  # more memory efficient than vmap
-            "_manual": self._simulate_manual,  # debug/profile purposes only
+            "map": self._simulate_map,
+            "_manual": self._simulate_manual,
         }
 
     def __call__(
         self,
         wt_xs: jnp.ndarray,
         wt_ys: jnp.ndarray,
-        ws_amb: jnp.ndarray,
-        wd: jnp.ndarray,
-        ti: jnp.ndarray | float | None = None,
+        ws_amb: jnp.ndarray | float | list,
+        wd_amb: jnp.ndarray | float | list,
+        ti_amb: jnp.ndarray | float | None = None,
+        wt_types: list[int] | None = None,
     ) -> SimulationResult:
         """Runs the wake simulation for the given ambient conditions.
 
         Args:
-            wt_xs: A JAX numpy array of the x-coordinates of the turbines.
-            wt_ys: A JAX numpy array of the y-coordinates of the turbines.
-            ws_amb: A JAX numpy array of the free-stream wind speeds.
-            wd: A JAX numpy array of the wind directions.
-            ti: An optional JAX numpy array of the ambient turbulence
-                intensities.
+            wt_xs: x-coordinates of the wind turbines.
+            wt_ys: y-coordinates of the wind turbines.
+            ws_amb: Free-stream wind speed(s). Can be a single value, list, or array
+                for multiple wind conditions.
+            wd_amb: Wind direction(s) in degrees. Can be a single value, list, or array
+                for multiple wind conditions.
+            ti_amb: Optional ambient turbulence intensity. Can be a single value, list,
+                or array for multiple wind conditions.
+            wt_types: Optional list of turbine type IDs corresponding to each position.
+                When provided, turbines are selected from the turbine library provided
+                at initialization. Must have the same length as wt_xs/wt_ys.
 
         Returns:
-            A `SimulationResult` object containing the results of the
-            simulation.
+            A `SimulationResult` object containing the effective wind speeds, power
+            output, and other simulation results.
+
+        Example:
+            ```python
+            # Single turbine type
+            turbine = Turbine(...)
+            sim = WakeSimulation(turbine, deficit_model)
+            result = sim(wt_xs=xs, wt_ys=ys, ws_amb=10.0, wd_amb=270.0)
+
+            # Multiple turbine types from library
+            turbine_lib = [turbine1, turbine2]
+            sim = WakeSimulation(turbine_lib, deficit_model)
+            result = sim(wt_xs=xs, wt_ys=ys, ws_amb=10.0, wd_amb=270.0, wt_types=[
+                turbine1.type_id, turbine2.type_id, turbine1.type_id, turbine2.type_id
+            ]) # Alternating turbine types
+            ```
         """
         if self.mapping_strategy not in self.__sim_call_table.keys():
             raise ValueError(
@@ -294,15 +424,25 @@ class WakeSimulation:
                 f"Valid options are: {self.__sim_call_table.keys()}"
             )
 
-        sc = self._preprocess_ambient_conditions(wt_xs, wt_ys, ws_amb, wd, ti)
-        wt_xs, wt_ys, ws_amb, wd, ti = sc
+        sc = self._preprocess_ambient_conditions(wt_xs, wt_ys, ws_amb, wd_amb, ti_amb)
+        wt_xs, wt_ys, ws_amb, wd_amb, ti_amb = sc
 
-        dw, cw = self._get_downwind_crosswind_distances(wd, wt_xs, wt_ys)
-        ctx = SimulationContext(self.turbine, dw, cw, ws_amb, ti)
+        turbines = self.turbines
+        if isinstance(self.turbines, list) and wt_types is not None:
+            assert len(wt_xs) == len(wt_types)
+            assert isinstance(self.turbines, list)
+            turbines = Turbines._from_types(
+                turbine_library=self.turbines, turbine_types=wt_types
+            )
+        assert isinstance(turbines, (Turbine, Turbines))
+
+        hh = turbines.hub_height
+        dw, cw = self._get_downwind_crosswind_distances(wd_amb, wt_xs, wt_ys, hh)
+        ctx = SimulationContext(turbines, dw, cw, ws_amb, ti_amb)
         sim_func = self.__sim_call_table[self.mapping_strategy]
         ws_eff, ti_eff = sim_func(ctx)
         return SimulationResult(
-            self.turbine, wt_xs, wt_ys, wd, ws_amb, ws_eff, ti, ti_eff
+            turbines, wt_xs, wt_ys, wd_amb, ws_amb, ws_eff, ti_amb, ti_eff
         )
 
     def _atleast_1d_jax(self, x: jnp.ndarray | float | list) -> jnp.ndarray:
@@ -316,13 +456,7 @@ class WakeSimulation:
         ws_amb: jnp.ndarray | float | list,
         wd: jnp.ndarray | float | list,
         ti: jnp.ndarray | float | list | None,
-    ) -> tuple[
-        jnp.ndarray,
-        jnp.ndarray,
-        jnp.ndarray,
-        jnp.ndarray,
-        jnp.ndarray | None,
-    ]:
+    ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray | None]:
         """Preprocesses and validates the ambient conditions."""
         wt_xs = self._atleast_1d_jax(wt_xs)
         wt_ys = self._atleast_1d_jax(wt_ys)
@@ -347,8 +481,10 @@ class WakeSimulation:
         wd: jnp.ndarray,
         xs_s: jnp.ndarray,
         ys_s: jnp.ndarray,
+        zs_s: jnp.ndarray | float,
         xs_r: jnp.ndarray | None = None,
         ys_r: jnp.ndarray | None = None,
+        zs_r: jnp.ndarray | None = None,
     ) -> tuple[jnp.ndarray, jnp.ndarray]:
         """Calculates downwind and crosswind distances between points.
 
@@ -359,25 +495,37 @@ class WakeSimulation:
             wd: The wind direction in degrees.
             xs_s: The x-coordinates of the source points.
             ys_s: The y-coordinates of the source points.
+            zs_s: The z-coordinates (hub heights) of the source points.
             xs_r: The x-coordinates of the receiver points. If `None`, the
                 source points are used.
             ys_r: The y-coordinates of the receiver points. If `None`, the
                 source points are used.
+            zs_r: The z-coordinates (hub heights) of the receiver points. If `None`,
+                the source points are used.
 
         Returns:
             A tuple containing the downwind and crosswind distances.
         """
+        # TODO: dirty fix
+        zs_s = jnp.atleast_1d(zs_s)
+        zs_r = jnp.atleast_1d(zs_r) if zs_r is not None else zs_s
+
         xs_r = xs_s if xs_r is None else xs_r
         ys_r = ys_s if ys_r is None else ys_r
+        zs_r = zs_s if zs_r is None else zs_r
         dx = xs_r[:, None] - xs_s[None, :]
         dy = ys_r[:, None] - ys_s[None, :]
+        dz = zs_r[:, None] - zs_s[None, :]
         wd_rad = jnp.deg2rad((270.0 - wd + 180.0) % 360.0)
         cos_a = jnp.cos(wd_rad)
         sin_a = jnp.sin(wd_rad)
         # Result shape: (n_wd, n_turbines, n_turbines)
-        x_d = -(dx * cos_a[:, None, None] + dy * sin_a[:, None, None])
-        y_d = dx * sin_a[:, None, None] - dy * cos_a[:, None, None]
-        return x_d, y_d
+        down_wind_d = -(dx * cos_a[:, None, None] + dy * sin_a[:, None, None])
+        horizontal_cross_wind_d = dx * sin_a[:, None, None] - dy * cos_a[:, None, None]
+        cross_wind_d = jnp.sqrt(
+            horizontal_cross_wind_d**2 + dz[None, :, :] ** 2 + get_float_eps()
+        )
+        return down_wind_d, cross_wind_d
 
     def flow_map(
         self,
@@ -385,9 +533,11 @@ class WakeSimulation:
         wt_y: jnp.ndarray,
         fm_x: jnp.ndarray | None = None,
         fm_y: jnp.ndarray | None = None,
+        fm_z: jnp.ndarray | None = None,
         ws: jnp.ndarray | float = 10.0,
         wd: jnp.ndarray | float = 270.0,
         ti: jnp.ndarray | float | None = None,
+        wt_types: list[int] | None = None,
     ) -> tuple[jnp.ndarray, tuple[jnp.ndarray, jnp.ndarray]]:
         """Generates a 2D flow map of the wind farm.
 
@@ -398,20 +548,31 @@ class WakeSimulation:
             wt_x: The x-coordinates of the wind turbines.
             wt_y: The y-coordinates of the wind turbines.
             fm_x: The x-coordinates of the flow map grid. If `None`, a default
-                grid is generated.
+                grid is generated based on turbine positions.
             fm_y: The y-coordinates of the flow map grid. If `None`, a default
-                grid is generated.
+                grid is generated based on turbine positions.
             ws: The free-stream wind speed.
-            wd: The wind direction.
-            ti: The ambient turbulence intensity.
+            wd: The wind direction in degrees.
+            ti: The ambient turbulence intensity (optional).
+            wt_types: Optional list of turbine type IDs corresponding to each position.
+                When provided, turbines are selected from the turbine library provided
+                at initialization. Must have the same length as wt_x/wt_y.
 
         Returns:
-            A tuple containing the flow map wind speeds and the grid
-            coordinates.
+            A tuple containing the flow map wind speeds (flattened array) and
+            the grid coordinates (fm_x, fm_y).
         """
-
         sc = self._preprocess_ambient_conditions(wt_x, wt_y, ws, wd, ti)
         wt_x, wt_y, ws, wd, ti = sc
+
+        turbines = self.turbines
+        if isinstance(self.turbines, list) and wt_types is not None:
+            assert len(wt_x) == len(wt_types)
+            assert isinstance(self.turbines, list)
+            turbines = Turbines._from_types(
+                turbine_library=self.turbines, turbine_types=wt_types
+            )
+        assert isinstance(turbines, (Turbine, Turbines))
 
         if fm_x is None or fm_y is None:
             grid_res = 200
@@ -423,15 +584,19 @@ class WakeSimulation:
             )
             fm_x, fm_y = grid_x.ravel(), grid_y.ravel()
 
-        result = self(wt_x, wt_y, ws, wd, ti)
+        result = self(wt_x, wt_y, ws, wd, ti, wt_types=wt_types)
 
-        dw, cw = self._get_downwind_crosswind_distances(wd, wt_x, wt_y, fm_x, fm_y)
+        # TODO: should support passing of fm_z as well
+        fm_z = jnp.full_like(fm_x, jnp.mean(turbines.hub_height))
+        dw, cw = self._get_downwind_crosswind_distances(
+            wd, wt_x, wt_y, turbines.hub_height, fm_x, fm_y, fm_z
+        )
 
         return jax.vmap(
             lambda _ws_amb, _dw, _cw, _ws_eff, _ti_eff: self.deficit(
                 _ws_eff,
                 _ti_eff,
-                SimulationContext(self.turbine, _dw, _cw, _ws_amb, _ti_eff),
+                SimulationContext(turbines, _dw, _cw, _ws_amb, _ti_eff),
             )
         )(ws, dw, cw, result.effective_ws, result.effective_ti)[0], (fm_x, fm_y)
 
@@ -574,24 +739,25 @@ class WakeSimulation:
         wt_xs: jnp.ndarray,
         wt_ys: jnp.ndarray,
         ws_amb: jnp.ndarray,
-        wd: jnp.ndarray,
-        ti: jnp.ndarray | float | None = None,
+        wd_amb: jnp.ndarray,
+        ti_amb: jnp.ndarray | float | None = None,
         chunk_size: int = 100,
         probabilities: jnp.ndarray | None = None,
     ) -> tuple[float, tuple[jnp.ndarray, jnp.ndarray]]:
         """Computes AEP gradients with chunking to reduce memory usage.
 
+        This method processes wind conditions in chunks to avoid memory issues
+        with large time series. Each chunk is padded to the specified chunk_size
+        for consistent JIT compilation.
+
         Args:
-            wt_xs: Turbine x-coordinates
-            wt_ys: Turbine y-coordinates
-            ws_amb: Wind speeds (time series)
-            wd: Wind directions (time series)
-            ti: Turbulence intensity
-            chunk_size: Number of timestamps to process per chunk
-            probabilities: Optional probabilities for each timestamp
+            ...: __call__ arguments passed through.
+            chunk_size: Number of timestamps to process per chunk.
+            probabilities: Optional probability weights for each timestamp.
 
         Returns:
-            Tuple of (total_aep, (grad_x, grad_y))
+            Tuple of (total_aep, (grad_x, grad_y)) where gradients are with
+            respect to turbine positions.
         """
         assert chunk_size > 0, "Chunk size must be positive."
 
@@ -620,9 +786,9 @@ class WakeSimulation:
                 return jnp.pad(arr, pad_width, "constant")
 
             ws_chunk = pad_chunk(ws_amb[start_idx:end_idx])
-            wd_chunk = pad_chunk(wd[start_idx:end_idx])
+            wd_chunk = pad_chunk(wd_amb[start_idx:end_idx])
             ti_chunk = pad_chunk(
-                ti[start_idx:end_idx] if isinstance(ti, jnp.ndarray) else ti
+                ti_amb[start_idx:end_idx] if isinstance(ti_amb, jnp.ndarray) else ti_amb
             )
             prob_chunk = pad_chunk(
                 None if probabilities is None else probabilities[start_idx:end_idx]
@@ -667,7 +833,8 @@ def fixed_point(
     tol: float = 1e-6,
     damp: float = 1.0,
 ) -> tuple[jnp.ndarray, jnp.ndarray | None]:
-    """This function solves for a fixed point, i.e., a value `x` such that `f(x) = x`.
+    """Solves for a fixed point, i.e., a value `x` such that `f(x, ctx) = x`.
+
     In the context of wake modeling, this is used to determine the stable effective
     wind speeds within a wind farm, where the wind speed at each turbine is
     influenced by the wakes of others.
@@ -677,24 +844,26 @@ def fixed_point(
     optimization of wind farm layouts or control strategies.
 
     The mathematical foundation for the custom VJP is the implicit function theorem.
-    If we have a fixed-point equation `x_star = f(x_star, a)`, where `a` represents
-    the parameters of `f`, we can differentiate both sides to find the derivative
-    of `x_star` with respect to `a`.
+    If we have a fixed-point equation `x_star = f(x_star, ctx)`, where `ctx` represents
+    the simulation context, we can differentiate both sides to find the derivative
+    of `x_star` with respect to parameters in `ctx`.
 
     Args:
         f: The function to iterate, which should accept the current estimate of the
-        fixed point and the simulation context `ctx`.
-        x_guess: The initial guess for the fixed point. This can be a single array
-                or a pytree of arrays.
-        ctx: The context of the simulation, containing parameters and other data
+            fixed point and the simulation context `ctx`, returning a new estimate.
+        x_guess: The initial guess for the fixed point as a tuple of (wind_speed,
+            turbulence_intensity) where turbulence_intensity can be None.
+        ctx: The simulation context containing parameters and other data
             needed by the function `f`.
         tol: The tolerance for convergence. The iteration stops when the maximum
-            absolute difference between successive estimates is below this value.
-        damp: The damping factor for the updates, used to stabilize the iteration.
-            A value of 0.0 means no damping, while a value closer to 1.0
-            introduces more damping.
+            absolute difference between successive wind speed estimates is below this value.
+        damp: The damping factor for the updates (0.0 to 1.0), used to stabilize the
+            iteration. A value of 0.0 means no damping (full update), while 1.0 means
+            maximum damping (no update).
+
     Returns:
-        The fixed point of the function, with the same structure as `x_guess`.
+        The fixed point as a tuple of (wind_speed, turbulence_intensity) with the
+        same structure as `x_guess`.
     """
     max_iter = max(20, len(jnp.atleast_1d(jax.tree.leaves(x_guess)[0])))
 
@@ -723,7 +892,11 @@ def fixed_point_fwd(
     tol: float,
     damp: float,
 ) -> tuple[tuple[jnp.ndarray, jnp.ndarray | None], tuple]:
-    """Forward pass for the custom VJP of the fixed_point function."""
+    """Forward pass for the custom VJP of the fixed_point function.
+
+    Returns:
+        Tuple of (fixed_point_solution, residuals_for_backward_pass).
+    """
     x_star = fixed_point(f, x_guess, ctx, tol=tol, damp=damp)
     return x_star, (ctx, x_star)
 
@@ -731,7 +904,14 @@ def fixed_point_fwd(
 def fixed_point_rev(
     f: Callable, tol: float, damp: float, res: tuple, x_star_bar: jnp.ndarray | tuple
 ) -> tuple[tuple[jnp.ndarray, jnp.ndarray | None], SimulationContext]:
-    """Reverse pass for the custom VJP of the fixed_point function."""
+    """Reverse pass for the custom VJP of the fixed_point function.
+
+    Uses the implicit function theorem to compute gradients efficiently by
+    solving another fixed-point problem.
+
+    Returns:
+        Tuple of (gradient_wrt_x_guess, gradient_wrt_ctx).
+    """
     ctx, x_star = res
     _, vjp_a = vjp(lambda s: f(x_star, s), ctx)
 
@@ -768,8 +948,10 @@ def fixed_point_debug(
     damp: float = 1.0,
 ) -> tuple[jnp.ndarray, jnp.ndarray | None]:
     """Finds the fixed point of a function using iterative updates.
+
     This function is for debugging purposes only and is not JAX-transformable.
-    It uses a standard Python while loop instead of `jax.lax.while_loop`.
+    It uses a standard Python while loop instead of `jax.lax.while_loop`, making
+    it easier to debug with standard Python debuggers.
     """
     max_iter = max(20, len(jnp.atleast_1d(jax.tree.leaves(x_guess)[0])))
 

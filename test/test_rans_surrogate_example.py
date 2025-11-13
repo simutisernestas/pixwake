@@ -267,8 +267,8 @@ def test_rans_surrogate_aep():
     turbine = Turbine(
         rotor_diameter=D,
         hub_height=100.0,
-        power_curve=Curve(wind_speed=ct_xp, values=pw_fp),
-        ct_curve=Curve(wind_speed=ct_xp, values=ct_fp),
+        power_curve=Curve(ws=ct_xp, values=pw_fp),
+        ct_curve=Curve(ws=ct_xp, values=ct_fp),
     )
 
     model = RANSDeficit()
@@ -313,8 +313,8 @@ def test_rans_surrogate_gradients():
     turbine = Turbine(
         rotor_diameter=D,
         hub_height=100.0,
-        power_curve=Curve(wind_speed=ct_xp, values=pw_fp),
-        ct_curve=Curve(wind_speed=ct_xp, values=ct_fp),
+        power_curve=Curve(ws=ct_xp, values=pw_fp),
+        ct_curve=Curve(ws=ct_xp, values=ct_fp),
     )
 
     model = RANSDeficit()

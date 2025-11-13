@@ -90,7 +90,7 @@ def plot_power_and_thrust_curve(turbine: Turbine, show: bool = True) -> None:
 
     # --- Power Curve Plot ---
     ax1.plot(
-        turbine.power_curve.wind_speed,
+        turbine.power_curve.ws,
         turbine.power_curve.values,
         "o-",
         color="royalblue",
@@ -103,7 +103,7 @@ def plot_power_and_thrust_curve(turbine: Turbine, show: bool = True) -> None:
 
     # --- Thrust Coefficient Curve Plot ---
     ax2.plot(
-        turbine.ct_curve.wind_speed,
+        turbine.ct_curve.ws,
         turbine.ct_curve.values,
         "o-",
         color="seagreen",

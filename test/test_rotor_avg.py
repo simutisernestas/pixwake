@@ -32,11 +32,11 @@ def v80_wt():
         rotor_diameter=wind_turbines.diameter(),
         hub_height=wind_turbines.hub_height(),
         power_curve=Curve(
-            wind_speed=jnp.array(power_curve[:, 0]),
+            ws=jnp.array(power_curve[:, 0]),
             values=jnp.array(wind_turbines.power(power_curve[:, 0])),
         ),
         ct_curve=Curve(
-            wind_speed=jnp.array(ct_curve[:, 0]),
+            ws=jnp.array(ct_curve[:, 0]),
             values=jnp.array(wind_turbines.ct(ct_curve[:, 0])),
         ),
     )
@@ -106,9 +106,9 @@ def test_cgi_rotor_avg_against_pywake(
     sim_res = sim(
         wt_xs=jnp.array(xs),
         wt_ys=jnp.array(ys),
-        wd=jnp.array(wd),
+        wd_amb=jnp.array(wd),
         ws_amb=jnp.array(ws),
-        ti=jnp.array(ti),
+        ti_amb=jnp.array(ti),
     )
     ws_eff_pixwake = sim_res.effective_ws
 

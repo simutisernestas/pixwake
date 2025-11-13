@@ -14,10 +14,8 @@ def wake_sim(request):
     turbine = Turbine(
         rotor_diameter=100.0,
         hub_height=100.0,
-        power_curve=Curve(
-            wind_speed=jnp.array([0.0, 20.0]), values=jnp.array([0.0, 3000.0])
-        ),
-        ct_curve=Curve(wind_speed=jnp.array([0.0, 20.0]), values=jnp.array([0.8, 0.8])),
+        power_curve=Curve(ws=jnp.array([0.0, 20.0]), values=jnp.array([0.0, 3000.0])),
+        ct_curve=Curve(ws=jnp.array([0.0, 20.0]), values=jnp.array([0.8, 0.8])),
     )
     model = NiayifarGaussianDeficit()
 

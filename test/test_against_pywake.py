@@ -96,8 +96,8 @@ def _create_pixwake_turbine(ct_curve, power_curve, RD=120.0, HH=100.0):
     return Turbine(
         rotor_diameter=RD,
         hub_height=HH,
-        power_curve=Curve(wind_speed=power_curve[:, 0], values=power_curve[:, 1]),
-        ct_curve=Curve(wind_speed=ct_curve[:, 0], values=ct_curve[:, 1]),
+        power_curve=Curve(ws=power_curve[:, 0], values=power_curve[:, 1]),
+        ct_curve=Curve(ws=ct_curve[:, 0], values=ct_curve[:, 1]),
     )
 
 
@@ -226,8 +226,8 @@ def test_noj_equivalence_with_site_frequencies(curves):
     ws = np.arange(cutin_ws, cutout_ws + 1)
     wd = np.arange(0, 360, 45)
 
-    sim_res = wfm(x=x, y=y, wd=wd, ws=ws, n_cpu=1, WS_eff=0)
-    pw_dx, pw_dy = wfm.aep_gradients(x=x, y=y, wd=wd, ws=ws, n_cpu=1, WS_eff=0)
+    sim_res = wfm(x=x, y=y, wd=wd, ws=ws, n_cpu=1)
+    pw_dx, pw_dy = wfm.aep_gradients(x=x, y=y, wd=wd, ws=ws, n_cpu=1)
 
     pix_ws, pix_wd = jnp.meshgrid(ws, wd)
     pix_wd, pix_ws = pix_wd.flatten(), pix_ws.flatten()
@@ -310,8 +310,8 @@ def test_gaussian_equivalence_timeseries(ct_vals, power_vals):
     turbine = Turbine(
         rotor_diameter=windTurbines.diameter().item(),
         hub_height=100.0,
-        power_curve=Curve(wind_speed=power_curve[:, 0], values=power_curve[:, 1]),
-        ct_curve=Curve(wind_speed=ct_curve[:, 0], values=ct_curve[:, 1]),
+        power_curve=Curve(ws=power_curve[:, 0], values=power_curve[:, 1]),
+        ct_curve=Curve(ws=ct_curve[:, 0], values=ct_curve[:, 1]),
     )
     sim = WakeSimulation(turbine, model, fpi_damp=1.0)
     pixwake_sim_res = sim(
@@ -543,7 +543,7 @@ def test_effective_ti_gaussian_equivalence_timeseries_with_wake_expansion_based_
     ws = np.maximum(np.random.uniform(cutin_ws, cutout_ws, size=n_test), 0.0)
     wd = np.random.uniform(0, 360, size=n_test)
 
-    sim_res = wfm(x=x, y=y, wd=wd, ws=ws, time=True, TI=0.1, WS_eff=0)
+    sim_res = wfm(x=x, y=y, wd=wd, ws=ws, time=True, TI=0.1)
 
     pixwake_sim_res = sim(
         jnp.asarray(x), jnp.asarray(y), jnp.asarray(ws), jnp.asarray(wd), 0.1

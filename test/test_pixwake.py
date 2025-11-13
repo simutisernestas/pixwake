@@ -60,10 +60,8 @@ def base_params():
     turbine = Turbine(
         rotor_diameter=100.0,
         hub_height=100.0,
-        power_curve=Curve(
-            wind_speed=power_curve_array[:, 0], values=power_curve_array[:, 1]
-        ),
-        ct_curve=Curve(wind_speed=ct_curve_array[:, 0], values=ct_curve_array[:, 1]),
+        power_curve=Curve(ws=power_curve_array[:, 0], values=power_curve_array[:, 1]),
+        ct_curve=Curve(ws=ct_curve_array[:, 0], values=ct_curve_array[:, 1]),
     )
     return xs, ys, ws, wd, k, turbine
 
@@ -84,10 +82,8 @@ def rect_grid_params(nx=3, ny=2):
     turbine = Turbine(
         rotor_diameter=100.0,
         hub_height=100.0,
-        power_curve=Curve(
-            wind_speed=power_curve_array[:, 0], values=power_curve_array[:, 1]
-        ),
-        ct_curve=Curve(wind_speed=ct_curve_array[:, 0], values=ct_curve_array[:, 1]),
+        power_curve=Curve(ws=power_curve_array[:, 0], values=power_curve_array[:, 1]),
+        ct_curve=Curve(ws=ct_curve_array[:, 0], values=ct_curve_array[:, 1]),
     )
     return xs, ys, ws, wd, k, turbine
 
@@ -109,6 +105,7 @@ def test_simulate_case_gradients_and_jit():
     def f(xx, yy):
         return sim(xx, yy, jnp.full_like(xx, ws), jnp.full_like(xx, wd)).aep()
 
+    # TODO: should use more of this ! great for detecting nan's in gradients
     check_grads(f, (xs, ys), order=1, modes=["rev"], atol=1e-2, rtol=1e-2)
 
     jitted = jax.jit(f)
@@ -171,14 +168,14 @@ def test_numpy_inputs():
     wd_np = np.full_like(ws_np, wd)
 
     # Use lists for the curves
-    power_curve_list = [turbine.power_curve.wind_speed, turbine.power_curve.values]
-    ct_curve_list = [turbine.ct_curve.wind_speed, turbine.ct_curve.values]
+    power_curve_list = [turbine.power_curve.ws, turbine.power_curve.values]
+    ct_curve_list = [turbine.ct_curve.ws, turbine.ct_curve.values]
 
     turbine_np = Turbine(
         rotor_diameter=turbine.rotor_diameter,
         hub_height=turbine.hub_height,
-        power_curve=Curve(wind_speed=power_curve_list[0], values=power_curve_list[1]),
-        ct_curve=Curve(wind_speed=ct_curve_list[0], values=ct_curve_list[1]),
+        power_curve=Curve(ws=power_curve_list[0], values=power_curve_list[1]),
+        ct_curve=Curve(ws=ct_curve_list[0], values=ct_curve_list[1]),
     )
     sim = WakeSimulation(turbine_np, deficit_model, mapping_strategy="_manual")
     result = sim(xs_np, ys_np, ws_np, wd_np)
@@ -209,12 +206,8 @@ def test_simulation_result_power_method():
 def test_wake_simulation_manual_mapping_strategy():
     """Test that WakeSimulation runs with the manual mapping strategy."""
     deficit_model = NOJDeficit(k=0.1)
-    power_curve = Curve(
-        wind_speed=jnp.asarray([0.0, 10.0]), values=jnp.asarray([0.0, 1000.0])
-    )
-    ct_curve = Curve(
-        wind_speed=jnp.asarray([0.0, 10.0]), values=jnp.asarray([0.8, 0.8])
-    )
+    power_curve = Curve(ws=jnp.asarray([0.0, 10.0]), values=jnp.asarray([0.0, 1000.0]))
+    ct_curve = Curve(ws=jnp.asarray([0.0, 10.0]), values=jnp.asarray([0.8, 0.8]))
     turbine = Turbine(
         rotor_diameter=120.0,
         hub_height=100.0,
@@ -261,10 +254,10 @@ def test_mapping_strategies_give_same_results(deficit_model, requires_ti):
             "wt_xs": xs,
             "wt_ys": ys,
             "ws_amb": jnp.full_like(xs, ws),
-            "wd": jnp.full_like(xs, wd),
+            "wd_amb": jnp.full_like(xs, wd),
         }
         if requires_ti:
-            sim_args["ti"] = 0.1
+            sim_args["ti_amb"] = 0.1
 
         res = sim(**sim_args)
         results.append(res.effective_ws)

@@ -7,7 +7,7 @@ from pixwake.plot import plot_power_and_thrust_curve
 
 
 @pytest.fixture
-def sample_turbine():
+def sample_turbine() -> Turbine:
     """Create a sample turbine for testing."""
     wind_speeds = jnp.array([0.0, 5.0, 10.0, 15.0, 20.0, 25.0])
     power_values = jnp.array([0.0, 100.0, 500.0, 1000.0, 1200.0, 0.0])
@@ -16,8 +16,8 @@ def sample_turbine():
     turbine = Turbine(
         rotor_diameter=120.0,
         hub_height=100.0,
-        power_curve=Curve(wind_speed=wind_speeds, values=power_values),
-        ct_curve=Curve(wind_speed=wind_speeds, values=ct_values),
+        power_curve=Curve(ws=wind_speeds, values=power_values),
+        ct_curve=Curve(ws=wind_speeds, values=ct_values),
     )
     return turbine
 
@@ -62,7 +62,7 @@ def test_plot_power_and_thrust_curve_plot_contents(sample_turbine):
     x_data = power_line.get_xdata()
     y_data = power_line.get_ydata()
 
-    assert jnp.allclose(x_data, sample_turbine.power_curve.wind_speed)
+    assert jnp.allclose(x_data, sample_turbine.power_curve.ws)
     assert jnp.allclose(y_data, sample_turbine.power_curve.values)
 
     # Check thrust coefficient plot (second subplot)
@@ -75,7 +75,7 @@ def test_plot_power_and_thrust_curve_plot_contents(sample_turbine):
     x_data = ct_line.get_xdata()
     y_data = ct_line.get_ydata()
 
-    assert jnp.allclose(x_data, sample_turbine.ct_curve.wind_speed)
+    assert jnp.allclose(x_data, sample_turbine.ct_curve.ws)
     assert jnp.allclose(y_data, sample_turbine.ct_curve.values)
 
     plt.close("all")

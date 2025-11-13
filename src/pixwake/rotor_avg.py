@@ -168,7 +168,7 @@ class CGIRotorAvg(RotorAvg):
         node_y_offset = self.nodes_y.reshape(1, 1, -1) * R_dst
 
         hcw_at_nodes = cw + node_x_offset
-        dh_at_nodes = 0.0 + node_y_offset  # TODO: 0 should be ctx.dh
+        dh_at_nodes = 0.0 + node_y_offset  # TODO: 0 should be ctx.dh ???
         dw_at_nodes = jnp.broadcast_to(dw, hcw_at_nodes.shape)
         cw_at_nodes = jnp.sqrt(hcw_at_nodes**2 + dh_at_nodes**2)
 

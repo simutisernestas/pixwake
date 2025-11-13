@@ -159,8 +159,8 @@ def benchmark_pixwake(
 
     ct_pw_ws, power_vals, ct_vals = get_turbine_curves()
 
-    power_curve = Curve(wind_speed=ct_pw_ws, values=power_vals)
-    ct_curve = Curve(wind_speed=ct_pw_ws, values=ct_vals)
+    power_curve = Curve(ws=ct_pw_ws, values=power_vals)
+    ct_curve = Curve(ws=ct_pw_ws, values=ct_vals)
 
     pixwake_turbine = Turbine(
         rotor_diameter=rotor_diameter,
@@ -193,7 +193,7 @@ def benchmark_pixwake(
     # Warmup
     # _ = pixwake_aep_ts(x, y).block_until_ready()
     aep, (px_dx, px_dy) = pixwake_sim.aep_gradients_chunked(
-        x, y, ws_ts, wd_ts, ti=0.1, chunk_size=chunk_size
+        x, y, ws_ts, wd_ts, ti_amb=0.1, chunk_size=chunk_size
     )
     aep.block_until_ready()
     px_dx.block_until_ready()
@@ -206,7 +206,7 @@ def benchmark_pixwake(
 
     start = time.time()
     aep, (px_dx, px_dy) = pixwake_sim.aep_gradients_chunked(
-        x, y, ws_ts, wd_ts, ti=0.1, chunk_size=chunk_size
+        x, y, ws_ts, wd_ts, ti_amb=0.1, chunk_size=chunk_size
     )
     aep.block_until_ready()
     px_dx.block_until_ready()
