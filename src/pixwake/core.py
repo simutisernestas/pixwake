@@ -425,6 +425,9 @@ class WakeSimulation:
                 f"Valid options are: {self.__sim_call_table.keys()}"
             )
 
+        sc = self._preprocess_ambient_conditions(wt_xs, wt_ys, ws_amb, wd_amb, ti_amb)
+        wt_xs, wt_ys, ws_amb, wd_amb, ti_amb = sc
+
         turbines = self.turbines
         if wt_types is not None:
             assert len(wt_xs) == len(wt_types)
@@ -432,9 +435,6 @@ class WakeSimulation:
             turbines = Turbines._from_types(
                 turbine_library=self.turbines, turbine_types=wt_types
             )
-
-        sc = self._preprocess_ambient_conditions(wt_xs, wt_ys, ws_amb, wd_amb, ti_amb)
-        wt_xs, wt_ys, ws_amb, wd_amb, ti_amb = sc
 
         dw, cw = self._get_downwind_crosswind_distances(
             wd_amb, wt_xs, wt_ys, turbines.hub_height
@@ -457,13 +457,7 @@ class WakeSimulation:
         ws_amb: jnp.ndarray | float | list,
         wd: jnp.ndarray | float | list,
         ti: jnp.ndarray | float | list | None,
-    ) -> tuple[
-        jnp.ndarray,
-        jnp.ndarray,
-        jnp.ndarray,
-        jnp.ndarray,
-        jnp.ndarray | None,
-    ]:
+    ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray | None]:
         """Preprocesses and validates the ambient conditions."""
         wt_xs = self._atleast_1d_jax(wt_xs)
         wt_ys = self._atleast_1d_jax(wt_ys)
@@ -540,9 +534,11 @@ class WakeSimulation:
         wt_y: jnp.ndarray,
         fm_x: jnp.ndarray | None = None,
         fm_y: jnp.ndarray | None = None,
+        fm_z: jnp.ndarray | None = None,
         ws: jnp.ndarray | float = 10.0,
         wd: jnp.ndarray | float = 270.0,
         ti: jnp.ndarray | float | None = None,
+        wt_types: list[int] | None = None,
     ) -> tuple[jnp.ndarray, tuple[jnp.ndarray, jnp.ndarray]]:
         """Generates a 2D flow map of the wind farm.
 
@@ -559,14 +555,25 @@ class WakeSimulation:
             ws: The free-stream wind speed.
             wd: The wind direction in degrees.
             ti: The ambient turbulence intensity (optional).
+            wt_types: Optional list of turbine type IDs corresponding to each position.
+                When provided, turbines are selected from the turbine library provided
+                at initialization. Must have the same length as wt_x/wt_y.
 
         Returns:
             A tuple containing the flow map wind speeds (flattened array) and
             the grid coordinates (fm_x, fm_y).
         """
-
         sc = self._preprocess_ambient_conditions(wt_x, wt_y, ws, wd, ti)
         wt_x, wt_y, ws, wd, ti = sc
+
+        turbines = self.turbines
+        if wt_types is not None:
+            wt_x_arr = jnp.atleast_1d(jnp.asarray(wt_x))
+            assert len(wt_x_arr) == len(wt_types)
+            assert isinstance(self.turbines, list)
+            turbines = Turbines._from_types(
+                turbine_library=self.turbines, turbine_types=wt_types
+            )
 
         if fm_x is None or fm_y is None:
             grid_res = 200
@@ -578,17 +585,19 @@ class WakeSimulation:
             )
             fm_x, fm_y = grid_x.ravel(), grid_y.ravel()
 
-        result = self(wt_x, wt_y, ws, wd, ti)
+        result = self(wt_x, wt_y, ws, wd, ti, wt_types=wt_types)
 
+        # TODO: should support passing of fm_z as well
+        fm_z = jnp.full_like(fm_x, jnp.mean(turbines.hub_height))
         dw, cw = self._get_downwind_crosswind_distances(
-            wd, wt_x, wt_y, self.turbines.hub_height, fm_x, fm_y
+            wd, wt_x, wt_y, turbines.hub_height, fm_x, fm_y, fm_z
         )
 
         return jax.vmap(
             lambda _ws_amb, _dw, _cw, _ws_eff, _ti_eff: self.deficit(
                 _ws_eff,
                 _ti_eff,
-                SimulationContext(self.turbines, _dw, _cw, _ws_amb, _ti_eff),
+                SimulationContext(turbines, _dw, _cw, _ws_amb, _ti_eff),
             )
         )(ws, dw, cw, result.effective_ws, result.effective_ti)[0], (fm_x, fm_y)
 

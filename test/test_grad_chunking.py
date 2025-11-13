@@ -36,7 +36,7 @@ def get_turbine_curves():
 
 
 @pytest.fixture(scope="module")
-def simulation_setup():
+def simulation_setup() -> tuple[WakeSimulation, ...]:
     """Provides a configured WakeSimulation and test data."""
     # Turbine setup
     rotor_diameter = 120.0
@@ -81,7 +81,7 @@ def test_chunked_gradients_match(simulation_setup, chunk_size):
     ctx = pytest.raises(AssertionError) if chunk_size <= 0 else nullcontext()
     with ctx:
         aep_chunked, grad_chunked = sim.aep_gradients_chunked(
-            wt_xs, wt_ys, ws_amb, wd_amb, ti=ti, chunk_size=chunk_size
+            wt_xs, wt_ys, ws_amb, wd_amb, ti_amb=ti, chunk_size=chunk_size
         )
         grad_x_chunked, grad_y_chunked = grad_chunked
     if "aep_chunked" not in locals():
@@ -116,7 +116,7 @@ def test_gradient_chunked_is_faster_after_warmup_call(simulation_setup):
     # Warm-up call for JIT compilation
     start_chunked = time.time()
     aep, (dx, dy) = sim.aep_gradients_chunked(
-        wt_xs, wt_ys, ws_amb, wd_amb, ti=ti, chunk_size=51
+        wt_xs, wt_ys, ws_amb, wd_amb, ti_amb=ti, chunk_size=51
     )
     aep.block_until_ready()
     dx.block_until_ready()
@@ -127,7 +127,7 @@ def test_gradient_chunked_is_faster_after_warmup_call(simulation_setup):
     # Measure chunked gradient time
     start_chunked = time.time()
     aep, (dx, dy) = sim.aep_gradients_chunked(
-        wt_xs, wt_ys, ws_amb, wd_amb, ti=ti, chunk_size=32
+        wt_xs, wt_ys, ws_amb, wd_amb, ti_amb=ti, chunk_size=32
     )
     aep.block_until_ready()
     dx.block_until_ready()
@@ -150,7 +150,13 @@ def test_chunked_gradients_with_probabilities(simulation_setup):
 
     # Chunked calculation
     aep_chunked, (grad_x_chunked, grad_y_chunked) = sim.aep_gradients_chunked(
-        wt_xs, wt_ys, ws_amb, wd_amb, ti=ti, chunk_size=50, probabilities=probabilities
+        wt_xs,
+        wt_ys,
+        ws_amb,
+        wd_amb,
+        ti_amb=ti,
+        chunk_size=50,
+        probabilities=probabilities,
     )
 
     # Standard calculation
@@ -177,7 +183,7 @@ def test_chunked_gradients_single_timestamp(simulation_setup):
     wd_single = wd_amb[:1]
 
     aep_chunked, (grad_x, grad_y) = sim.aep_gradients_chunked(
-        wt_xs, wt_ys, ws_single, wd_single, ti=ti, chunk_size=10
+        wt_xs, wt_ys, ws_single, wd_single, ti_amb=ti, chunk_size=10
     )
 
     # Standard calculation
