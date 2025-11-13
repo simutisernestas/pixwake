@@ -68,7 +68,7 @@ class Turbine:
     type_id: int | None = None
 
     @property
-    def __type_id(self) -> str:
+    def __type_id(self) -> int:
         """Generates a unique type ID based on the turbine's serialized binary object.
 
         With k objects hashed & n number of bits -> P(collision) = 1 - np.exp(-k**2/(2*2**n))
@@ -152,13 +152,12 @@ class Turbine:
             self.power_curve,
             self.ct_curve,
         )
-
         aux_data = (self.type_id,)
         return children, aux_data
 
     @classmethod
     def tree_unflatten(cls, aux_data: tuple, children: tuple) -> Turbine:
-        return cls(*children, type_id=aux_data[0])
+        return cls(*(*children, aux_data[0]))
 
     @classmethod
     def _from_types(
@@ -177,7 +176,7 @@ class Turbine:
 
         selected = [turbine_library[type_id_to_index[tt]] for tt in turbine_types]
 
-        def _construct_stacked_curve(attr_name) -> Curve:
+        def _construct_stacked_curve(attr_name: str) -> Curve:
             return Curve(
                 ws=jnp.stack([getattr(t, attr_name).ws for t in selected]),
                 values=jnp.stack([getattr(t, attr_name).values for t in selected]),
@@ -429,16 +428,16 @@ class WakeSimulation:
         wt_xs, wt_ys, ws_amb, wd_amb, ti_amb = sc
 
         turbines = self.turbines
-        if wt_types is not None:
+        if isinstance(self.turbines, list) and wt_types is not None:
             assert len(wt_xs) == len(wt_types)
             assert isinstance(self.turbines, list)
             turbines = Turbines._from_types(
                 turbine_library=self.turbines, turbine_types=wt_types
             )
+        assert isinstance(turbines, (Turbine, Turbines))
 
-        dw, cw = self._get_downwind_crosswind_distances(
-            wd_amb, wt_xs, wt_ys, turbines.hub_height
-        )
+        hh = turbines.hub_height
+        dw, cw = self._get_downwind_crosswind_distances(wd_amb, wt_xs, wt_ys, hh)
         ctx = SimulationContext(turbines, dw, cw, ws_amb, ti_amb)
         sim_func = self.__sim_call_table[self.mapping_strategy]
         ws_eff, ti_eff = sim_func(ctx)
@@ -482,7 +481,7 @@ class WakeSimulation:
         wd: jnp.ndarray,
         xs_s: jnp.ndarray,
         ys_s: jnp.ndarray,
-        zs_s: jnp.ndarray,
+        zs_s: jnp.ndarray | float,
         xs_r: jnp.ndarray | None = None,
         ys_r: jnp.ndarray | None = None,
         zs_r: jnp.ndarray | None = None,
@@ -567,13 +566,13 @@ class WakeSimulation:
         wt_x, wt_y, ws, wd, ti = sc
 
         turbines = self.turbines
-        if wt_types is not None:
-            wt_x_arr = jnp.atleast_1d(jnp.asarray(wt_x))
-            assert len(wt_x_arr) == len(wt_types)
+        if isinstance(self.turbines, list) and wt_types is not None:
+            assert len(wt_x) == len(wt_types)
             assert isinstance(self.turbines, list)
             turbines = Turbines._from_types(
                 turbine_library=self.turbines, turbine_types=wt_types
             )
+        assert isinstance(turbines, (Turbine, Turbines))
 
         if fm_x is None or fm_y is None:
             grid_res = 200
