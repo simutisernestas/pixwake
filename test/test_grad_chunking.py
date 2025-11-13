@@ -35,7 +35,7 @@ def get_turbine_curves():
     return ws, power, ct
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="function")
 def simulation_setup() -> tuple[WakeSimulation, ...]:
     """Provides a configured WakeSimulation and test data."""
     # Turbine setup
@@ -199,3 +199,25 @@ def test_chunked_gradients_single_timestamp(simulation_setup):
     assert jnp.allclose(aep_standard, aep_chunked, rtol=1e-5)
     assert jnp.allclose(grad_x_standard, grad_x, rtol=1e-5)
     assert jnp.allclose(grad_y_standard, grad_y, rtol=1e-5)
+
+
+def test_chunked_gradients_do_not_cache_wind_resource(simulation_setup):
+    """Test that chunked gradients respond to changes in wind resource"""
+    sim, wt_xs, wt_ys, ws_amb, wd_amb, ti = simulation_setup
+
+    ws_single = ws_amb[:1]
+    wd_single = wd_amb[:1]
+    aep_chunked0, (grad_x0, grad_y0) = sim.aep_gradients_chunked(
+        wt_xs, wt_ys, ws_single, wd_single, ti_amb=ti, chunk_size=10
+    )
+
+    ws_single = ws_amb[:1] * 2
+    wd_single = wd_amb[:1] + 1
+    aep_chunked1, (grad_x1, grad_y1) = sim.aep_gradients_chunked(
+        wt_xs, wt_ys, ws_single, wd_single, ti_amb=ti, chunk_size=10
+    )
+
+    # basically should observe at least 1% change
+    assert not jnp.allclose(aep_chunked0, aep_chunked1, rtol=1e-2)
+    assert not jnp.allclose(grad_x0, grad_x1, rtol=1e-2)
+    assert not jnp.allclose(grad_y0, grad_y1, rtol=1e-2)
