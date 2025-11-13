@@ -10,11 +10,11 @@ from pixwake.core import Curve, SimulationContext, Turbine
 def turbine():
     """Create a standard turbine for testing."""
     power_curve = Curve(
-        wind_speed=jnp.array([4.0, 10.0, 25.0]),
+        ws=jnp.array([4.0, 10.0, 25.0]),
         values=jnp.array([0.0, 2000.0, 2000.0]),
     )
     ct_curve = Curve(
-        wind_speed=jnp.array([4.0, 10.0, 25.0]),
+        ws=jnp.array([4.0, 10.0, 25.0]),
         values=jnp.array([0.8, 0.8, 0.4]),
     )
     return Turbine(

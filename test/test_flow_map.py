@@ -20,11 +20,9 @@ def sim():
             rotor_diameter=126.0,
             hub_height=80.0,
             power_curve=Curve(
-                wind_speed=jnp.array([4.0, 25.0]), values=jnp.array([0.0, 5000.0])
+                ws=jnp.array([4.0, 25.0]), values=jnp.array([0.0, 5000.0])
             ),
-            ct_curve=Curve(
-                wind_speed=jnp.array([4.0, 25.0]), values=jnp.array([0.8, 0.1])
-            ),
+            ct_curve=Curve(ws=jnp.array([4.0, 25.0]), values=jnp.array([0.8, 0.1])),
         ),
         BastankhahGaussianDeficit(use_effective_ws=True, use_radius_mask=True),
     )

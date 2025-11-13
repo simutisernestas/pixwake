@@ -8,11 +8,11 @@ from pixwake.core import SimulationResult
 @pytest.fixture
 def simulation_result():
     power_curve = Curve(
-        wind_speed=jnp.array([4.0, 10.0, 25.0]),
+        ws=jnp.array([4.0, 10.0, 25.0]),
         values=jnp.array([0.0, 2000.0, 2000.0]),
     )
     ct_curve = Curve(
-        wind_speed=jnp.array([4.0, 10.0, 25.0]),
+        ws=jnp.array([4.0, 10.0, 25.0]),
         values=jnp.array([0.8, 0.8, 0.4]),
     )
     turbine = Turbine(

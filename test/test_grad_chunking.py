@@ -42,8 +42,8 @@ def simulation_setup():
     rotor_diameter = 120.0
     hub_height = 100.0
     ws_curve, power_vals, ct_vals = get_turbine_curves()
-    power_curve = Curve(wind_speed=ws_curve, values=power_vals)
-    ct_curve = Curve(wind_speed=ws_curve, values=ct_vals)
+    power_curve = Curve(ws=ws_curve, values=power_vals)
+    ct_curve = Curve(ws=ws_curve, values=ct_vals)
     turbine = Turbine(
         rotor_diameter=rotor_diameter,
         hub_height=hub_height,

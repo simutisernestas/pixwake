@@ -32,11 +32,11 @@ def v80_wt():
         rotor_diameter=wind_turbines.diameter(),
         hub_height=wind_turbines.hub_height(),
         power_curve=Curve(
-            wind_speed=jnp.array(power_curve[:, 0]),
+            ws=jnp.array(power_curve[:, 0]),
             values=jnp.array(wind_turbines.power(power_curve[:, 0])),
         ),
         ct_curve=Curve(
-            wind_speed=jnp.array(ct_curve[:, 0]),
+            ws=jnp.array(ct_curve[:, 0]),
             values=jnp.array(wind_turbines.ct(ct_curve[:, 0])),
         ),
     )

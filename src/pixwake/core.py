@@ -33,11 +33,11 @@ class Curve:
         values: A JAX numpy array of the corresponding performance values.
     """
 
-    wind_speed: jnp.ndarray
+    ws: jnp.ndarray
     values: jnp.ndarray
 
     def tree_flatten(self) -> tuple[tuple, tuple]:
-        children = (self.wind_speed, self.values)
+        children = (self.ws, self.values)
         aux_data = ()
         return children, aux_data
 
@@ -104,16 +104,16 @@ class Turbine:
 
         if jnp.asarray(self.rotor_diameter).ndim == 0:
             # Single turbine type
-            return jnp.interp(ws, self.power_curve.wind_speed, self.power_curve.values)
+            return jnp.interp(ws, self.power_curve.ws, self.power_curve.values)
 
         # Multiple turbine types
         if ws.ndim == 1:
             return jax.vmap(_interp, in_axes=(0, 0, 0))(
-                ws, self.power_curve.wind_speed, self.power_curve.values
+                ws, self.power_curve.ws, self.power_curve.values
             )
 
         return jax.vmap(_interp, in_axes=(1, 0, 0), out_axes=1)(
-            ws, self.power_curve.wind_speed, self.power_curve.values
+            ws, self.power_curve.ws, self.power_curve.values
         )
 
     def ct(self, ws: jnp.ndarray) -> jnp.ndarray:
@@ -133,16 +133,16 @@ class Turbine:
 
         if jnp.asarray(self.rotor_diameter).ndim == 0:
             # Single turbine type
-            return jnp.interp(ws, self.ct_curve.wind_speed, self.ct_curve.values)
+            return jnp.interp(ws, self.ct_curve.ws, self.ct_curve.values)
 
         # Multiple turbine types
         if ws.ndim == 1:
             return jax.vmap(_interp, in_axes=(0, 0, 0))(
-                ws, self.ct_curve.wind_speed, self.ct_curve.values
+                ws, self.ct_curve.ws, self.ct_curve.values
             )
 
         return jax.vmap(_interp, in_axes=(1, 0, 0), out_axes=1)(
-            ws, self.ct_curve.wind_speed, self.ct_curve.values
+            ws, self.ct_curve.ws, self.ct_curve.values
         )
 
     def tree_flatten(self) -> tuple[tuple, tuple]:
@@ -161,11 +161,14 @@ class Turbine:
         return cls(*children, type_id=aux_data[0])
 
     @classmethod
-    def from_types(
+    def _from_types(
         cls,
         turbine_library: list[Turbine],
         turbine_types: list[int],
     ) -> Turbines:
+        """Constructs a Turbine object representing multiple turbine types.
+        Only used internally to handle multiple turbine types in simulation."""
+
         type_id_to_index = {t.type_id: i for i, t in enumerate(turbine_library)}
         assert len(type_id_to_index.keys()) == len(turbine_library), (
             "Identical turbines found in library! It's probably not intended.. "
@@ -174,29 +177,19 @@ class Turbine:
 
         selected = [turbine_library[type_id_to_index[tt]] for tt in turbine_types]
 
+        def _construct_stacked_curve(attr_name) -> Curve:
+            return Curve(
+                ws=jnp.stack([getattr(t, attr_name).ws for t in selected]),
+                values=jnp.stack([getattr(t, attr_name).values for t in selected]),
+            )
+
         return cls(
             rotor_diameter=jnp.array([t.rotor_diameter for t in selected]),
             hub_height=jnp.array([t.hub_height for t in selected]),
-            power_curve=Curve(
-                wind_speed=jnp.stack([t.power_curve.wind_speed for t in selected]),
-                values=jnp.stack([t.power_curve.values for t in selected]),
-            ),
-            ct_curve=Curve(
-                wind_speed=jnp.stack([t.ct_curve.wind_speed for t in selected]),
-                values=jnp.stack([t.ct_curve.values for t in selected]),
-            ),
-            type_id=-1,
+            power_curve=_construct_stacked_curve("power_curve"),
+            ct_curve=_construct_stacked_curve("ct_curve"),
+            type_id=-1,  # no type for aggregated turbines
         )
-
-        # TODO: this was way cleaner ???? doens't work :'(
-        # type_idxs = jnp.array([type_id_to_index[tt] for tt in turbine_types], dtype=int)
-        # def select_by_type(*turbine_attrs):
-        #     """Stack turbine characteristics based on type indices."""
-        #     return jnp.array([turbine_attrs[i] for i in type_idxs])
-        # # This creates new Turbine object with all attributes now being
-        # # arrays of scalars and curves corresponding to different turbine types.
-        # stacked_turbines = jax.tree.map(select_by_type, *turbine_library)
-        # return stacked_turbines
 
 
 Turbines = Turbine
@@ -447,7 +440,7 @@ class WakeSimulation:
         if wt_types is not None:
             assert len(wt_xs) == len(wt_types)
             assert isinstance(self.turbines, list)
-            turbines = Turbines.from_types(
+            turbines = Turbines._from_types(
                 turbine_library=self.turbines, turbine_types=wt_types
             )
 

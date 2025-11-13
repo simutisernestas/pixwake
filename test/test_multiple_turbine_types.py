@@ -49,11 +49,11 @@ def turbines(n_turbines):
         rotor_diameter=wind_turbine0.diameter(),
         hub_height=wind_turbine0.hub_height(),
         power_curve=Curve(
-            wind_speed=jnp.array(ws),
+            ws=jnp.array(ws),
             values=jnp.array(wind_turbine0.power(ws)),
         ),
         ct_curve=Curve(
-            wind_speed=jnp.array(ws),
+            ws=jnp.array(ws),
             values=jnp.array(wind_turbine0.ct(ws)),
         ),
     )
@@ -61,11 +61,11 @@ def turbines(n_turbines):
         rotor_diameter=wind_turbine1.diameter(),
         hub_height=wind_turbine1.hub_height(),
         power_curve=Curve(
-            wind_speed=jnp.array(ws),
+            ws=jnp.array(ws),
             values=jnp.array(wind_turbine1.power(ws)),
         ),
         ct_curve=Curve(
-            wind_speed=jnp.array(ws),
+            ws=jnp.array(ws),
             values=jnp.array(wind_turbine1.ct(ws)),
         ),
     )
@@ -190,15 +190,15 @@ def test_layout_optimization_pattern():
     v80 = Turbine(
         rotor_diameter=80.0,
         hub_height=70.0,
-        power_curve=Curve(wind_speed=jnp.array([0, 25]), values=jnp.array([0, 2000])),
-        ct_curve=Curve(wind_speed=jnp.array([0, 25]), values=jnp.array([0.8, 0.8])),
+        power_curve=Curve(ws=jnp.array([0, 25]), values=jnp.array([0, 2000])),
+        ct_curve=Curve(ws=jnp.array([0, 25]), values=jnp.array([0.8, 0.8])),
     )
 
     v200 = Turbine(
         rotor_diameter=200.0,
         hub_height=150.0,
-        power_curve=Curve(wind_speed=jnp.array([0, 25]), values=jnp.array([0, 8000])),
-        ct_curve=Curve(wind_speed=jnp.array([0, 25]), values=jnp.array([0.8, 0.8])),
+        power_curve=Curve(ws=jnp.array([0, 25]), values=jnp.array([0, 8000])),
+        ct_curve=Curve(ws=jnp.array([0, 25]), values=jnp.array([0.8, 0.8])),
     )
 
     # Initial layout

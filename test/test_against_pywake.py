@@ -96,8 +96,8 @@ def _create_pixwake_turbine(ct_curve, power_curve, RD=120.0, HH=100.0):
     return Turbine(
         rotor_diameter=RD,
         hub_height=HH,
-        power_curve=Curve(wind_speed=power_curve[:, 0], values=power_curve[:, 1]),
-        ct_curve=Curve(wind_speed=ct_curve[:, 0], values=ct_curve[:, 1]),
+        power_curve=Curve(ws=power_curve[:, 0], values=power_curve[:, 1]),
+        ct_curve=Curve(ws=ct_curve[:, 0], values=ct_curve[:, 1]),
     )
 
 
@@ -310,8 +310,8 @@ def test_gaussian_equivalence_timeseries(ct_vals, power_vals):
     turbine = Turbine(
         rotor_diameter=windTurbines.diameter().item(),
         hub_height=100.0,
-        power_curve=Curve(wind_speed=power_curve[:, 0], values=power_curve[:, 1]),
-        ct_curve=Curve(wind_speed=ct_curve[:, 0], values=ct_curve[:, 1]),
+        power_curve=Curve(ws=power_curve[:, 0], values=power_curve[:, 1]),
+        ct_curve=Curve(ws=ct_curve[:, 0], values=ct_curve[:, 1]),
     )
     sim = WakeSimulation(turbine, model, fpi_damp=1.0)
     pixwake_sim_res = sim(

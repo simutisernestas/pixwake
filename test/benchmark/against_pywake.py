@@ -159,8 +159,8 @@ def benchmark_pixwake(
 
     ct_pw_ws, power_vals, ct_vals = get_turbine_curves()
 
-    power_curve = Curve(wind_speed=ct_pw_ws, values=power_vals)
-    ct_curve = Curve(wind_speed=ct_pw_ws, values=ct_vals)
+    power_curve = Curve(ws=ct_pw_ws, values=power_vals)
+    ct_curve = Curve(ws=ct_pw_ws, values=ct_vals)
 
     pixwake_turbine = Turbine(
         rotor_diameter=rotor_diameter,

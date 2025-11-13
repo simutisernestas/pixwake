@@ -28,8 +28,8 @@ thrust_coefficients = jnp.array(
 # fmt:on
 
 # Create the performance Curve objects for the turbine.
-power_curve = Curve(wind_speed=wind_speeds, values=power_outputs_kw)
-ct_curve = Curve(wind_speed=wind_speeds, values=thrust_coefficients)
+power_curve = Curve(ws=wind_speeds, values=power_outputs_kw)
+ct_curve = Curve(ws=wind_speeds, values=thrust_coefficients)
 
 # Define the Vestas V80 turbine as a pixwake Turbine object.
 # This object can be imported and used in wake simulations.
