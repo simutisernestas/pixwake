@@ -586,7 +586,9 @@ class WakeSimulation:
 
         result = self(wt_x, wt_y, ws, wd, ti, wt_types=wt_types)
 
-        # TODO: should support passing of fm_z as well
+        # TODO: should support passing of fm_z as well; this could be
+        # all type heights together and then could average over height
+        # for convenient plotting...
         fm_z = jnp.full_like(fm_x, jnp.mean(turbines.hub_height))
         dw, cw = self._get_downwind_crosswind_distances(
             wd, wt_x, wt_y, turbines.hub_height, fm_x, fm_y, fm_z
