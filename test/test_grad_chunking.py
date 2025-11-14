@@ -18,12 +18,12 @@ def generate_turbine_layout(n_turbines=4, spacing_D=5, rotor_diameter=120.0):
     return jnp.array(x), jnp.array(y)
 
 
-def generate_time_series_wind_data(n_hours=250):
+def generate_time_series_wind_data(n_hours=1000):
     """Generates sample time-series wind data."""
     key = jax.random.PRNGKey(0)
     ws_key, wd_key = jax.random.split(key)
     ws = 8.0 + 2.0 * jax.random.normal(ws_key, (n_hours,))
-    wd = 270.0 + 15.0 * jax.random.normal(wd_key, (n_hours,))
+    wd = 360 * jax.random.uniform(wd_key, (n_hours,))
     return ws, wd
 
 
@@ -205,14 +205,16 @@ def test_chunked_gradients_do_not_cache_wind_resource(simulation_setup):
     """Test that chunked gradients respond to changes in wind resource"""
     sim, wt_xs, wt_ys, ws_amb, wd_amb, ti = simulation_setup
 
-    ws_single = ws_amb[:1]
-    wd_single = wd_amb[:1]
+    ws_single = ws_amb
+    wd_single = wd_amb
     aep_chunked0, (grad_x0, grad_y0) = sim.aep_gradients_chunked(
         wt_xs, wt_ys, ws_single, wd_single, ti_amb=ti, chunk_size=10
     )
 
-    ws_single = ws_amb[:1] * 2
-    wd_single = wd_amb[:1] + 1
+    ws_single = ws_amb * 2
+    wd_single = (wd_amb + 180) % 360
+    assert not jnp.allclose(ws_single, ws_amb)
+
     aep_chunked1, (grad_x1, grad_y1) = sim.aep_gradients_chunked(
         wt_xs, wt_ys, ws_single, wd_single, ti_amb=ti, chunk_size=10
     )

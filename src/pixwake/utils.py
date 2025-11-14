@@ -25,3 +25,8 @@ def ct2a_madsen(
         https://doi.org/10.5194/wes-5-1-2020, 2020.
     """
     return ct * (ct2ap[0] + ct * (ct2ap[1] + ct * ct2ap[2]))
+
+
+def ct2a_mom1d(ct):
+    """1D momentum, CT = 4a(1-a), with CT forced to below 1."""
+    return 0.5 * (1.0 - jnp.sqrt(1.0 - jnp.minimum(1, ct)))

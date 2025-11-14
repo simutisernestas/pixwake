@@ -164,8 +164,8 @@ class CGIRotorAvg(RotorAvg):
         dw = ctx.dw[..., jnp.newaxis]
         cw = ctx.cw[..., jnp.newaxis]
 
-        node_x_offset = self.nodes_x.reshape(1, 1, -1) * R_dst
-        node_y_offset = self.nodes_y.reshape(1, 1, -1) * R_dst
+        node_x_offset = self.nodes_x.reshape(1, 1, -1) * R_dst.reshape(-1, 1, 1)
+        node_y_offset = self.nodes_y.reshape(1, 1, -1) * R_dst.reshape(-1, 1, 1)
 
         hcw_at_nodes = cw + node_x_offset
         dh_at_nodes = 0.0 + node_y_offset  # TODO: 0 should be ctx.dh ???
