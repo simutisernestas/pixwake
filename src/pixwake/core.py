@@ -575,7 +575,7 @@ class WakeSimulation:
         assert isinstance(turbines, (Turbine, Turbines))
 
         if fm_x is None or fm_y is None:
-            grid_res = 200
+            grid_res = 200  # TOOD: on larger farms this is very course...
             x_min, x_max = jnp.min(wt_x) - 200, jnp.max(wt_x) + 200
             y_min, y_max = jnp.min(wt_y) - 200, jnp.max(wt_y) + 200
             grid_x, grid_y = jnp.meshgrid(
@@ -714,7 +714,7 @@ class WakeSimulation:
     @staticmethod
     @partial(jax.jit, static_argnums=(0,))
     def _aep_gradients_chunked_static(
-        sim: "WakeSimulation",
+        sim: WakeSimulation,
         wt_xs: jnp.ndarray,
         wt_ys: jnp.ndarray,
         ws_chunk: jnp.ndarray,
@@ -724,11 +724,8 @@ class WakeSimulation:
     ) -> tuple[jnp.ndarray, tuple[jnp.ndarray, jnp.ndarray]]:
         """Helper for chunked gradient calculation to allow for a single JIT trace."""
 
-        def grad_chunk(
-            xx: jnp.ndarray,
-            yy: jnp.ndarray,
-        ) -> jnp.ndarray:
-            result = sim(xx, yy, ws_chunk, wd_chunk, ti_chunk)
+        def grad_chunk(x: jnp.ndarray, y: jnp.ndarray) -> jnp.ndarray:
+            result = sim(x, y, ws_chunk, wd_chunk, ti_chunk)
             return result.aep(probabilities=prob_chunk)
 
         # We can define and jit internal functions, as long as the parent is jitted
@@ -800,6 +797,10 @@ class WakeSimulation:
             if prob_chunk is not None:
                 mask = jnp.arange(chunk_size) < actual_chunk_size
                 prob_chunk = jnp.where(mask, prob_chunk, 0.0)
+            else:
+                # Create uniform probabilities for actual data, zero for padding
+                mask = jnp.arange(chunk_size) < actual_chunk_size
+                prob_chunk = jnp.where(mask, 1.0 / actual_chunk_size, 0.0)
 
             chunk_aep, (grad_x, grad_y) = self._aep_gradients_chunked_static(
                 self, wt_xs, wt_ys, ws_chunk, wd_chunk, ti_chunk, prob_chunk
@@ -807,9 +808,7 @@ class WakeSimulation:
 
             # Accumulate
             if probabilities is None:
-                # aep is already divided by number of cases, so we need to
-                # multiply back to get the sum of powers, which we then add.
-                # In the end, we divide by the total number of timestamps.
+                # Scale by the ratio of actual chunk size to total timestamps
                 weight = actual_chunk_size / n_timestamps
                 total_aep += chunk_aep * weight
                 grad_x_accum += grad_x * weight
