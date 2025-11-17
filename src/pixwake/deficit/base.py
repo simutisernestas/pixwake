@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 
 import jax.numpy as jnp
 
-from pixwake.jax_utils import get_float_eps
+from pixwake.jax_utils import ssqrt
 from pixwake.rotor_avg import RotorAvg
 
 from ..core import SimulationContext
@@ -72,9 +72,8 @@ class WakeDeficit(ABC):
             in_wake_mask &= jnp.abs(ctx.cw) < ctx.wake_radius
 
         # superpose deficits in quadrature
-        ws_deficit = jnp.sqrt(
+        ws_deficit = ssqrt(
             jnp.sum(jnp.where(in_wake_mask, ws_deficit_m**2, 0.0), axis=1)
-            + get_float_eps()
         )
         return jnp.maximum(0.0, ctx.ws - ws_deficit), ctx
 

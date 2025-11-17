@@ -1,7 +1,7 @@
 import jax
 import jax.numpy as jnp
 
-from .jax_utils import get_float_eps
+from .jax_utils import ssqrt
 
 
 def ct2a_madsen(ct: jax.Array, ct2ap: tuple = (0.2460, 0.0586, 0.0883)) -> jax.Array:
@@ -30,4 +30,4 @@ def ct2a_madsen(ct: jax.Array, ct2ap: tuple = (0.2460, 0.0586, 0.0883)) -> jax.A
 
 def ct2a_mom1d(ct: jax.Array) -> jax.Array:
     """1D momentum, CT = 4a(1-a), with CT forced to below 1."""
-    return 0.5 * (1.0 - jnp.sqrt(1.0 - jnp.minimum(1, ct) + get_float_eps()))
+    return 0.5 * (1.0 - ssqrt(1.0 - jnp.minimum(1, ct)))

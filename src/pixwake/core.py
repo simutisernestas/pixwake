@@ -17,7 +17,7 @@ from jax import custom_vjp, vjp
 from jax.lax import while_loop
 from jax.tree_util import register_pytree_node_class
 
-from pixwake.jax_utils import default_float_type, get_float_eps
+from pixwake.jax_utils import default_float_type, ssqrt
 
 
 @dataclass(frozen=True)
@@ -522,9 +522,7 @@ class WakeSimulation:
         # Result shape: (n_wd, n_turbines, n_turbines)
         down_wind_d = -(dx * cos_a[:, None, None] + dy * sin_a[:, None, None])
         horizontal_cross_wind_d = dx * sin_a[:, None, None] - dy * cos_a[:, None, None]
-        cross_wind_d = jnp.sqrt(
-            horizontal_cross_wind_d**2 + dz[None, :, :] ** 2 + get_float_eps()
-        )
+        cross_wind_d = ssqrt(horizontal_cross_wind_d**2 + dz[None, :, :] ** 2)
         return down_wind_d, cross_wind_d
 
     def flow_map(

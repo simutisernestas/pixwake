@@ -1,3 +1,4 @@
+import jax
 import jax.numpy as jnp
 from jax import config as jcfg
 
@@ -41,3 +42,8 @@ def default_float_type() -> jnp.dtype:
         The default JAX float data type.
     """
     return jnp.float64 if _is_64bit_enabled() else jnp.float32
+
+
+def ssqrt(x: jax.Array):
+    """Gradient-stable square root function."""
+    return jnp.sqrt(x + get_float_eps())

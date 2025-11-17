@@ -7,7 +7,7 @@ import jax
 import jax.numpy as jnp
 
 from .core import SimulationContext
-from .jax_utils import get_float_eps
+from .jax_utils import ssqrt
 
 
 class RotorAvg(ABC):
@@ -174,7 +174,7 @@ class CGIRotorAvg(RotorAvg):
         hcw_at_nodes = cw + node_x_offset
         dh_at_nodes = 0.0 + node_y_offset  # TODO: 0 should be ctx.dh ???
         dw_at_nodes = jnp.broadcast_to(dw, hcw_at_nodes.shape)
-        cw_at_nodes = jnp.sqrt(hcw_at_nodes**2 + dh_at_nodes**2 + get_float_eps())
+        cw_at_nodes = ssqrt(hcw_at_nodes**2 + dh_at_nodes**2)
 
         if id(func) not in self._cache:
             # Evaluate func at each integration point by vmapping over last axis
