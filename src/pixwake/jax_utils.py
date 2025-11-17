@@ -44,6 +44,6 @@ def default_float_type() -> jnp.dtype:
     return jnp.float64 if _is_64bit_enabled() else jnp.float32
 
 
-def ssqrt(x: jax.Array):
+def ssqrt(x: jax.Array) -> jax.Array:
     """Gradient-stable square root function."""
     return jnp.sqrt(x + get_float_eps())
