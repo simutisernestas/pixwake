@@ -144,7 +144,9 @@ class CGIRotorAvg(RotorAvg):
         ti_eff: jnp.ndarray | None,
         ctx: SimulationContext,
     ) -> jax.Array:
-        """Computes the rotor-averaged value of `func`.
+        """Computes the rotor-averaged value of `func`. The function must have
+        call signature of: func(ws_eff, ti_eff, ctx). The context will be modified
+        to evaluate at each integration point across the rotor disk.
 
         This method handles all dimensional reshaping internally, so `func`
         doesn't need to know about rotor averaging.
@@ -159,7 +161,7 @@ class CGIRotorAvg(RotorAvg):
         Returns:
             The rotor-averaged value of the function `func`.
         """
-        R_dst = ctx.turbine.rotor_diameter / 2.0
+        R_dst = jnp.array(ctx.turbine.rotor_diameter / 2.0)
 
         # Expand to integration points: (n_receivers, n_sources, n_points)
         dw = ctx.dw[..., jnp.newaxis]
