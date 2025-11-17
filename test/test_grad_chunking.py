@@ -5,51 +5,38 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from conftest import TOLS
+from jax.test_util import check_grads
 
-from pixwake import Curve, Turbine, WakeSimulation
+from pixwake import WakeSimulation
 from pixwake.deficit import NiayifarGaussianDeficit
+from pixwake.definitions import vestas_v80
 from pixwake.turbulence import CrespoHernandez
 
 
-def generate_turbine_layout(n_turbines=4, spacing_D=5, rotor_diameter=120.0):
+def generate_turbine_layout(sqrt_n_turbines=3, spacing_D=3, rotor_diameter=120.0):
     """Generates a simple turbine layout."""
-    x = np.arange(n_turbines) * spacing_D * rotor_diameter
-    y = np.zeros(n_turbines)
+    x, y = np.meshgrid(
+        np.arange(sqrt_n_turbines) * spacing_D * rotor_diameter,
+        np.arange(sqrt_n_turbines) * spacing_D * rotor_diameter,
+    )
+    x = x.flatten()
+    y = y.flatten()
     return jnp.array(x), jnp.array(y)
 
 
-def generate_time_series_wind_data(n_hours=250):
+def generate_time_series_wind_data(n_hours=50):
     """Generates sample time-series wind data."""
     key = jax.random.PRNGKey(0)
     ws_key, wd_key = jax.random.split(key)
     ws = 8.0 + 2.0 * jax.random.normal(ws_key, (n_hours,))
-    wd = 270.0 + 15.0 * jax.random.normal(wd_key, (n_hours,))
+    wd = 360 * jax.random.uniform(wd_key, (n_hours,))
     return ws, wd
-
-
-def get_turbine_curves():
-    """Returns simple power and CT curves."""
-    ws = jnp.arange(3.0, 26.0)
-    power = jnp.full_like(ws, 3000.0)
-    ct = jnp.full_like(ws, 0.8)
-    return ws, power, ct
 
 
 @pytest.fixture(scope="module")
 def simulation_setup() -> tuple[WakeSimulation, ...]:
     """Provides a configured WakeSimulation and test data."""
-    # Turbine setup
-    rotor_diameter = 120.0
-    hub_height = 100.0
-    ws_curve, power_vals, ct_vals = get_turbine_curves()
-    power_curve = Curve(ws=ws_curve, values=power_vals)
-    ct_curve = Curve(ws=ws_curve, values=ct_vals)
-    turbine = Turbine(
-        rotor_diameter=rotor_diameter,
-        hub_height=hub_height,
-        power_curve=power_curve,
-        ct_curve=ct_curve,
-    )
 
     # Simulation setup
     deficit_model = NiayifarGaussianDeficit(
@@ -57,14 +44,14 @@ def simulation_setup() -> tuple[WakeSimulation, ...]:
     )
     turbulence_model = CrespoHernandez()
     sim = WakeSimulation(
-        turbine,
+        vestas_v80,
         deficit_model,
         turbulence=turbulence_model,
         mapping_strategy="vmap",
     )
 
     # Data setup
-    wt_xs, wt_ys = generate_turbine_layout(rotor_diameter=rotor_diameter)
+    wt_xs, wt_ys = generate_turbine_layout(rotor_diameter=vestas_v80.rotor_diameter)
     ws_amb, wd_amb = generate_time_series_wind_data()
     ti = 0.1
     return sim, wt_xs, wt_ys, ws_amb, wd_amb, ti
@@ -99,15 +86,9 @@ def test_chunked_gradients_match(simulation_setup, chunk_size):
     grad_x_standard, grad_y_standard = grad_standard
 
     # Compare results
-    assert jnp.allclose(aep_standard, aep_chunked, rtol=1e-5), (
-        "AEP values do not match."
-    )
-    assert jnp.allclose(grad_x_standard, grad_x_chunked, rtol=1e-5), (
-        "X-gradients do not match."
-    )
-    assert jnp.allclose(grad_y_standard, grad_y_chunked, rtol=1e-5), (
-        "Y-gradients do not match."
-    )
+    assert jnp.allclose(aep_standard, aep_chunked, **TOLS)
+    assert jnp.allclose(grad_x_standard, grad_x_chunked, **TOLS)
+    assert jnp.allclose(grad_y_standard, grad_y_chunked, **TOLS)
 
 
 def test_gradient_chunked_is_faster_after_warmup_call(simulation_setup):
@@ -169,18 +150,18 @@ def test_chunked_gradients_with_probabilities(simulation_setup):
         aep_fn, argnums=(0, 1)
     )(wt_xs, wt_ys)
 
-    assert jnp.allclose(aep_standard, aep_chunked, rtol=1e-5)
-    assert jnp.allclose(grad_x_standard, grad_x_chunked, rtol=1e-5)
-    assert jnp.allclose(grad_y_standard, grad_y_chunked, rtol=1e-5)
+    assert jnp.allclose(aep_standard, aep_chunked, **TOLS)
+    assert jnp.allclose(grad_x_standard, grad_x_chunked, **TOLS)
+    assert jnp.allclose(grad_y_standard, grad_y_chunked, **TOLS)
 
 
 def test_chunked_gradients_single_timestamp(simulation_setup):
     """Test chunked gradients with only a single timestamp."""
-    sim, wt_xs, wt_ys, ws_amb, wd_amb, ti = simulation_setup
+    sim, wt_xs, wt_ys, _, _, ti = simulation_setup
 
     # Use only first timestamp
-    ws_single = ws_amb[:1]
-    wd_single = wd_amb[:1]
+    ws_single = 10.0 + jnp.zeros((1,))
+    wd_single = 270.0 + jnp.zeros((1,))
 
     aep_chunked, (grad_x, grad_y) = sim.aep_gradients_chunked(
         wt_xs, wt_ys, ws_single, wd_single, ti_amb=ti, chunk_size=10
@@ -192,10 +173,34 @@ def test_chunked_gradients_single_timestamp(simulation_setup):
         result = sim(x, y, ws_single, wd_single, ti)
         return result.aep()
 
+    check_grads(
+        aep_fn, (wt_xs, wt_ys), order=1, modes=["rev"], atol=1e-3, rtol=1e-2, eps=1e-3
+    )
+
     aep_standard, (grad_x_standard, grad_y_standard) = jax.value_and_grad(
         aep_fn, argnums=(0, 1)
     )(wt_xs, wt_ys)
 
-    assert jnp.allclose(aep_standard, aep_chunked, rtol=1e-5)
-    assert jnp.allclose(grad_x_standard, grad_x, rtol=1e-5)
-    assert jnp.allclose(grad_y_standard, grad_y, rtol=1e-5)
+    assert jnp.allclose(aep_standard, aep_chunked, **TOLS)
+    assert jnp.allclose(grad_x_standard, grad_x, **TOLS)
+    assert jnp.allclose(grad_y_standard, grad_y, **TOLS)
+
+
+def test_chunked_gradients_do_not_cache_wind_resource(simulation_setup):
+    """Test that chunked gradients respond to changes in wind resource"""
+    sim, wt_xs, wt_ys, ws_amb, wd_amb, ti = simulation_setup
+
+    aep_chunked0, (grad_x0, grad_y0) = sim.aep_gradients_chunked(
+        wt_xs, wt_ys, ws_amb, wd_amb, ti_amb=ti, chunk_size=10
+    )
+
+    ws_single = ws_amb + 5
+    wd_single = (wd_amb - 45) % 360
+    aep_chunked1, (grad_x1, grad_y1) = sim.aep_gradients_chunked(
+        wt_xs, wt_ys, ws_single, wd_single, ti_amb=ti, chunk_size=10
+    )
+
+    # basically should observe at least 1% change
+    assert not jnp.allclose(aep_chunked0, aep_chunked1, rtol=1e-2)
+    assert not jnp.allclose(grad_x0, grad_x1, **TOLS)
+    assert not jnp.allclose(grad_y0, grad_y1, **TOLS)

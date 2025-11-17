@@ -7,6 +7,7 @@ import jax
 import jax.numpy as jnp
 
 from .core import SimulationContext
+from .jax_utils import get_float_eps
 
 
 class RotorAvg(ABC):
@@ -143,7 +144,9 @@ class CGIRotorAvg(RotorAvg):
         ti_eff: jnp.ndarray | None,
         ctx: SimulationContext,
     ) -> jax.Array:
-        """Computes the rotor-averaged value of `func`.
+        """Computes the rotor-averaged value of `func`. The function must have
+        call signature of: func(ws_eff, ti_eff, ctx). The context will be modified
+        to evaluate at each integration point across the rotor disk.
 
         This method handles all dimensional reshaping internally, so `func`
         doesn't need to know about rotor averaging.
@@ -158,19 +161,20 @@ class CGIRotorAvg(RotorAvg):
         Returns:
             The rotor-averaged value of the function `func`.
         """
-        R_dst = ctx.turbine.rotor_diameter / 2.0
+        R_dst = jnp.array(ctx.turbine.rotor_diameter / 2.0)
 
         # Expand to integration points: (n_receivers, n_sources, n_points)
         dw = ctx.dw[..., jnp.newaxis]
         cw = ctx.cw[..., jnp.newaxis]
 
-        node_x_offset = self.nodes_x.reshape(1, 1, -1) * R_dst
-        node_y_offset = self.nodes_y.reshape(1, 1, -1) * R_dst
+        # TODO: is this correct ? Should add test against pywake !
+        node_x_offset = self.nodes_x.reshape(1, 1, -1) * R_dst.reshape(1, -1, 1)
+        node_y_offset = self.nodes_y.reshape(1, 1, -1) * R_dst.reshape(1, -1, 1)
 
         hcw_at_nodes = cw + node_x_offset
         dh_at_nodes = 0.0 + node_y_offset  # TODO: 0 should be ctx.dh ???
         dw_at_nodes = jnp.broadcast_to(dw, hcw_at_nodes.shape)
-        cw_at_nodes = jnp.sqrt(hcw_at_nodes**2 + dh_at_nodes**2)
+        cw_at_nodes = jnp.sqrt(hcw_at_nodes**2 + dh_at_nodes**2 + get_float_eps())
 
         if id(func) not in self._cache:
             # Evaluate func at each integration point by vmapping over last axis

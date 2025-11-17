@@ -112,7 +112,9 @@ def test_cgi_rotor_avg_against_pywake(
     )
     ws_eff_pixwake = sim_res.effective_ws
 
-    site_pw = Hornsrev1Site()
+    # TODO: implement shear in pixwake
+    shear = None  # PowerShear(h_ref=150, alpha=0.1)
+    site_pw = Hornsrev1Site(shear=shear)
     wind_turbines_pw = V80()
     rotor_avg_model_pw = PyWakeCGIRotorAvg(n_points)
     wfm = All2AllIterative(
