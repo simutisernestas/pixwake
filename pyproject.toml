@@ -20,7 +20,11 @@ pixwake = { path = ".", editable = true }
 [tool.pixi.dependencies]
 python = "<3.15"
 
+[tool.pixi.feature.test.pypi-dependencies]
+flax = ">=0.10.4,<0.13"
+
 [tool.pixi.feature.test.dependencies]
+python = "<3.14"
 pytest = "*"
 pytest-xdist = "*"
 pytest-cov = "*"

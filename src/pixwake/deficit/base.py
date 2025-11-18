@@ -67,7 +67,8 @@ class WakeDeficit(ABC):
             else self._deficit(ws_eff, ti_eff, ctx)
         )
 
-        in_wake_mask = ctx.dw > 0.0
+        # allows for blockage...
+        in_wake_mask = jnp.ones_like(ctx.dw, dtype=bool)  #  ctx.dw > 0.0
         if self.use_radius_mask:
             in_wake_mask &= jnp.abs(ctx.cw) < ctx.wake_radius
 
@@ -75,6 +76,8 @@ class WakeDeficit(ABC):
         ws_deficit = ssqrt(
             jnp.sum(jnp.where(in_wake_mask, ws_deficit_m**2, 0.0), axis=1)
         )
+        # does this correspond to linear sum ?
+        ws_deficit = jnp.sum(jnp.where(in_wake_mask, ws_deficit_m, 0.0), axis=1)
         return jnp.maximum(0.0, ctx.ws - ws_deficit), ctx
 
     @abstractmethod
