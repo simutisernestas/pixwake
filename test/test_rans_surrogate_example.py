@@ -18,11 +18,18 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 import numpy as onp
-from py_wake.examples.data.dtu10mw import DTU10MW
 
 from pixwake import Curve, Turbine, WakeSimulation
 from pixwake.deficit.base import WakeDeficit
 from pixwake.turbulence.base import WakeTurbulence
+from scipy.ndimage import gaussian_filter1d
+
+import numpy as np
+
+asarray_method = np.asarray
+from py_wake.examples.data.dtu10mw import DTU10MW
+
+np.asarray = asarray_method
 
 
 class WakeDeficitModelFlax(nn.Module):
@@ -180,7 +187,7 @@ class RANSDeficit(WakeDeficit):
             & (jnp.abs(y_d) < 6)
             & ((x_d > 1e-3) | (x_d < -1e-3))
         )
-        ti_input = ti_eff if ti_eff is not None else ctx.ti
+        ti_input = ti_eff if self.use_effective_ti else ctx.ti
 
         deficit_fraction = _predict(
             self.deficit_model,
@@ -218,7 +225,12 @@ class RANSTurbulence(WakeTurbulence):
         x_d = ctx.dw / ctx.turbine.rotor_diameter
         y_d = ctx.cw / ctx.turbine.rotor_diameter
         ct_eff = ctx.turbine.ct(ws_eff)
-        in_domain_mask = (x_d < 70) & (x_d > -3) & (jnp.abs(y_d) < 6)
+        in_domain_mask = (
+            (x_d < 70)
+            & (x_d > -3)
+            & (jnp.abs(y_d) < 6)
+            & ((x_d > 1e-3) | (x_d < -1e-3))
+        )
         ti_input = ti_eff if ti_eff is not None else ctx.ti
 
         added_turbulence = _predict(
@@ -232,19 +244,16 @@ class RANSTurbulence(WakeTurbulence):
         return jnp.where(in_domain_mask, added_turbulence, 0.0)
 
 
-from scipy.ndimage import gaussian_filter1d
-
-
-# hahah it actually works...
+# could add to curve object or implementation from pywake ?
 def smooth_curve(ws, values, sigma=0.5):
     """Apply Gaussian smoothing to make curve differentiable"""
     smoothed = gaussian_filter1d(values, sigma=sigma, mode="nearest")
     return ws, smoothed
 
 
-def build_dtu10mw_wt(smooth=True) -> Turbine:
-    pywake_turbine = DTU10MW()
-    ws = jnp.linspace(0, 30, 301).tolist() + [100.0]
+def build_dtu10mw_wt(smooth=False) -> Turbine:
+    pywake_turbine = DTU10MW(method="pchip")  # smoothing is done here
+    ws = [0.0] + jnp.linspace(3, 26, 301).tolist() + [100.0]
 
     # Smooth the curves
     if smooth:
@@ -293,15 +302,15 @@ def test_rans_surrogate_aep():
     WDS = jnp.asarray(onp.random.uniform(0, 360, T))
 
     turbine = build_dtu10mw_wt()
-    wi, le = 3, 3
+    wi, le = 10, 8
     xs, ys = jnp.meshgrid(  # example positions
-        jnp.linspace(0, wi * 2 * turbine.rotor_diameter, wi),
-        jnp.linspace(0, le * 2 * turbine.rotor_diameter, le),
+        jnp.linspace(0, wi * 4 * turbine.rotor_diameter, wi),
+        jnp.linspace(0, le * 4 * turbine.rotor_diameter, le),
     )
     xs, ys = xs.ravel(), ys.ravel()
     # add some noise to positions
-    xs += onp.random.normal(0, turbine.rotor_diameter, xs.shape)
-    ys += onp.random.normal(0, turbine.rotor_diameter, ys.shape)
+    xs += onp.random.normal(0, 0.1 * turbine.rotor_diameter, xs.shape)
+    ys += onp.random.normal(0, 0.1 * turbine.rotor_diameter, ys.shape)
 
     assert xs.shape[0] == (wi * le), xs.shape
 
@@ -317,7 +326,9 @@ def test_rans_surrogate_aep():
 
     # flow_map, (fx, fy) = sim.flow_map(xs, ys, ti=0.1, wd=270)  # warm-up
     # from pixwake.plot import plot_flow_map
-    # plot_flow_map(fx, fy, flow_map, show=True)
+    # plot_flow_map(fx, fy, flow_map, show=False)
+    # import matplotlib.pyplot as plt
+    # plt.savefig("rans_surrogate_flow_map_example.png")
     # exit()
 
     def aep(xx, yy):
