@@ -8,6 +8,7 @@ if TYPE_CHECKING:
     from pixwake.deficit.base import WakeDeficit
     from pixwake.turbulence.base import WakeTurbulence
 
+import warnings
 from dataclasses import dataclass
 from functools import partial
 
@@ -864,7 +865,7 @@ def fixed_point(
         The fixed point as a tuple of (wind_speed, turbulence_intensity) with the
         same structure as `x_guess`.
     """
-    max_iter = max(20, len(jnp.atleast_1d(jax.tree.leaves(x_guess)[0])))
+    max_iter = max(30, len(jnp.atleast_1d(jax.tree.leaves(x_guess)[0])))
 
     def cond_fun(carry: tuple) -> jnp.ndarray:
         x_prev, x, it = carry
@@ -881,6 +882,15 @@ def fixed_point(
         return x, x_damped, it + 1
 
     _, x_star, it = while_loop(cond_fun, body_fun, (x_guess, f(x_guess, ctx), 0))
+
+    def _check_convergence(it_val: int, max_iter_val: int) -> None:
+        if it_val >= max_iter_val:
+            warnings.warn(
+                f"Fixed-point iteration did not converge within {max_iter_val} iterations.",
+                RuntimeWarning,
+            )
+
+    jax.debug.callback(_check_convergence, it, max_iter)
     return x_star
 
 

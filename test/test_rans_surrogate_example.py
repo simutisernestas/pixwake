@@ -174,7 +174,12 @@ class RANSDeficit(WakeDeficit):
         x_d = ctx.dw / ctx.turbine.rotor_diameter
         y_d = ctx.cw / ctx.turbine.rotor_diameter
         ct_eff = ctx.turbine.ct(ws_eff)
-        in_domain_mask = (x_d < 70) & (x_d > -3) & (jnp.abs(y_d) < 6)
+        in_domain_mask = (
+            (x_d < 70)
+            & (x_d > -3)
+            & (jnp.abs(y_d) < 6)
+            & ((x_d > 1e-3) | (x_d < -1e-3))
+        )
         ti_input = ti_eff if ti_eff is not None else ctx.ti
 
         deficit_fraction = _predict(
@@ -227,26 +232,44 @@ class RANSTurbulence(WakeTurbulence):
         return jnp.where(in_domain_mask, added_turbulence, 0.0)
 
 
-def build_dtu10mw_wt():
+from scipy.ndimage import gaussian_filter1d
+
+
+# hahah it actually works...
+def smooth_curve(ws, values, sigma=0.5):
+    """Apply Gaussian smoothing to make curve differentiable"""
+    smoothed = gaussian_filter1d(values, sigma=sigma, mode="nearest")
+    return ws, smoothed
+
+
+def build_dtu10mw_wt(smooth=True) -> Turbine:
     pywake_turbine = DTU10MW()
-    ws = pywake_turbine.powerCtFunction.ws_tab
+    ws = jnp.linspace(0, 30, 301).tolist() + [100.0]
+
+    # Smooth the curves
+    if smooth:
+        ws_power, power = smooth_curve(ws, pywake_turbine.power(ws), sigma=1.0)
+        ws_ct, ct = smooth_curve(ws, pywake_turbine.ct(ws), sigma=0.5)
+    else:
+        ws_power = ws_ct = ws
+        power = pywake_turbine.power(ws)
+        ct = pywake_turbine.ct(ws)
 
     pixwake_turbine = Turbine(
         rotor_diameter=pywake_turbine.diameter(),
         hub_height=pywake_turbine.hub_height(),
         power_curve=Curve(
-            ws=jnp.array(ws),
-            values=jnp.array(pywake_turbine.power(ws)),
+            ws=jnp.array(ws_power),
+            values=jnp.array(power),
         ),
         ct_curve=Curve(
-            ws=jnp.array(ws),
-            values=jnp.array(pywake_turbine.ct(ws)),
+            ws=jnp.array(ws_ct),
+            values=jnp.array(ct),
         ),
     )
     # import matplotlib.pyplot as plt
     # plt.figure()
     # pywake_turbine.plot_power_ct()
-    # plt.figure()
     # from pixwake.plot import plot_power_and_thrust_curve
     # plot_power_and_thrust_curve(pixwake_turbine, show=True)
     # exit()
@@ -265,7 +288,7 @@ def test_rans_surrogate_aep():
     CUTIN_WS = 4.0
 
     onp.random.seed(42)
-    T = 10
+    T = 100
     WSS = jnp.asarray(onp.random.uniform(CUTIN_WS, CUTOUT_WS, T))
     WDS = jnp.asarray(onp.random.uniform(0, 360, T))
 
@@ -288,7 +311,7 @@ def test_rans_surrogate_aep():
         turbine,
         model,
         turbulence,
-        fpi_damp=0.5,
+        fpi_damp=1.0,
         fpi_tol=1e-6,
     )
 
