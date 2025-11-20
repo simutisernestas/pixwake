@@ -8,7 +8,6 @@ if TYPE_CHECKING:
     from pixwake.deficit.base import WakeDeficit
     from pixwake.turbulence.base import WakeTurbulence
 
-import warnings
 from dataclasses import dataclass
 from functools import partial
 
@@ -634,7 +633,7 @@ class WakeSimulation:
     ) -> tuple[jnp.ndarray, jnp.ndarray | None]:
         """Simulates multiple conditions with a Python loop (for debugging)."""
         n_cases = ctx.ws.size
-        n_turbines = ctx.dw.shape[0]
+        n_turbines = ctx.dw.shape[-1]
         ws_out = jnp.zeros((n_cases, n_turbines))
         ti_out = None if ctx.ti is None else jnp.zeros((n_cases, n_turbines))
 
@@ -828,7 +827,9 @@ class WakeSimulation:
 )
 def fixed_point(
     f: Callable,
-    x_guess: tuple[jnp.ndarray, jnp.ndarray | None],
+    x_guess: tuple[
+        jnp.ndarray, jnp.ndarray | None
+    ],  # TODO: this will always be a tuple
     ctx: SimulationContext,
     tol: float = 1e-6,
     damp: float = 1.0,
@@ -867,30 +868,49 @@ def fixed_point(
     """
     max_iter = max(30, len(jnp.atleast_1d(jax.tree.leaves(x_guess)[0])))
 
+    # Initialize ioff and diff_prev
+    ioff = jnp.zeros_like(x_guess[0], dtype=bool)
+    diff_prev = jnp.full_like(x_guess[0], jnp.inf)
+
     def cond_fun(carry: tuple) -> jnp.ndarray:
-        x_prev, x, it = carry
+        x_prev, x, it, ioff, _ = carry
         ws_prev = x_prev[0] if isinstance(x_prev, tuple) else x_prev
         ws = x[0] if isinstance(x, tuple) else x
-        tol_cond = jnp.max(jnp.abs(ws_prev - ws)) > tol
+
+        diff = jnp.abs(ws - ws_prev)
+        masked_diff = jnp.where(ioff, 0.0, diff)
+
+        tol_cond = jnp.max(masked_diff) > tol
         iter_cond = it < max_iter
         return jnp.logical_and(tol_cond, iter_cond)
 
     def body_fun(carry: tuple) -> tuple:
-        _, x, it = carry
+        _, x, it, ioff, diff_prev = carry
         x_new = f(x, ctx)
         x_damped = jax.tree.map(lambda n, o: damp * n + (1 - damp) * o, x_new, x)
-        return x, x_damped, it + 1
 
-    _, x_star, it = while_loop(cond_fun, body_fun, (x_guess, f(x_guess, ctx), 0))
+        ws_prev = x[0] if isinstance(x, tuple) else x
+        ws = x_damped[0] if isinstance(x_damped, tuple) else x_damped
 
-    def _check_convergence(it_val: int, max_iter_val: int) -> None:
-        if it_val >= max_iter_val:
-            warnings.warn(
-                f"Fixed-point iteration did not converge within {max_iter_val} iterations.",
-                RuntimeWarning,
+        diff = jnp.abs(ws - ws_prev)
+        ioff_new = jnp.logical_or(ioff, diff > diff_prev)
+
+        return x, x_damped, it + 1, ioff_new, diff
+
+    _, x_star, it, _, _ = while_loop(
+        cond_fun, body_fun, (x_guess, f(x_guess, ctx), 0, ioff, diff_prev)
+    )
+
+    def _check_convergence(n_iter: int, max_iter: int) -> None:
+        if n_iter >= max_iter:
+            jax.debug.print(
+                "Fixed-point iteration did not converge in {}/{} iterations.",
+                n_iter,
+                max_iter,
             )
 
     jax.debug.callback(_check_convergence, it, max_iter)
+
     return x_star
 
 
@@ -962,7 +982,7 @@ def fixed_point_debug(
     It uses a standard Python while loop instead of `jax.lax.while_loop`, making
     it easier to debug with standard Python debuggers.
     """
-    max_iter = max(20, len(jnp.atleast_1d(jax.tree.leaves(x_guess)[0])))
+    max_iter = max(30, len(jnp.atleast_1d(jax.tree.leaves(x_guess)[0])))
 
     it = 0
     x_prev = x_guess
@@ -971,7 +991,9 @@ def fixed_point_debug(
     ws_prev = x_prev[0] if isinstance(x_prev, tuple) else x_prev
     ws = x[0] if isinstance(x, tuple) else x
 
-    while jnp.max(jnp.abs(ws - ws_prev)) > tol and it < max_iter:
+    ioff = jnp.zeros_like(ws, dtype=bool)
+    diff_prev = jnp.full_like(ws, jnp.inf)
+    while jnp.max(jnp.abs(ws[~ioff] - ws_prev[~ioff])) > tol and it < max_iter:
         x_prev = x
         x_new = f(x, ctx)
         x = jax.tree.map(lambda n, o: damp * n + (1 - damp) * o, x_new, x)
@@ -979,5 +1001,9 @@ def fixed_point_debug(
         ws_prev = x_prev[0] if isinstance(x_prev, tuple) else x_prev
         ws = x[0] if isinstance(x, tuple) else x
         it += 1
+
+        diff = jnp.abs(ws - ws_prev)
+        ioff = jnp.logical_or(ioff, diff > diff_prev)
+        diff_prev = diff
 
     return x
