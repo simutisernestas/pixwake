@@ -185,7 +185,7 @@ class RANSDeficit(WakeDeficit):
             (x_d < 70)
             & (x_d > -3)
             & (jnp.abs(y_d) < 6)
-            & ((x_d > 1e-3) | (x_d < -1e-3))
+            & ((x_d > 1e-6) | (x_d < -1e-6))
         )
         ti_input = ti_eff if self.use_effective_ti else ctx.ti
 
@@ -229,7 +229,7 @@ class RANSTurbulence(WakeTurbulence):
             (x_d < 70)
             & (x_d > -3)
             & (jnp.abs(y_d) < 6)
-            & ((x_d > 1e-3) | (x_d < -1e-3))
+            & ((x_d > 1e-6) | (x_d < -1e-6))
         )
         ti_input = ti_eff if ti_eff is not None else ctx.ti
 
@@ -296,7 +296,9 @@ def test_rans_surrogate_aep():
     CUTOUT_WS = 25.0
     CUTIN_WS = 4.0
 
-    onp.random.seed(42)
+    seed = int(time.time()) % 42
+    print(f"Using seed: {seed}")
+    onp.random.seed(seed)
     T = 100
     WSS = jnp.asarray(onp.random.uniform(CUTIN_WS, CUTOUT_WS, T))
     WDS = jnp.asarray(onp.random.uniform(0, 360, T))
@@ -304,8 +306,8 @@ def test_rans_surrogate_aep():
     turbine = build_dtu10mw_wt()
     wi, le = 10, 8
     xs, ys = jnp.meshgrid(  # example positions
-        jnp.linspace(0, wi * 4 * turbine.rotor_diameter, wi),
-        jnp.linspace(0, le * 4 * turbine.rotor_diameter, le),
+        jnp.linspace(0, wi * 3 * turbine.rotor_diameter, wi),
+        jnp.linspace(0, le * 3 * turbine.rotor_diameter, le),
     )
     xs, ys = xs.ravel(), ys.ravel()
     # add some noise to positions
@@ -320,11 +322,11 @@ def test_rans_surrogate_aep():
         turbine,
         model,
         turbulence,
-        fpi_damp=1.0,
+        fpi_damp=0.9,
         fpi_tol=1e-6,
     )
 
-    # flow_map, (fx, fy) = sim.flow_map(xs, ys, ti=0.1, wd=270)  # warm-up
+    # flow_map, (fx, fy) = sim.flow_map(xs, ys, ti=0.1, wd=270, ws=4.7)  # warm-up
     # from pixwake.plot import plot_flow_map
     # plot_flow_map(fx, fy, flow_map, show=False)
     # import matplotlib.pyplot as plt
@@ -338,6 +340,7 @@ def test_rans_surrogate_aep():
 
     res = aep_and_grad(xs, ys)
     block_all(res)
+    print("\nRunning JIT; Warm-up complete...\n")
     s = time.time()
     res = aep_and_grad(xs, ys)
     block_all(res)
