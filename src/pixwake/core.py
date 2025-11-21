@@ -11,6 +11,7 @@ if TYPE_CHECKING:
 from dataclasses import dataclass
 from functools import partial
 
+import interpax
 import jax
 import jax.numpy as jnp
 from jax import custom_vjp, vjp
@@ -126,14 +127,21 @@ class Turbine:
             A JAX numpy array of the corresponding thrust coefficients.
         """
 
+        ramp_factor = jax.nn.sigmoid((self.ct_curve.ws - 4.0) / 1e4)
+        idle_value = self.ct_curve.values[0]
+        smoothed_values = idle_value + (self.ct_curve.values - idle_value) * ramp_factor
+
+        interpolatro = interpax.PchipInterpolator(
+            self.ct_curve.ws, smoothed_values, check=False
+        )
+
         def _interp(
             _ws: jnp.ndarray, _ws_curve: jnp.ndarray, _curve_values: jnp.ndarray
         ) -> jnp.ndarray:
             return jnp.interp(_ws, _ws_curve, _curve_values)
 
         if jnp.asarray(self.rotor_diameter).ndim == 0:
-            # Single turbine type
-            return jnp.interp(ws, self.ct_curve.ws, self.ct_curve.values)
+            return interpolatro(ws)
 
         # Multiple turbine types
         if ws.ndim == 1:
@@ -894,6 +902,8 @@ def fixed_point(
 
         diff = jnp.abs(ws - ws_prev)
         ioff_new = jnp.logical_or(ioff, diff > diff_prev)
+        ioff_new = ioff
+        # jnp.logical_or(ioff, diff > diff_prev)
 
         return x, x_damped, it + 1, ioff_new, diff
 

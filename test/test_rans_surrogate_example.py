@@ -17,14 +17,13 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import numpy as onp
+from scipy.ndimage import gaussian_filter1d
 
 from pixwake import Curve, Turbine, WakeSimulation
 from pixwake.deficit.base import WakeDeficit
 from pixwake.turbulence.base import WakeTurbulence
-from scipy.ndimage import gaussian_filter1d
-
-import numpy as np
 
 asarray_method = np.asarray
 from py_wake.examples.data.dtu10mw import DTU10MW
@@ -252,8 +251,8 @@ def smooth_curve(ws, values, sigma=0.5):
 
 
 def build_dtu10mw_wt(smooth=False) -> Turbine:
-    pywake_turbine = DTU10MW(method="pchip")  # smoothing is done here
-    ws = [0.0] + jnp.linspace(3, 26, 301).tolist() + [100.0]
+    pywake_turbine = DTU10MW(method="linear")  # smoothing is done here
+    ws = jnp.linspace(0, 26.0, 1000).tolist()
 
     # Smooth the curves
     if smooth:
@@ -276,6 +275,27 @@ def build_dtu10mw_wt(smooth=False) -> Turbine:
             values=jnp.array(ct),
         ),
     )
+
+    # import matplotlib.pyplot as plt
+    # ws = jnp.linspace(3, 26, 1000)
+    # ct = pixwake_turbine.ct(ws)
+    # ct_ws_grad_func = jax.vmap(jax.grad(pixwake_turbine.ct))
+    # ct_grad = ct_ws_grad_func(ws)
+    # plt.figure()
+    # plt.plot(ws, ct, label="Ct Curve")
+    # plt.xlabel("Wind Speed (m/s)")
+    # plt.ylabel("Thrust Coefficient (Ct)")
+    # plt.title("DTU 10MW Turbine Thrust Coefficient Curve")
+    # plt.figure()
+    # plt.plot(ws, ct_grad, label="dCt/dWs", color="orange")
+    # plt.xlabel("Wind Speed (m/s)")
+    # plt.ylabel("dCt/dWs")
+    # plt.title("DTU 10MW Turbine Thrust Coefficient Gradient")
+    # plt.grid(True)
+    # plt.legend()
+    # plt.show()
+    # exit()
+
     # import matplotlib.pyplot as plt
     # plt.figure()
     # pywake_turbine.plot_power_ct()
@@ -322,7 +342,7 @@ def test_rans_surrogate_aep():
         turbine,
         model,
         turbulence,
-        fpi_damp=0.9,
+        fpi_damp=1.0,
         fpi_tol=1e-6,
     )
 
