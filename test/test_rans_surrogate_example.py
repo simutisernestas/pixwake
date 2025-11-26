@@ -1,3 +1,4 @@
+import json
 import sys
 
 import pytest
@@ -185,6 +186,7 @@ class RANSDeficit(WakeDeficit):
             & (x_d > -3)
             & (jnp.abs(y_d) < 6)
             & ((x_d > 1e-6) | (x_d < -1e-6))
+            & ((y_d > 1e-6) | (y_d < -1e-6))
         )
         ti_input = ti_eff if self.use_effective_ti else ctx.ti
 
@@ -229,6 +231,7 @@ class RANSTurbulence(WakeTurbulence):
             & (x_d > -3)
             & (jnp.abs(y_d) < 6)
             & ((x_d > 1e-6) | (x_d < -1e-6))
+            & ((y_d > 1e-6) | (y_d < -1e-6))
         )
         ti_input = ti_eff if ti_eff is not None else ctx.ti
 
@@ -252,7 +255,7 @@ def smooth_curve(ws, values, sigma=0.5):
 
 def build_dtu10mw_wt(smooth=False) -> Turbine:
     pywake_turbine = DTU10MW(method="linear")  # smoothing is done here
-    ws = jnp.linspace(0, 26.0, 1000).tolist()
+    ws = jnp.linspace(0, 30.0, 30).tolist()
 
     # Smooth the curves
     if smooth:
@@ -312,9 +315,54 @@ def block_all(res):
         return res.block_until_ready()
 
 
+def load_opt_site_and_reference_resource():
+    import yaml
+
+    wind_resource = yaml.load(
+        open("Wind_Resource.yaml"),
+        Loader=yaml.FullLoader,
+    )["wind_resource"]
+    A = wind_resource["weibull_a"]
+    k = wind_resource["weibull_k"]
+    freq = wind_resource["sector_probability"]
+    wd = wind_resource["wind_direction"]
+    ws = wind_resource["wind_speed"]
+    TI = wind_resource["turbulence_intensity"]["data"]
+    import xarray as xr
+    from py_wake.site.xrsite import XRSite
+
+    site = XRSite(
+        ds=xr.Dataset(
+            data_vars={
+                "Sector_frequency": ("wd", freq["data"]),
+                "Weibull_A": ("wd", A["data"]),
+                "Weibull_k": ("wd", k["data"]),
+                "TI": (wind_resource["turbulence_intensity"]["dims"][0], TI),
+            },
+            coords={"wd": wd, "ws": ws},
+        )
+    )
+    return (site, np.array(ws), np.array(wd))
+
+
 def test_rans_surrogate_aep():
-    CUTOUT_WS = 25.0
+    CUTOUT_WS = 5.0
     CUTIN_WS = 4.0
+
+    site, site_ws, site_wd = load_opt_site_and_reference_resource()
+    site_wd = jnp.arange(0, 360, 1)
+    pix_ws, pix_wd = jnp.meshgrid(site_ws, site_wd)
+    pix_wd, pix_ws = pix_wd.flatten(), pix_ws.flatten()
+    P_ilk = site.local_wind(ws=site_ws, wd=site_wd).P_ilk
+    pix_probs = P_ilk.reshape((1, pix_wd.size)).T
+    # normalize
+    # pix_probs /= jnp.sum(pix_probs)
+
+    layout = np.load(
+        "./IEA_ModelChoice.AWAKEN_OptDriver.SGD_seed149_initial_pos.npy",
+        allow_pickle=True,
+    ).item()
+    lx, ly = layout["x"], layout["y"]
 
     seed = int(time.time()) % 42
     print(f"Using seed: {seed}")
@@ -322,6 +370,8 @@ def test_rans_surrogate_aep():
     T = 100
     WSS = jnp.asarray(onp.random.uniform(CUTIN_WS, CUTOUT_WS, T))
     WDS = jnp.asarray(onp.random.uniform(0, 360, T))
+    # WSS = pix_ws
+    # WDS = pix_wd
 
     turbine = build_dtu10mw_wt()
     wi, le = 10, 8
@@ -333,7 +383,6 @@ def test_rans_surrogate_aep():
     # add some noise to positions
     xs += onp.random.normal(0, 0.1 * turbine.rotor_diameter, xs.shape)
     ys += onp.random.normal(0, 0.1 * turbine.rotor_diameter, ys.shape)
-
     assert xs.shape[0] == (wi * le), xs.shape
 
     model = RANSDeficit()
@@ -342,11 +391,11 @@ def test_rans_surrogate_aep():
         turbine,
         model,
         turbulence,
-        fpi_damp=1.0,
-        fpi_tol=1e-6,
+        fpi_damp=0.9,
+        fpi_tol=1e-4,
     )
 
-    # flow_map, (fx, fy) = sim.flow_map(xs, ys, ti=0.1, wd=270, ws=4.7)  # warm-up
+    # flow_map, (fx, fy) = sim.flow_map(lx, ly, ti=0.06, wd=270, ws=10.0)
     # from pixwake.plot import plot_flow_map
     # plot_flow_map(fx, fy, flow_map, show=False)
     # import matplotlib.pyplot as plt
@@ -354,7 +403,11 @@ def test_rans_surrogate_aep():
     # exit()
 
     def aep(xx, yy):
-        return sim(xx, yy, WSS, WDS, 0.1).aep()
+        return sim(xx, yy, WSS, WDS, 0.06).aep()  # probabilities=pix_probs
+
+    # aep_value = jax.jit(aep)(jnp.array(lx), jnp.array(ly))  # warm-up
+    # print(aep_value)
+    # exit(0)
 
     aep_and_grad = jax.jit(jax.value_and_grad(aep, argnums=(0, 1)))
 
@@ -371,5 +424,238 @@ def test_rans_surrogate_aep():
     assert jnp.isfinite(res[1][1]).all(), "Gradient of y should be finite"
 
 
+def run_opt(seed=0):
+    import shapely
+    from topfarm import TopFarmProblem
+    from topfarm.cost_models.cost_model_wrappers import CostModelComponent
+    from topfarm.constraint_components.boundary import XYBoundaryConstraint
+    from topfarm.constraint_components.constraint_aggregation import (
+        DistanceConstraintAggregation,
+    )
+    from topfarm.constraint_components.spacing import SpacingConstraint
+    from topfarm.plotting import XYPlotComp
+    from topfarm.easy_drivers import EasySGDDriver
+    from contextlib import redirect_stdout, redirect_stderr
+    from pathlib import Path
+
+    seed += 42
+    print(f"Using seed: {seed}")
+    onp.random.seed(seed)
+
+    site, site_ws, site_wd = load_opt_site_and_reference_resource()
+    site_wd = jnp.arange(0, 360, 1)
+    pix_ws, pix_wd = jnp.meshgrid(site_ws, site_wd)
+    pix_wd, pix_ws = pix_wd.flatten(), pix_ws.flatten()
+
+    # fmt: off
+    def aep(): return 0.0
+    # fmt: on
+
+    TI_VALUE = 0.06
+    # wind resource
+    WDS = np.linspace(0, 360 - 1, 360)
+    dirs = WDS  # SITE.ds["wd"][:-1]
+    repeat = WDS.shape[0] // site.ds["Sector_frequency"][:-1].shape[0]
+    freqs = np.repeat(site.ds["Sector_frequency"][:-1], repeat).values
+    freqs /= freqs.sum()
+    As = np.repeat(site.ds["Weibull_A"], repeat).values
+    ks = np.repeat(site.ds["Weibull_k"], repeat).values
+    samps = 75  # number of samples
+
+    turbine = build_dtu10mw_wt()
+    model = RANSDeficit()
+    turbulence = RANSTurbulence()
+    sim = WakeSimulation(
+        turbine,
+        model,
+        turbulence,
+        fpi_damp=1.0,
+        fpi_tol=1e-6,
+    )
+    grad_func = jax.jit(
+        jax.grad(
+            lambda xx, yy, wsx, wdx: sim(xx, yy, wsx, wdx, ti_amb=TI_VALUE).aep(),
+            argnums=(0, 1),
+        )
+    )
+
+    def sampling():
+        idx = np.random.choice(np.arange(dirs.size), samps, p=freqs)
+        wd = dirs[idx]
+        A = As[idx]
+        k = ks[idx]
+        ws = A * np.random.weibull(k)
+        return wd, ws
+
+    def aep_jac(x, y):
+        wd, ws = sampling()
+        dx, dy = grad_func(jnp.array(x), jnp.array(y), jnp.array(ws), jnp.array(wd))
+        jac = np.array([np.atleast_2d(dx), np.atleast_2d(dy)]) * 1e3
+        return jac
+
+    layout = np.load(
+        "./IEA_ModelChoice.AWAKEN_OptDriver.SGD_seed149_initial_pos.npy",
+        allow_pickle=True,
+    ).item()
+    lx, ly = layout["x"], layout["y"]
+
+    aep_jac(lx, ly)
+
+    MAX_ITER = 1e5
+    min_spacing_m = 4 * turbine.rotor_diameter
+    bpath = "./IEA_740_10_scaled.json"
+    boundaries = json.load(open(bpath))
+    boundaries = (
+        np.array([boundaries["boundaries_x"], boundaries["boundaries_y"]]).T
+        * turbine.rotor_diameter
+    )
+    constraint_comp = XYBoundaryConstraint(boundaries, "polygon")
+    nwt = 80
+    boundary_poly = shapely.geometry.Polygon(boundaries)
+
+    minx, miny, maxx, maxy = boundary_poly.bounds
+    points = []
+    it = 0
+    while len(points) < nwt and it < int(MAX_ITER):
+        # Generate random points within the bounding box
+        x = np.random.uniform(minx, maxx)
+        y = np.random.uniform(miny, maxy)
+        point = shapely.geometry.Point(x, y)
+        min_distance_to_existing_ones = np.min(
+            [point.distance(p) for p in points] if points else [np.inf]
+        )
+        if (
+            boundary_poly.contains(point)
+            and min_distance_to_existing_ones > min_spacing_m
+        ):
+            points.append(point)
+        it += 1
+    if it >= int(MAX_ITER):
+        raise RuntimeError(
+            "Could not generate enough points within the boundary. "
+            "Increase the number of iterations or reduce the minimum spacing."
+        )
+    x0 = np.array([p.x for p in points])
+    y0 = np.array([p.y for p in points])
+    constraints = [SpacingConstraint(2), constraint_comp]
+    cost_comp = CostModelComponent(
+        input_keys=["x", "y"],
+        n_wt=nwt,
+        cost_function=lambda x, y: 0.0,
+        objective=True,
+        cost_gradient_function=aep_jac,
+        maximize=True,
+    )
+    n_iter = 2000
+
+    driver = EasySGDDriver(
+        maxiter=n_iter,
+        speedupSGD=True,
+        learning_rate=0.1 * turbine.rotor_diameter,
+        additional_constant_lr_iterations=100,
+    )
+    constraints = DistanceConstraintAggregation(
+        constraint_comp,
+        n_wt=nwt,
+        min_spacing_m=2,
+        windTurbines=None,
+    )
+
+    print("Running optimization...")
+    OPTDIR = "./opt_results/"
+    os.makedirs(OPTDIR, exist_ok=True)
+    layout_name = "IEA"
+
+    tf = TopFarmProblem(
+        design_vars={"x": x0, "y": y0},
+        cost_comp=cost_comp,
+        constraints=constraints,
+        driver=driver,
+        plot_comp=XYPlotComp(
+            folder_name=Path(OPTDIR).joinpath(Path(f"{layout_name}_{seed}_iters")),
+            save_plot_per_iteration=True,
+            memory=3,
+            plot_initial=False,
+            delay=0,
+        ),
+        reports=False,
+    )
+    _, state, rec = tf.optimize()
+
+    state = {"x": x0, "y": y0}  # dummy for testing
+
+    optimized_positions = {"x": state["x"], "y": state["y"]}
+    np.save(
+        Path(OPTDIR).joinpath(
+            Path(
+                f"{layout_name}_{str('pixwake_surrogate')}_{'SGD'}_seed{seed}_opt_pos.npy"
+            )
+        ),
+        optimized_positions,
+    )
+    np.save(
+        Path(OPTDIR).joinpath(
+            Path(
+                f"{layout_name}_{str('pixwake_surrogate')}_{'SGD'}_seed{seed}_initial_pos.npy"
+            )
+        ),
+        {"x": x0, "y": y0},
+    )
+
+
 if __name__ == "__main__":
-    test_rans_surrogate_aep()
+    for _ in range(100):
+        test_rans_surrogate_aep()
+
+    exit()
+    # for i in range(15):
+    #     run_opt(seed=i)
+
+    for i in range(16):
+        if i == 0:
+            continue
+        if i == 2:
+            exit(0)
+        path = (
+            "./IEA_ModelChoice.AWAKEN_OptDriver.SGD_seed149_initial_pos.npy"
+            if i == 0
+            else f"./opt_results/IEA_pixwake_surrogate_SGD_seed{42 + i - 1}_opt_pos.npy"
+        )
+        eval_layouts = np.load(
+            path,
+            allow_pickle=True,
+        ).item()
+        lx, ly = eval_layouts["x"], eval_layouts["y"]
+        site, site_ws, site_wd = load_opt_site_and_reference_resource()
+        site_wd = jnp.arange(0, 360 - 1, 1)
+        pix_ws, pix_wd = jnp.meshgrid(site_ws, site_wd)
+        pix_wd, pix_ws = pix_wd.flatten(), pix_ws.flatten()
+        P_ilk = site.local_wind(ws=site_ws, wd=site_wd).P_ilk
+        pix_probs = P_ilk.reshape((1, pix_wd.size)).T.squeeze()
+        TI_VALUE = 0.06
+
+        turbine = build_dtu10mw_wt()
+        model = RANSDeficit()
+        turbulence = RANSTurbulence()
+        sim = WakeSimulation(
+            turbine,
+            model,
+            turbulence,
+            fpi_damp=1.0,
+            fpi_tol=1e-4,
+        )
+
+        aep, _ = sim.aep_gradients_chunked(
+            jnp.array(lx),
+            jnp.array(ly),
+            pix_ws,
+            pix_wd,
+            ti_amb=TI_VALUE,
+            probabilities=pix_probs,
+            chunk_size=128,
+        )
+        with open("evallog.txt", "a") as file:
+            print(f"Seed {i} -> AEP: {aep}", file=file)
+            print(f"Seed {i} -> AEP: {aep}")
+
+    # TODO: eval could be with chunked grad/aep to run on GPU with limited memory

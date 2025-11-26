@@ -89,6 +89,7 @@ class WakeTurbulence:
 
         ti_added_m = self._added_turbulence(ws_eff, ti_eff, ctx)
         inside_wake = (ctx.dw > 0.0) & (jnp.abs(ctx.cw) < ctx.wake_radius)
+        inside_wake = jnp.ones_like(ctx.dw, dtype=bool)
         ti_added_m = jnp.where(inside_wake, ti_added_m, 0.0)
 
         # Combine ambient and added turbulence

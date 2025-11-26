@@ -127,12 +127,9 @@ class Turbine:
             A JAX numpy array of the corresponding thrust coefficients.
         """
 
-        ramp_factor = jax.nn.sigmoid((self.ct_curve.ws - 4.0) / 1e4)
-        idle_value = self.ct_curve.values[0]
-        smoothed_values = idle_value + (self.ct_curve.values - idle_value) * ramp_factor
 
         interpolatro = interpax.PchipInterpolator(
-            self.ct_curve.ws, smoothed_values, check=False
+            self.ct_curve.ws, self.ct_curve.values, check=False
         )
 
         def _interp(
@@ -316,7 +313,9 @@ class SimulationResult:
             ).sum() / self.effective_ws.shape[0]
 
         probabilities = probabilities.reshape(-1, 1)
-        assert probabilities.shape[0] == turbine_powers.shape[0]
+        assert probabilities.shape[0] == turbine_powers.shape[0], (
+            f"{probabilities.shape} == {turbine_powers.shape}"
+        )  # n_flow_cases
 
         return (
             turbine_powers * probabilities * hours_in_year * gwh_conversion_factor
@@ -808,6 +807,7 @@ class WakeSimulation:
                 mask = jnp.arange(chunk_size) < actual_chunk_size
                 prob_chunk = jnp.where(mask, 1.0 / actual_chunk_size, 0.0)
 
+            assert prob_chunk.ndim == 1
             chunk_aep, (grad_x, grad_y) = self._aep_gradients_chunked_static(
                 self, wt_xs, wt_ys, ws_chunk, wd_chunk, ti_chunk, prob_chunk
             )
@@ -902,8 +902,6 @@ def fixed_point(
 
         diff = jnp.abs(ws - ws_prev)
         ioff_new = jnp.logical_or(ioff, diff > diff_prev)
-        ioff_new = ioff
-        # jnp.logical_or(ioff, diff > diff_prev)
 
         return x, x_damped, it + 1, ioff_new, diff
 
