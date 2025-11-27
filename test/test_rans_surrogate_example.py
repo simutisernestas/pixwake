@@ -280,7 +280,7 @@ def build_dtu10mw_wt(smooth=False) -> Turbine:
     )
 
     # import matplotlib.pyplot as plt
-    # ws = jnp.linspace(3, 26, 1000)
+    # ws = jnp.linspace(0, 30, 1000)
     # ct = pixwake_turbine.ct(ws)
     # ct_ws_grad_func = jax.vmap(jax.grad(pixwake_turbine.ct))
     # ct_grad = ct_ws_grad_func(ws)
@@ -349,22 +349,22 @@ def test_rans_surrogate_aep():
     CUTOUT_WS = 5.0
     CUTIN_WS = 4.0
 
-    site, site_ws, site_wd = load_opt_site_and_reference_resource()
-    site_wd = jnp.arange(0, 360, 1)
-    pix_ws, pix_wd = jnp.meshgrid(site_ws, site_wd)
-    pix_wd, pix_ws = pix_wd.flatten(), pix_ws.flatten()
-    P_ilk = site.local_wind(ws=site_ws, wd=site_wd).P_ilk
-    pix_probs = P_ilk.reshape((1, pix_wd.size)).T
-    # normalize
-    # pix_probs /= jnp.sum(pix_probs)
+    # site, site_ws, site_wd = load_opt_site_and_reference_resource()
+    # site_wd = jnp.arange(0, 360, 1)
+    # pix_ws, pix_wd = jnp.meshgrid(site_ws, site_wd)
+    # pix_wd, pix_ws = pix_wd.flatten(), pix_ws.flatten()
+    # P_ilk = site.local_wind(ws=site_ws, wd=site_wd).P_ilk
+    # pix_probs = P_ilk.reshape((1, pix_wd.size)).T
+    # # normalize
+    # # pix_probs /= jnp.sum(pix_probs)
 
-    layout = np.load(
-        "./IEA_ModelChoice.AWAKEN_OptDriver.SGD_seed149_initial_pos.npy",
-        allow_pickle=True,
-    ).item()
-    lx, ly = layout["x"], layout["y"]
+    # layout = np.load(
+    #     "./IEA_ModelChoice.AWAKEN_OptDriver.SGD_seed149_initial_pos.npy",
+    #     allow_pickle=True,
+    # ).item()
+    # lx, ly = layout["x"], layout["y"]
 
-    seed = int(time.time()) % 42
+    seed = int(time.time()) % 142
     print(f"Using seed: {seed}")
     onp.random.seed(seed)
     T = 100
@@ -381,9 +381,9 @@ def test_rans_surrogate_aep():
     )
     xs, ys = xs.ravel(), ys.ravel()
     # add some noise to positions
-    xs += onp.random.normal(0, 0.1 * turbine.rotor_diameter, xs.shape)
-    ys += onp.random.normal(0, 0.1 * turbine.rotor_diameter, ys.shape)
-    assert xs.shape[0] == (wi * le), xs.shape
+    # xs += onp.random.normal(0, 0.1 * turbine.rotor_diameter, xs.shape)
+    # ys += onp.random.normal(0, 0.1 * turbine.rotor_diameter, ys.shape)
+    # assert xs.shape[0] == (wi * le), xs.shape
 
     model = RANSDeficit()
     turbulence = RANSTurbulence()
@@ -391,8 +391,8 @@ def test_rans_surrogate_aep():
         turbine,
         model,
         turbulence,
-        fpi_damp=0.9,
-        fpi_tol=1e-4,
+        fpi_damp=1.0,
+        fpi_tol=1e-5,
     )
 
     # flow_map, (fx, fy) = sim.flow_map(lx, ly, ti=0.06, wd=270, ws=10.0)
@@ -400,14 +400,17 @@ def test_rans_surrogate_aep():
     # plot_flow_map(fx, fy, flow_map, show=False)
     # import matplotlib.pyplot as plt
     # plt.savefig("rans_surrogate_flow_map_example.png")
-    # exit()
 
     def aep(xx, yy):
         return sim(xx, yy, WSS, WDS, 0.06).aep()  # probabilities=pix_probs
 
-    # aep_value = jax.jit(aep)(jnp.array(lx), jnp.array(ly))  # warm-up
+    # jit_aep = jax.jit(aep)
+    aep_value = aep(jnp.array(xs), jnp.array(ys))  # warm-up
+    print(aep_value)
+    # aep_value = jit_aep(jnp.array(xs), jnp.array(ys))  # warm-up
     # print(aep_value)
-    # exit(0)
+    # exit()
+    return
 
     aep_and_grad = jax.jit(jax.value_and_grad(aep, argnums=(0, 1)))
 
@@ -425,18 +428,18 @@ def test_rans_surrogate_aep():
 
 
 def run_opt(seed=0):
+    from pathlib import Path
+
     import shapely
     from topfarm import TopFarmProblem
-    from topfarm.cost_models.cost_model_wrappers import CostModelComponent
     from topfarm.constraint_components.boundary import XYBoundaryConstraint
     from topfarm.constraint_components.constraint_aggregation import (
         DistanceConstraintAggregation,
     )
     from topfarm.constraint_components.spacing import SpacingConstraint
-    from topfarm.plotting import XYPlotComp
+    from topfarm.cost_models.cost_model_wrappers import CostModelComponent
     from topfarm.easy_drivers import EasySGDDriver
-    from contextlib import redirect_stdout, redirect_stderr
-    from pathlib import Path
+    from topfarm.plotting import XYPlotComp
 
     seed += 42
     print(f"Using seed: {seed}")

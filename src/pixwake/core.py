@@ -17,6 +17,7 @@ import jax.numpy as jnp
 from jax import custom_vjp, vjp
 from jax.lax import while_loop
 from jax.tree_util import register_pytree_node_class
+from jaxopt import AndersonAcceleration
 
 from pixwake.jax_utils import default_float_type, ssqrt
 
@@ -98,6 +99,10 @@ class Turbine:
             A JAX numpy array of the corresponding power outputs.
         """
 
+        interpolatro = interpax.PchipInterpolator(
+            self.power_curve.ws, self.power_curve.values, check=False
+        )
+
         def _interp(
             _ws: jnp.ndarray, _ws_curve: jnp.ndarray, _curve_values: jnp.ndarray
         ) -> jnp.ndarray:
@@ -105,7 +110,7 @@ class Turbine:
 
         if jnp.asarray(self.rotor_diameter).ndim == 0:
             # Single turbine type
-            return jnp.interp(ws, self.power_curve.ws, self.power_curve.values)
+            return interpolatro(ws)
 
         # Multiple turbine types
         if ws.ndim == 1:
@@ -126,7 +131,6 @@ class Turbine:
         Returns:
             A JAX numpy array of the corresponding thrust coefficients.
         """
-
 
         interpolatro = interpax.PchipInterpolator(
             self.ct_curve.ws, self.ct_curve.values, check=False
@@ -677,6 +681,27 @@ class WakeSimulation:
         ti_amb = None if ctx.ti is None else jnp.full(n_turbines, ctx.ti, dtype=fdtype)
         x_guess = (ws_amb, ti_amb)
 
+        aa = AndersonAcceleration(
+            fixed_point_fun=self._solve_farm,
+            history_size=3,
+            ridge=1e-6,
+            tol=1e-3,
+            maxiter=max(n_turbines, 30),
+            jit=False,
+        )
+        res = aa.run(x_guess, ctx)
+
+        def _check_convergence(res, tol):
+            if res.error > tol:
+                raise RuntimeError(
+                    f"Fixed-point iteration did not converge within "
+                    f"{res.iter_num} iterations. Error: {res.error}, "
+                    f"Tolerance: {aa.tol}."
+                )
+
+        jax.debug.callback(_check_convergence, res.state, aa.tol)
+        return res.params
+
         fp_func = (  # fixed_point_debug is not traced and can be used with pydebugger
             fixed_point if self.mapping_strategy != "_manual" else fixed_point_debug
         )
@@ -902,6 +927,7 @@ def fixed_point(
 
         diff = jnp.abs(ws - ws_prev)
         ioff_new = jnp.logical_or(ioff, diff > diff_prev)
+        ioff_new = ioff  # TODO:
 
         return x, x_damped, it + 1, ioff_new, diff
 
