@@ -111,6 +111,7 @@ class Turbine:
         if jnp.asarray(self.rotor_diameter).ndim == 0:
             # Single turbine type
             return interpolatro(ws)
+            # return jnp.interp(ws, self.power_curve.ws, self.power_curve.values)
 
         # Multiple turbine types
         if ws.ndim == 1:
@@ -143,6 +144,7 @@ class Turbine:
 
         if jnp.asarray(self.rotor_diameter).ndim == 0:
             return interpolatro(ws)
+            # return jnp.interp(ws, self.ct_curve.ws, self.ct_curve.values)
 
         # Multiple turbine types
         if ws.ndim == 1:
@@ -683,11 +685,11 @@ class WakeSimulation:
 
         aa = AndersonAcceleration(
             fixed_point_fun=self._solve_farm,
-            history_size=3,
+            history_size=5,
             ridge=1e-6,
             tol=1e-3,
             maxiter=max(n_turbines, 30),
-            jit=False,
+            jit=True,
         )
         res = aa.run(x_guess, ctx)
 
@@ -708,6 +710,10 @@ class WakeSimulation:
         return fp_func(
             self._solve_farm, x_guess, ctx, damp=self.fpi_damp, tol=self.fpi_tol
         )
+
+    @staticmethod
+    def smooth_cutoff(wind_speed, cutin):
+        return jnp.where((wind_speed - 1e-3) < cutin, 0.0, 1.0)
 
     def _solve_farm(
         self, effective: tuple, ctx: SimulationContext
@@ -737,6 +743,9 @@ class WakeSimulation:
                     "Turbulence model provided but ambient TI is None in context."
                 )
             ti_eff_new = self.turbulence(ws_eff_new, ti_eff, ctx)
+
+        alpha = self.smooth_cutoff(ws_eff_new, 4.0)
+        ws_eff_new = alpha * ws_eff_new + (1 - alpha) * ws_eff
 
         output: tuple[jnp.ndarray, jnp.ndarray | None] = (ws_eff_new, ti_eff_new)
         return output
