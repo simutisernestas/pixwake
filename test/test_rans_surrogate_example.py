@@ -346,7 +346,7 @@ def load_opt_site_and_reference_resource():
 
 
 def test_rans_surrogate_aep():
-    CUTOUT_WS = 5.0
+    CUTOUT_WS = 25.0
     CUTIN_WS = 4.0
 
     # site, site_ws, site_wd = load_opt_site_and_reference_resource()
@@ -366,10 +366,14 @@ def test_rans_surrogate_aep():
 
     seed = int(time.time()) % 142
     print(f"Using seed: {seed}")
-    onp.random.seed(seed)
+    onp.random.seed(42)
     T = 100
     WSS = jnp.asarray(onp.random.uniform(CUTIN_WS, CUTOUT_WS, T))
     WDS = jnp.asarray(onp.random.uniform(0, 360, T))
+    # WSS = jnp.asarray([4.96990966796875])
+    # WDS = jnp.asarray([58.039665])
+    # print(WSS)
+    # print(WDS)
     # WSS = pix_ws
     # WDS = pix_wd
 
@@ -609,6 +613,7 @@ def run_opt(seed=0):
 if __name__ == "__main__":
     for _ in range(100):
         test_rans_surrogate_aep()
+        exit()
 
     exit()
     # for i in range(15):

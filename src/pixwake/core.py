@@ -11,13 +11,12 @@ if TYPE_CHECKING:
 from dataclasses import dataclass
 from functools import partial
 
-import interpax
 import jax
 import jax.numpy as jnp
 from jax import custom_vjp, vjp
 from jax.lax import while_loop
 from jax.tree_util import register_pytree_node_class
-from jaxopt import AndersonAcceleration
+from jaxopt import FixedPointIteration
 
 from pixwake.jax_utils import default_float_type, ssqrt
 
@@ -99,9 +98,9 @@ class Turbine:
             A JAX numpy array of the corresponding power outputs.
         """
 
-        interpolatro = interpax.PchipInterpolator(
-            self.power_curve.ws, self.power_curve.values, check=False
-        )
+        # interpolatro = interpax.PchipInterpolator(
+        #     self.power_curve.ws, self.power_curve.values, check=False
+        # )
 
         def _interp(
             _ws: jnp.ndarray, _ws_curve: jnp.ndarray, _curve_values: jnp.ndarray
@@ -110,8 +109,8 @@ class Turbine:
 
         if jnp.asarray(self.rotor_diameter).ndim == 0:
             # Single turbine type
-            return interpolatro(ws)
-            # return jnp.interp(ws, self.power_curve.ws, self.power_curve.values)
+            # return interpolatro(ws)
+            return jnp.interp(ws, self.power_curve.ws, self.power_curve.values)
 
         # Multiple turbine types
         if ws.ndim == 1:
@@ -133,9 +132,9 @@ class Turbine:
             A JAX numpy array of the corresponding thrust coefficients.
         """
 
-        interpolatro = interpax.PchipInterpolator(
-            self.ct_curve.ws, self.ct_curve.values, check=False
-        )
+        # interpolatro = interpax.PchipInterpolator(
+        #     self.ct_curve.ws, self.ct_curve.values, check=False
+        # )
 
         def _interp(
             _ws: jnp.ndarray, _ws_curve: jnp.ndarray, _curve_values: jnp.ndarray
@@ -143,8 +142,8 @@ class Turbine:
             return jnp.interp(_ws, _ws_curve, _curve_values)
 
         if jnp.asarray(self.rotor_diameter).ndim == 0:
-            return interpolatro(ws)
-            # return jnp.interp(ws, self.ct_curve.ws, self.ct_curve.values)
+            # return interpolatro(ws)
+            return jnp.interp(ws, self.ct_curve.ws, self.ct_curve.values)
 
         # Multiple turbine types
         if ws.ndim == 1:
@@ -453,7 +452,7 @@ class WakeSimulation:
         dw, cw = self._get_downwind_crosswind_distances(wd_amb, wt_xs, wt_ys, hh)
         ctx = SimulationContext(turbines, dw, cw, ws_amb, ti_amb)
         sim_func = self.__sim_call_table[self.mapping_strategy]
-        ws_eff, ti_eff = sim_func(ctx)
+        ws_eff, ti_eff, _ = sim_func(ctx)
         return SimulationResult(
             turbines, wt_xs, wt_ys, wd_amb, ws_amb, ws_eff, ti_amb, ti_eff
         )
@@ -681,27 +680,29 @@ class WakeSimulation:
         n_turbines = ctx.dw.shape[0]
         ws_amb = jnp.full(n_turbines, ctx.ws, dtype=fdtype)
         ti_amb = None if ctx.ti is None else jnp.full(n_turbines, ctx.ti, dtype=fdtype)
-        x_guess = (ws_amb, ti_amb)
+        ioff_turbines = jnp.zeros(n_turbines, dtype=float)
+        x_guess = (ws_amb, ti_amb, ioff_turbines)
 
-        aa = AndersonAcceleration(
+        aa = FixedPointIteration(
             fixed_point_fun=self._solve_farm,
-            history_size=5,
-            ridge=1e-6,
-            tol=1e-3,
+            # history_size=2,
+            # ridge=1e-6,
+            # tol=1e-6,
             maxiter=max(n_turbines, 30),
             jit=True,
+            # has_aux=True,
         )
         res = aa.run(x_guess, ctx)
 
-        def _check_convergence(res, tol):
+        def _check_convergence(res, tol, ws):
             if res.error > tol:
                 raise RuntimeError(
                     f"Fixed-point iteration did not converge within "
                     f"{res.iter_num} iterations. Error: {res.error}, "
-                    f"Tolerance: {aa.tol}."
+                    f"Tolerance: {aa.tol}. WS: {ws}"
                 )
 
-        jax.debug.callback(_check_convergence, res.state, aa.tol)
+        jax.debug.callback(_check_convergence, res.state, aa.tol, ctx.ws)
         return res.params
 
         fp_func = (  # fixed_point_debug is not traced and can be used with pydebugger
@@ -733,7 +734,12 @@ class WakeSimulation:
             A tuple with the updated effective wind speed and turbulence
             intensity.
         """
-        ws_eff, ti_eff = effective
+        ws_eff, ti_eff, ioff = effective
+        ioff = (ioff.astype(bool) | (ws_eff < 4.0)).astype(float)
+        # jax.debug.print("ioff_turbines: {}", ioff.sum())
+
+        ws_eff = jnp.where(ioff, 0.0, ws_eff)
+        # ti_eff = jnp.where(ioff, 0.0, ti_eff)
         ws_eff_new, ctx = self.deficit(ws_eff, ti_eff, ctx)
 
         ti_eff_new = ti_eff
@@ -744,10 +750,10 @@ class WakeSimulation:
                 )
             ti_eff_new = self.turbulence(ws_eff_new, ti_eff, ctx)
 
-        alpha = self.smooth_cutoff(ws_eff_new, 4.0)
-        ws_eff_new = alpha * ws_eff_new + (1 - alpha) * ws_eff
+        # alpha = self.smooth_cutoff(ws_eff_new, 4.0)
+        # ws_eff_new = alpha * ws_eff_new + (1 - alpha) * ws_eff
 
-        output: tuple[jnp.ndarray, jnp.ndarray | None] = (ws_eff_new, ti_eff_new)
+        output = (ws_eff_new, ti_eff_new, ioff)
         return output
 
     @staticmethod
