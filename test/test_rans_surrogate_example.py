@@ -142,7 +142,7 @@ class RANSDeficit(WakeDeficit):
     is based on high-fidelity RANS CFD simulations.
     """
 
-    def __init__(self, use_effective_ws=True, use_effective_ti=True, **kwargs) -> None:
+    def __init__(self, use_effective_ws=True, use_effective_ti=False, **kwargs) -> None:
         """Initializes the RANSDeficit model."""
         super().__init__(use_radius_mask=False, **kwargs)
         self.use_effective_ws = use_effective_ws
@@ -366,7 +366,7 @@ def test_rans_surrogate_aep():
 
     seed = int(time.time()) % 142
     print(f"Using seed: {seed}")
-    onp.random.seed(42)
+    onp.random.seed(seed)
     T = 100
     WSS = jnp.asarray(onp.random.uniform(CUTIN_WS, CUTOUT_WS, T))
     WDS = jnp.asarray(onp.random.uniform(0, 360, T))
@@ -408,27 +408,35 @@ def test_rans_surrogate_aep():
     def aep(xx, yy):
         return sim(xx, yy, WSS, WDS, 0.06).aep()  # probabilities=pix_probs
 
-    # jit_aep = jax.jit(aep)
-    aep_value = aep(jnp.array(xs), jnp.array(ys))  # warm-up
-    print(aep_value)
-    # aep_value = jit_aep(jnp.array(xs), jnp.array(ys))  # warm-up
+    # # jit_aep = jax.jit(aep)
+    # aep_value = aep(jnp.array(xs), jnp.array(ys))  # warm-up
     # print(aep_value)
-    # exit()
-    return
+    # # aep_value = jit_aep(jnp.array(xs), jnp.array(ys))  # warm-up
+    # # print(aep_value)
+    # # exit()
+    # return
 
-    aep_and_grad = jax.jit(jax.value_and_grad(aep, argnums=(0, 1)))
+    aep_and_grad = jax.jit(aep, ) # argnums=(0, 1)
+    grad_func = jax.jit(jax.grad(aep, argnums=(0, 1)))
 
     res = aep_and_grad(xs, ys)
+    grad = grad_func(xs, ys)
     block_all(res)
     print("\nRunning JIT; Warm-up complete...\n")
     s = time.time()
     res = aep_and_grad(xs, ys)
     block_all(res)
-    print(f"AEP: {res[0]} in {time.time() - s:.3f} seconds")
+    print(f"AEP: {res} in {time.time() - s:.3f} seconds")
+    s = time.time()
+    grad = grad_func(xs, ys)
+    block_all(grad)
+    print(f"Gradients computed in {time.time() - s:.3f} seconds")
 
-    assert jnp.isfinite(res[0]).all(), "AEP should be finite"
-    assert jnp.isfinite(res[1][0]).all(), "Gradient of x should be finite"
-    assert jnp.isfinite(res[1][1]).all(), "Gradient of y should be finite"
+    # print(f"AEP: {res[0]} in {time.time() - s:.3f} seconds")
+
+    # assert jnp.isfinite(res[0]).all(), "AEP should be finite"
+    # assert jnp.isfinite(res[1][0]).all(), "Gradient of x should be finite"
+    # assert jnp.isfinite(res[1][1]).all(), "Gradient of y should be finite"
 
 
 def run_opt(seed=0):
@@ -613,7 +621,7 @@ def run_opt(seed=0):
 if __name__ == "__main__":
     for _ in range(100):
         test_rans_surrogate_aep()
-        exit()
+        # exit()
 
     exit()
     # for i in range(15):

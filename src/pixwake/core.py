@@ -4,6 +4,8 @@ import hashlib
 import pickle
 from typing import TYPE_CHECKING, Any, Callable
 
+import jaxopt
+
 if TYPE_CHECKING:
     from pixwake.deficit.base import WakeDeficit
     from pixwake.turbulence.base import WakeTurbulence
@@ -17,7 +19,7 @@ from jax import custom_vjp, vjp
 from jax.lax import while_loop
 from jax.tree_util import register_pytree_node_class
 from jaxopt import FixedPointIteration
-
+import interpax
 from pixwake.jax_utils import default_float_type, ssqrt
 
 
@@ -98,9 +100,9 @@ class Turbine:
             A JAX numpy array of the corresponding power outputs.
         """
 
-        # interpolatro = interpax.PchipInterpolator(
-        #     self.power_curve.ws, self.power_curve.values, check=False
-        # )
+        interpolatro = interpax.PchipInterpolator(
+            self.power_curve.ws, self.power_curve.values, check=False
+        )
 
         def _interp(
             _ws: jnp.ndarray, _ws_curve: jnp.ndarray, _curve_values: jnp.ndarray
@@ -132,9 +134,9 @@ class Turbine:
             A JAX numpy array of the corresponding thrust coefficients.
         """
 
-        # interpolatro = interpax.PchipInterpolator(
-        #     self.ct_curve.ws, self.ct_curve.values, check=False
-        # )
+        interpolatro = interpax.PchipInterpolator(
+            self.ct_curve.ws, self.ct_curve.values, check=False
+        )
 
         def _interp(
             _ws: jnp.ndarray, _ws_curve: jnp.ndarray, _curve_values: jnp.ndarray
@@ -685,16 +687,15 @@ class WakeSimulation:
 
         aa = FixedPointIteration(
             fixed_point_fun=self._solve_farm,
-            # history_size=2,
-            # ridge=1e-6,
-            # tol=1e-6,
             maxiter=max(n_turbines, 30),
             jit=True,
-            # has_aux=True,
+            verbose=False,
+            implicit_diff=True,
         )
         res = aa.run(x_guess, ctx)
 
         def _check_convergence(res, tol, ws):
+            # jax.debug.print("Final fixed-point error: {}; Iterations: {}", res.error, res.iter_num)
             if res.error > tol:
                 raise RuntimeError(
                     f"Fixed-point iteration did not converge within "
