@@ -534,8 +534,15 @@ class WakeSimulation:
         cos_a = jnp.cos(wd_rad)
         sin_a = jnp.sin(wd_rad)
         # Result shape: (n_wd, n_turbines, n_turbines)
-        down_wind_d = -(dx * cos_a[:, None, None] + dy * sin_a[:, None, None])
-        horizontal_cross_wind_d = dx * sin_a[:, None, None] - dy * cos_a[:, None, None]
+
+        down_wind_d = -(
+            dx[None, :, :] * cos_a[:, None, None]
+            + dy[None, :, :] * sin_a[:, None, None]
+        )
+        horizontal_cross_wind_d = (
+            dx[None, :, :] * sin_a[:, None, None]
+            - dy[None, :, :] * cos_a[:, None, None]
+        )
         cross_wind_d = ssqrt(horizontal_cross_wind_d**2 + dz[None, :, :] ** 2)
         return down_wind_d, cross_wind_d
 

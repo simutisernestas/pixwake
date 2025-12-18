@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 import jax.numpy as jnp
 
 from pixwake.core import SimulationContext
+from pixwake.rotor_avg import RotorAvg
 
 
 class Superposition:
@@ -51,6 +52,21 @@ class SqrMaxSum(Superposition):
         return jnp.sqrt(ambient**2 + max_added**2)
 
 
+class LinearSum(Superposition):
+    def __call__(self, ambient: jnp.ndarray, added: jnp.ndarray) -> jnp.ndarray:
+        """Combines ambient and added quantities using a linear sum.
+
+        Args:
+            ambient: A JAX numpy array of the ambient quantity.
+            added: A JAX numpy array of the added quantity from wakes.
+
+        Returns:
+            A JAX numpy array of the effective quantity.
+        """
+        sum_added = jnp.sum(added, axis=1)
+        return ambient + sum_added
+
+
 @dataclass
 class WakeTurbulence:
     """Base class for wake-added turbulence models.
@@ -63,7 +79,8 @@ class WakeTurbulence:
             wake-added turbulence.
     """
 
-    superposition: Superposition = field(default_factory=SqrMaxSum)
+    superposition: Superposition = field(default_factory=LinearSum)
+    rotor_avg_model: RotorAvg | None = None
 
     def __call__(
         self,
@@ -87,8 +104,20 @@ class WakeTurbulence:
         """
         assert ctx.wake_radius is not None
 
-        ti_added_m = self._added_turbulence(ws_eff, ti_eff, ctx)
-        inside_wake = (ctx.dw > 0.0) & (jnp.abs(ctx.cw) < ctx.wake_radius)
+        # ws_deficit_m = (
+        #     self.rotor_avg_model(self._deficit, ws_eff, ti_eff, ctx)
+        #     if self.rotor_avg_model
+        #     else self._deficit(ws_eff, ti_eff, ctx)
+        # )
+
+        ti_added_m = (
+            self.rotor_avg_model(self._added_turbulence, ws_eff, ti_eff, ctx)
+            if self.rotor_avg_model
+            else self._added_turbulence(ws_eff, ti_eff, ctx)
+        )
+
+        # ti_added_m = self._added_turbulence(ws_eff, ti_eff, ctx)
+        # inside_wake = (ctx.dw > 0.0) & (jnp.abs(ctx.cw) < ctx.wake_radius)
         inside_wake = jnp.ones_like(ctx.dw, dtype=bool)
         ti_added_m = jnp.where(inside_wake, ti_added_m, 0.0)
 

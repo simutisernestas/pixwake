@@ -73,10 +73,10 @@ class WakeDeficit(ABC):
             in_wake_mask &= jnp.abs(ctx.cw) < ctx.wake_radius
 
         # superpose deficits in quadrature
-        ws_deficit = ssqrt(
-            jnp.sum(jnp.where(in_wake_mask, ws_deficit_m**2, 0.0), axis=1)
-        )
-        # does this correspond to linear sum ?
+        # ws_deficit = ssqrt(
+        #     jnp.sum(jnp.where(in_wake_mask, ws_deficit_m**2, 0.0), axis=1)
+        # )
+        # does this correspond to linear sum ? yes !
         ws_deficit = jnp.sum(jnp.where(in_wake_mask, ws_deficit_m, 0.0), axis=1)
         return jnp.maximum(0.0, ctx.ws - ws_deficit), ctx
 

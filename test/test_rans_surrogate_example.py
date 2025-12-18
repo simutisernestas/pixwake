@@ -3,6 +3,8 @@ import sys
 
 import pytest
 
+from pixwake.rotor_avg import CGIRotorAvg
+
 if sys.version_info >= (3, 14):
     pytest.skip("Flax not compatible with Python 3.14+", allow_module_level=True)
 try:
@@ -234,6 +236,7 @@ class RANSTurbulence(WakeTurbulence):
             & ((y_d > 1e-6) | (y_d < -1e-6))
         )
         ti_input = ti_eff if ti_eff is not None else ctx.ti
+        # ti_input = ctx.ti
 
         added_turbulence = _predict(
             self.turbulence_model,
@@ -391,13 +394,7 @@ def test_rans_surrogate_aep():
 
     model = RANSDeficit()
     turbulence = RANSTurbulence()
-    sim = WakeSimulation(
-        turbine,
-        model,
-        turbulence,
-        fpi_damp=1.0,
-        fpi_tol=1e-5,
-    )
+    sim = WakeSimulation(turbine, model, turbulence)
 
     # flow_map, (fx, fy) = sim.flow_map(lx, ly, ti=0.06, wd=270, ws=10.0)
     # from pixwake.plot import plot_flow_map
@@ -416,7 +413,9 @@ def test_rans_surrogate_aep():
     # # exit()
     # return
 
-    aep_and_grad = jax.jit(aep, ) # argnums=(0, 1)
+    aep_and_grad = jax.jit(
+        aep,
+    )  # argnums=(0, 1)
     grad_func = jax.jit(jax.grad(aep, argnums=(0, 1)))
 
     res = aep_and_grad(xs, ys)
@@ -480,13 +479,7 @@ def run_opt(seed=0):
     turbine = build_dtu10mw_wt()
     model = RANSDeficit()
     turbulence = RANSTurbulence()
-    sim = WakeSimulation(
-        turbine,
-        model,
-        turbulence,
-        fpi_damp=1.0,
-        fpi_tol=1e-6,
-    )
+    sim = WakeSimulation(turbine, model, turbulence)
     grad_func = jax.jit(
         jax.grad(
             lambda xx, yy, wsx, wdx: sim(xx, yy, wsx, wdx, ti_amb=TI_VALUE).aep(),
@@ -618,14 +611,144 @@ def run_opt(seed=0):
     )
 
 
-if __name__ == "__main__":
-    for _ in range(100):
-        test_rans_surrogate_aep()
-        # exit()
+import matplotlib.pyplot as plt
+from glob import glob
+import xarray as xr
 
+
+def run_flow_cases():
+    turbine = build_dtu10mw_wt()
+    # rotor_avg_model=CGIRotorAvg(4)
+    model = RANSDeficit()
+    turbulence = RANSTurbulence()
+    wfm = WakeSimulation(turbine, model, turbulence)
+
+    RANS_DATA_PATHS = [
+        y for y in glob(os.path.join("rans-data", "*.nc")) if "aero" not in y
+    ]
+
+    # flow_map, (fx, fy) = sim.flow_map(lx, ly, ti=0.06, wd=270, ws=10.0)
+    # from pixwake.plot import plot_flow_map
+    # plot_flow_map(fx, fy, flow_map, show=False)
+    # import matplotlib.pyplot as plt
+    # plt.savefig("rans_surrogate_flow_map_example.png")
+
+    @jax.jit
+    def _process_flow_case(ws, wd, ti, wtx, wty, fm_x, fm_y):
+        effective_ws, _ = wfm.flow_map(
+            wtx,
+            wty,
+            wd=270,
+            ws=ws,
+            ti=ti,
+            fm_x=fm_x,
+            fm_y=fm_y,
+        )
+        return {
+            "wd": wd,
+            "TI": ti,
+            "ws": ws,
+            "ws_eff": effective_ws,
+        }
+
+    for flowdb_path in RANS_DATA_PATHS:
+        rans_dataset = xr.load_dataset(flowdb_path)
+        pywake_res: xr.DataArray = rans_dataset.copy()
+        pywake_res["U"] = pywake_res["U"] * 0
+        pywake_res = pywake_res.sel(z=turbine.hub_height)
+
+        flow_cases = [
+            (ws, wd, ti)
+            for ti in rans_dataset["TI"].values
+            for wd in rans_dataset["wd"].values
+            for ws in rans_dataset["ws"].values
+        ]
+        fm_x, fm_y = jnp.meshgrid(
+            rans_dataset["x"].values,
+            rans_dataset["y"].values,
+        )
+        fm_x, fm_y = fm_x.ravel(), fm_y.ravel()
+
+        def block(x):
+            x["ws_eff"].block_until_ready()
+            return x
+
+        results = [
+            block(
+                _process_flow_case(
+                    ws,
+                    wd,
+                    ti,
+                    rans_dataset.sel(wd=wd)["wt_x"].values,
+                    rans_dataset.sel(wd=wd)["wt_y"].values,
+                    fm_x,
+                    fm_y,
+                )
+            )
+            for ws, wd, ti in flow_cases
+        ]
+
+        for res in results:
+            pywake_res["U"].loc[
+                {
+                    "ws": float(res["ws"]),
+                    "wd": float(res["wd"]),
+                    "TI": round(float(res["TI"]), 3),
+                }
+            ] = (
+                res["ws_eff"]
+                .reshape((rans_dataset["y"].size, rans_dataset["x"].size))
+                .T
+            )
+
+        # pywake_res.to_netcdf(
+        #     Path(args.prefix).joinpath(Path(flowdb_path.split("/")[-1]))
+        # )
+
+        plotws = 14.0
+        plt.figure()
+        fig_name = flowdb_path.split("/")[-1].split(".")[0]
+        pywake_res["U"].sel(TI=0.1, wd=270, ws=plotws).plot(x="x", y="y")
+        plt.axis("equal")
+        plt.savefig(f"{fig_name}_pywake.png")
+
+        plt.figure()
+        (
+            rans_dataset["U"].sel(TI=0.1, wd=270, ws=plotws, z=turbine.hub_height)
+            * plotws
+        ).plot(x="x", y="y")
+        plt.axis("equal")
+        plt.savefig(f"{fig_name}_rans.png")
+
+        plt.figure()
+        (
+            pywake_res["U"].sel(TI=0.1, wd=270, ws=plotws)
+            - (
+                rans_dataset["U"].sel(TI=0.1, wd=270, ws=plotws, z=turbine.hub_height)
+                * plotws
+            )
+        ).plot(x="x", y="y", cmap="RdBu_r")
+        plt.axis("equal")
+        plt.savefig(f"{fig_name}_error.png")
+        # plt.close("all")
+        # plt.show()
+
+        rans_dataset["U"] = rans_dataset["U"] * rans_dataset["ws"]
+        print(
+            f"MAE for {flowdb_path.split('/')[-1]}: {np.abs(pywake_res['U'].values - rans_dataset['U'].sel(z=turbine.hub_height).values).mean()}"
+        )
+
+
+if __name__ == "__main__":
+    # run_flow_cases()
+    # exit()
+    # for _ in range(100):
+    #     test_rans_surrogate_aep()
+    #     # exit()
+
+    for i in range(15):
+        run_opt(seed=i)
     exit()
-    # for i in range(15):
-    #     run_opt(seed=i)
 
     for i in range(16):
         if i == 0:
@@ -653,13 +776,7 @@ if __name__ == "__main__":
         turbine = build_dtu10mw_wt()
         model = RANSDeficit()
         turbulence = RANSTurbulence()
-        sim = WakeSimulation(
-            turbine,
-            model,
-            turbulence,
-            fpi_damp=1.0,
-            fpi_tol=1e-4,
-        )
+        sim = WakeSimulation(turbine, model, turbulence)
 
         aep, _ = sim.aep_gradients_chunked(
             jnp.array(lx),
