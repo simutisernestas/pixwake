@@ -20,7 +20,7 @@ class Superposition:
 
     @abstractmethod
     def __call__(
-        self, ambient: jnp.ndarray, added: jnp.ndarray
+        self, ambient: jnp.ndarray, added: jnp.ndarray, subtract: bool = True
     ) -> jnp.ndarray:  # pragma: no cover
         """Combines ambient and added quantities.
 
@@ -42,7 +42,9 @@ class SqrMaxSum(Superposition):
     `sqrt(ambient^2 + max(added)^2)`.
     """
 
-    def __call__(self, ambient: jnp.ndarray, added: jnp.ndarray) -> jnp.ndarray:
+    def __call__(
+        self, ambient: jnp.ndarray, added: jnp.ndarray, _: bool = True
+    ) -> jnp.ndarray:
         """Combines ambient and added quantities.
 
         Args:
@@ -64,7 +66,9 @@ class SquaredSum(Superposition):
     for wake deficit models.
     """
 
-    def __call__(self, ambient: jnp.ndarray, added: jnp.ndarray) -> jnp.ndarray:
+    def __call__(
+        self, ambient: jnp.ndarray, added: jnp.ndarray, subtract: bool = True
+    ) -> jnp.ndarray:
         """Combines values in quadrature (square root of sum of squares).
 
         Args:
@@ -76,8 +80,8 @@ class SquaredSum(Superposition):
         Returns:
             A JAX numpy array of the total deficit with shape (n_receivers,).
         """
-        _ = ambient  # unused for deficit superposition
-        return ssqrt(jnp.sum(added**2, axis=1))
+        sign = -1 if subtract else 1
+        return ambient + sign * ssqrt(jnp.sum(added**2, axis=1))
 
 
 class LinearSum(Superposition):
@@ -88,7 +92,9 @@ class LinearSum(Superposition):
     useful for certain applications.
     """
 
-    def __call__(self, ambient: jnp.ndarray, added: jnp.ndarray) -> jnp.ndarray:
+    def __call__(
+        self, ambient: jnp.ndarray, added: jnp.ndarray, subtract: bool = True
+    ) -> jnp.ndarray:
         """Combines values by linear summation.
 
         Args:
@@ -100,5 +106,5 @@ class LinearSum(Superposition):
         Returns:
             A JAX numpy array of the total with shape (n_receivers,).
         """
-        _ = ambient  # unused for linear sum superposition
-        return jnp.sum(added, axis=1)
+        sign = -1 if subtract else 1
+        return ambient + sign * jnp.sum(added, axis=1)

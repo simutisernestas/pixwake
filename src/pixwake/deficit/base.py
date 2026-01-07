@@ -83,8 +83,8 @@ class WakeDeficit(ABC):
 
         # Apply mask and use configurable superposition
         masked_deficit = jnp.where(in_wake_mask, ws_deficit_m, 0.0)
-        ws_deficit = self.superposition(ctx.ws, masked_deficit)
-        return jnp.maximum(0.0, ctx.ws - ws_deficit), ctx
+        new_eff_ws = self.superposition(ctx.ws, masked_deficit)
+        return jnp.maximum(0.0, new_eff_ws), ctx
 
     @abstractmethod
     def _deficit(
