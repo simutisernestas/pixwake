@@ -1,5 +1,3 @@
-"""Tests for superposition models in deficit and turbulence modules."""
-
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -44,15 +42,15 @@ class TestSuperpositionClasses:
 class TestDeficitSuperposition:
     """Tests for superposition in wake deficit models."""
 
-    def test_noj_default_superposition_is_squared_sum(self, turbine):
+    def test_noj_default_superposition_is_squared_sum(self):
         model = NOJDeficit()
         assert isinstance(model.superposition, SquaredSum)
 
-    def test_niayifar_default_superposition_is_squared_sum(self, turbine):
+    def test_niayifar_default_superposition_is_squared_sum(self):
         model = NiayifarGaussianDeficit()
         assert isinstance(model.superposition, SquaredSum)
 
-    def test_noj_custom_superposition(self, turbine):
+    def test_noj_custom_superposition(self):
         custom_superposition = LinearSum()
         model = NOJDeficit(superposition=custom_superposition)
         assert model.superposition is custom_superposition
@@ -116,3 +114,7 @@ class TestTurbulenceSuperposition:
         # (depends on the configuration, but should differ in general)
         assert result_default.effective_ti is not None
         assert result_custom.effective_ti is not None
+
+        assert not jnp.allclose(
+            result_default.effective_ti, result_custom.effective_ti
+        ), "Custom superposition should change the turbulence results"

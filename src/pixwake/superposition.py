@@ -1,9 +1,3 @@
-"""Superposition models for combining wake effects.
-
-This module provides different strategies for combining ambient and wake-added
-quantities, such as velocity deficits and turbulence intensities.
-"""
-
 from abc import abstractmethod
 
 import jax.numpy as jnp
