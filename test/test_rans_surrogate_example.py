@@ -590,8 +590,6 @@ def run_opt(seed=0):
     )
     _, state, rec = tf.optimize()
 
-    state = {"x": x0, "y": y0}  # dummy for testing
-
     optimized_positions = {"x": state["x"], "y": state["y"]}
     np.save(
         Path(OPTDIR).joinpath(
@@ -746,17 +744,18 @@ if __name__ == "__main__":
     #     test_rans_surrogate_aep()
     #     # exit()
 
-    for i in range(15):
-        run_opt(seed=i)
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--seed", type=int, default=0)
+    args = parser.parse_args()
+    np.random.seed(args.seed)
+    run_opt(seed=args.seed - 1)
     exit()
 
     for i in range(16):
-        if i == 0:
-            continue
-        if i == 2:
-            exit(0)
         path = (
-            "./IEA_ModelChoice.AWAKEN_OptDriver.SGD_seed149_initial_pos.npy"
+            "./IEA_ModelChoice.AWAKEN_OptDriver.SGD_seed149_opt_pos.npy"
             if i == 0
             else f"./opt_results/IEA_pixwake_surrogate_SGD_seed{42 + i - 1}_opt_pos.npy"
         )
@@ -790,5 +789,3 @@ if __name__ == "__main__":
         with open("evallog.txt", "a") as file:
             print(f"Seed {i} -> AEP: {aep}", file=file)
             print(f"Seed {i} -> AEP: {aep}")
-
-    # TODO: eval could be with chunked grad/aep to run on GPU with limited memory
