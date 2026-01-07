@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 from pixwake import Curve, Turbine, WakeSimulation
-from pixwake.deficit import NOJDeficit, NiayifarGaussianDeficit
+from pixwake.deficit import NiayifarGaussianDeficit, NOJDeficit
 from pixwake.superposition import SqrMaxSum, SquaredSum, Superposition
 from pixwake.turbulence.crespo import CrespoHernandez
 

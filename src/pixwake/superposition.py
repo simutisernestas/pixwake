@@ -57,15 +57,15 @@ class SqrMaxSum(Superposition):
 
 
 class SquaredSum(Superposition):
-    """Implements the square-root-of-sum-of-squares superposition.
+    """Implements superposition by combining values in quadrature.
 
-    This model combines deficits in quadrature using the formula:
-    `sqrt(sum(added^2))`. This is the default superposition for wake deficit
-    models.
+    This model computes the square root of the sum of squared contributions
+    using the formula: `sqrt(sum(added^2))`. This is the default superposition
+    for wake deficit models.
     """
 
     def __call__(self, ambient: jnp.ndarray, added: jnp.ndarray) -> jnp.ndarray:
-        """Combines deficit values in quadrature.
+        """Combines values in quadrature (square root of sum of squares).
 
         Args:
             ambient: A JAX numpy array of the ambient quantity (unused for
