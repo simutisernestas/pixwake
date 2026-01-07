@@ -2,8 +2,8 @@ from abc import ABC, abstractmethod
 
 import jax.numpy as jnp
 
-from pixwake.jax_utils import ssqrt
 from pixwake.rotor_avg import RotorAvg
+from pixwake.superposition import SquaredSum, Superposition
 
 from ..core import SimulationContext
 
@@ -16,12 +16,17 @@ class WakeDeficit(ABC):
     turbines. The main logic for superposition of deficits is implemented in the
     `__call__` method, which in turn calls the `compute` method that must be
     implemented by subclasses.
+
+    Attributes:
+        superposition: A `Superposition` model to combine wake deficits from
+            multiple upstream turbines.
     """
 
     def __init__(
         self,
         use_radius_mask: bool = True,
         rotor_avg_model: RotorAvg | None = None,
+        superposition: Superposition | None = None,
     ) -> None:
         """Initializes the `WakeDeficit` model.
 
@@ -29,9 +34,14 @@ class WakeDeficit(ABC):
             use_radius_mask: A boolean indicating whether to use a radius-based
                 mask to exclude points that are clearly outside the wake.
             rotor_avg_model: An optional rotor averaging model.
+            superposition: A `Superposition` model to combine wake deficits.
+                Defaults to `SquaredSum` if not provided.
         """
         self.use_radius_mask = use_radius_mask
         self.rotor_avg_model = rotor_avg_model
+        self.superposition = (
+            superposition if superposition is not None else SquaredSum()
+        )
 
     def __call__(
         self,
@@ -42,8 +52,8 @@ class WakeDeficit(ABC):
         """Calculates the effective wind speed after considering wake effects.
 
         This method orchestrates the wake deficit calculation by calling the
-        `compute` method to get the deficit from each turbine and then
-        superposing them in quadrature to find the total deficit at each point.
+        `_deficit` method to get the deficit from each turbine and then
+        using the configured superposition model to combine them.
 
         If a `rotor_avg_model` is provided, it will be used to compute the
         rotor-averaged deficit.
@@ -71,11 +81,10 @@ class WakeDeficit(ABC):
         if self.use_radius_mask:
             in_wake_mask &= jnp.abs(ctx.cw) < ctx.wake_radius
 
-        # superpose deficits in quadrature
-        ws_deficit = ssqrt(
-            jnp.sum(jnp.where(in_wake_mask, ws_deficit_m**2, 0.0), axis=1)
-        )
-        return jnp.maximum(0.0, ctx.ws - ws_deficit), ctx
+        # Apply mask and use configurable superposition
+        masked_deficit = jnp.where(in_wake_mask, ws_deficit_m, 0.0)
+        new_eff_ws = self.superposition(ctx.ws, masked_deficit)
+        return jnp.maximum(0.0, new_eff_ws), ctx
 
     @abstractmethod
     def _deficit(

@@ -4,51 +4,7 @@ from dataclasses import dataclass, field
 import jax.numpy as jnp
 
 from pixwake.core import SimulationContext
-
-
-class Superposition:
-    """Base class for superposition models.
-
-    These models define how to combine ambient and wake-added quantities, such
-    as turbulence intensity.
-    """
-
-    @abstractmethod
-    def __call__(
-        self, ambient: jnp.ndarray, added: jnp.ndarray
-    ) -> jnp.ndarray:  # pragma: no cover
-        """Combines ambient and added quantities.
-
-        Args:
-            ambient: A JAX numpy array of the ambient quantity.
-            added: A JAX numpy array of the added quantity from wake effects.
-
-        Returns:
-            A JAX numpy array of the effective (combined) quantity.
-        """
-        raise NotImplementedError
-
-
-class SqrMaxSum(Superposition):
-    """Implements the square-root-of-sum-of-squares superposition.
-
-    This model takes the maximum added contribution from all sources and
-    combines it with the ambient value using the formula:
-    `sqrt(ambient^2 + max(added)^2)`.
-    """
-
-    def __call__(self, ambient: jnp.ndarray, added: jnp.ndarray) -> jnp.ndarray:
-        """Combines ambient and added quantities.
-
-        Args:
-            ambient: A JAX numpy array of the ambient quantity.
-            added: A JAX numpy array of the added quantity from wakes.
-
-        Returns:
-            A JAX numpy array of the effective quantity.
-        """
-        max_added = jnp.max(added, axis=1)
-        return jnp.sqrt(ambient**2 + max_added**2)
+from pixwake.superposition import SqrMaxSum, Superposition
 
 
 @dataclass
