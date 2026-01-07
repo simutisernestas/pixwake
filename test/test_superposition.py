@@ -6,15 +6,8 @@ import pytest
 
 from pixwake import Curve, Turbine, WakeSimulation
 from pixwake.deficit import NiayifarGaussianDeficit, NOJDeficit
-from pixwake.superposition import SqrMaxSum, SquaredSum, Superposition
+from pixwake.superposition import LinearSum, SqrMaxSum, SquaredSum
 from pixwake.turbulence.crespo import CrespoHernandez
-
-
-class LinearSum(Superposition):
-    """Simple linear sum superposition for testing."""
-
-    def __call__(self, ambient: jnp.ndarray, added: jnp.ndarray) -> jnp.ndarray:
-        return jnp.sum(added, axis=1)
 
 
 @pytest.fixture(scope="module")

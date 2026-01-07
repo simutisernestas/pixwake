@@ -78,3 +78,27 @@ class SquaredSum(Superposition):
         """
         _ = ambient  # unused for deficit superposition
         return ssqrt(jnp.sum(added**2, axis=1))
+
+
+class LinearSum(Superposition):
+    """Implements superposition by linear summation.
+
+    This model computes the simple sum of all contributions using the formula:
+    `sum(added)`. This is a straightforward superposition model that can be
+    useful for certain applications.
+    """
+
+    def __call__(self, ambient: jnp.ndarray, added: jnp.ndarray) -> jnp.ndarray:
+        """Combines values by linear summation.
+
+        Args:
+            ambient: A JAX numpy array of the ambient quantity (unused for
+                this superposition, but included for API consistency).
+            added: A JAX numpy array of the values from each upstream
+                turbine with shape (n_receivers, n_sources).
+
+        Returns:
+            A JAX numpy array of the total with shape (n_receivers,).
+        """
+        _ = ambient  # unused for linear sum superposition
+        return jnp.sum(added, axis=1)
