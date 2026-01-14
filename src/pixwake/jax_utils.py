@@ -2,6 +2,10 @@ import jax
 import jax.numpy as jnp
 from jax import config as jcfg
 
+# Pre-computed epsilon values to avoid repeated jnp.finfo() calls
+_EPS_FLOAT32: float = float(jnp.finfo(jnp.float32).eps)
+_EPS_FLOAT64: float = float(jnp.finfo(jnp.float64).eps)
+
 
 def _is_64bit_enabled() -> bool:
     """Checks if JAX is configured to use 64-bit floating-point numbers.
@@ -15,7 +19,7 @@ def _is_64bit_enabled() -> bool:
     return getattr(jcfg, "jax_enable_x64", False)
 
 
-def get_float_eps() -> jnp.floating:
+def get_float_eps() -> float:
     """Returns the machine epsilon for the current JAX float precision.
 
     This function provides the smallest number such that `1.0 + eps != 1.0`
@@ -25,11 +29,7 @@ def get_float_eps() -> jnp.floating:
     Returns:
         The machine epsilon for the current JAX float type.
     """
-    return (
-        jnp.finfo(jnp.float64).eps
-        if _is_64bit_enabled()
-        else jnp.finfo(jnp.float32).eps
-    )
+    return _EPS_FLOAT64 if _is_64bit_enabled() else _EPS_FLOAT32
 
 
 def default_float_type() -> jnp.dtype:
@@ -45,5 +45,9 @@ def default_float_type() -> jnp.dtype:
 
 
 def ssqrt(x: jax.Array) -> jax.Array:
-    """Gradient-stable square root function."""
-    return jnp.sqrt(x + get_float_eps())
+    """Gradient-stable square root function.
+
+    Uses jnp.maximum instead of addition for better numerical stability
+    with negative inputs (which can occur due to floating-point errors).
+    """
+    return jnp.sqrt(jnp.maximum(x, get_float_eps()))

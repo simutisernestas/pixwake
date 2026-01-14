@@ -66,6 +66,7 @@ class Turbine:
     power_curve: Curve
     ct_curve: Curve
     type_id: int | None = None
+    _is_single_type: bool | None = None  # Cached flag for single vs multi turbine
 
     @property
     def __type_id(self) -> int:
@@ -86,6 +87,13 @@ class Turbine:
     def __post_init__(self) -> None:
         if self.type_id is None:
             object.__setattr__(self, "type_id", self.__type_id)
+        # Cache the single-type check to avoid repeated jnp.asarray calls
+        if self._is_single_type is None:
+            is_single = (
+                not hasattr(self.rotor_diameter, "ndim")
+                or jnp.asarray(self.rotor_diameter).ndim == 0
+            )
+            object.__setattr__(self, "_is_single_type", is_single)
 
     def power(self, ws: jnp.ndarray) -> jnp.ndarray:
         """Calculates the turbine's power output for given wind speeds.
@@ -96,17 +104,16 @@ class Turbine:
         Returns:
             A JAX numpy array of the corresponding power outputs.
         """
+        if self._is_single_type:
+            # Single turbine type - direct interpolation
+            return jnp.interp(ws, self.power_curve.ws, self.power_curve.values)
 
+        # Multiple turbine types - need vectorized interpolation
         def _interp(
             _ws: jnp.ndarray, _ws_curve: jnp.ndarray, _curve_values: jnp.ndarray
         ) -> jnp.ndarray:
             return jnp.interp(_ws, _ws_curve, _curve_values)
 
-        if jnp.asarray(self.rotor_diameter).ndim == 0:
-            # Single turbine type
-            return jnp.interp(ws, self.power_curve.ws, self.power_curve.values)
-
-        # Multiple turbine types
         if ws.ndim == 1:
             return jax.vmap(_interp, in_axes=(0, 0, 0))(
                 ws, self.power_curve.ws, self.power_curve.values
@@ -125,17 +132,16 @@ class Turbine:
         Returns:
             A JAX numpy array of the corresponding thrust coefficients.
         """
+        if self._is_single_type:
+            # Single turbine type - direct interpolation
+            return jnp.interp(ws, self.ct_curve.ws, self.ct_curve.values)
 
+        # Multiple turbine types - need vectorized interpolation
         def _interp(
             _ws: jnp.ndarray, _ws_curve: jnp.ndarray, _curve_values: jnp.ndarray
         ) -> jnp.ndarray:
             return jnp.interp(_ws, _ws_curve, _curve_values)
 
-        if jnp.asarray(self.rotor_diameter).ndim == 0:
-            # Single turbine type
-            return jnp.interp(ws, self.ct_curve.ws, self.ct_curve.values)
-
-        # Multiple turbine types
         if ws.ndim == 1:
             return jax.vmap(_interp, in_axes=(0, 0, 0))(
                 ws, self.ct_curve.ws, self.ct_curve.values
@@ -152,12 +158,13 @@ class Turbine:
             self.power_curve,
             self.ct_curve,
         )
-        aux_data = (self.type_id,)
+        aux_data = (self.type_id, self._is_single_type)
         return children, aux_data
 
     @classmethod
     def tree_unflatten(cls, aux_data: tuple, children: tuple) -> Turbine:
-        return cls(*(*children, aux_data[0]))
+        type_id, is_single_type = aux_data
+        return cls(*children, type_id=type_id, _is_single_type=is_single_type)
 
     @classmethod
     def _from_types(
@@ -188,6 +195,7 @@ class Turbine:
             power_curve=_construct_stacked_curve("power_curve"),
             ct_curve=_construct_stacked_curve("ct_curve"),
             type_id=-1,  # no type for aggregated turbines
+            _is_single_type=False,  # explicitly mark as multi-turbine
         )
 
 
@@ -516,9 +524,11 @@ class WakeSimulation:
         dx = xs_r[:, None] - xs_s[None, :]
         dy = ys_r[:, None] - ys_s[None, :]
         dz = zs_r[:, None] - zs_s[None, :]
-        wd_rad = jnp.deg2rad((270.0 - wd + 180.0) % 360.0)
-        cos_a = jnp.cos(wd_rad)
-        sin_a = jnp.sin(wd_rad)
+        # Optimized angle calculation: cos(450° - wd) = sin(wd), sin(450° - wd) = cos(wd)
+        # This avoids the modulo operation and extra arithmetic
+        wd_rad = jnp.deg2rad(wd)
+        cos_a = jnp.sin(wd_rad)  # equivalent to cos((450 - wd) % 360)
+        sin_a = jnp.cos(wd_rad)  # equivalent to sin((450 - wd) % 360)
         # Result shape: (n_wd, n_turbines, n_turbines)
         down_wind_d = -(dx * cos_a[:, None, None] + dy * sin_a[:, None, None])
         horizontal_cross_wind_d = dx * sin_a[:, None, None] - dy * cos_a[:, None, None]
@@ -864,23 +874,37 @@ def fixed_point(
         The fixed point as a tuple of (wind_speed, turbulence_intensity) with the
         same structure as `x_guess`.
     """
-    max_iter = max(20, len(jnp.atleast_1d(jax.tree.leaves(x_guess)[0])))
+    # Get array size from first leaf of x_guess
+    # x_guess can be a tuple (ws_array, ti_array_or_none) or a scalar for general use
+    first_leaf = x_guess[0] if isinstance(x_guess, tuple) else x_guess
+    first_leaf_arr = jnp.atleast_1d(first_leaf)
+    max_iter = max(20, first_leaf_arr.size)
 
     def cond_fun(carry: tuple) -> jnp.ndarray:
         x_prev, x, it = carry
+        # Extract wind speed component for convergence check
         ws_prev = x_prev[0] if isinstance(x_prev, tuple) else x_prev
         ws = x[0] if isinstance(x, tuple) else x
         tol_cond = jnp.max(jnp.abs(ws_prev - ws)) > tol
         iter_cond = it < max_iter
         return jnp.logical_and(tol_cond, iter_cond)
 
-    def body_fun(carry: tuple) -> tuple:
-        _, x, it = carry
-        x_new = f(x, ctx)
-        x_damped = jax.tree.map(lambda n, o: damp * n + (1 - damp) * o, x_new, x)
-        return x, x_damped, it + 1
+    # Optimize for common case where damp=1.0 (no damping)
+    if damp == 1.0:
 
-    _, x_star, it = while_loop(cond_fun, body_fun, (x_guess, f(x_guess, ctx), 0))
+        def body_fun(carry: tuple) -> tuple:
+            _, x, it = carry
+            x_new = f(x, ctx)
+            return x, x_new, it + 1
+    else:
+
+        def body_fun(carry: tuple) -> tuple:
+            _, x, it = carry
+            x_new = f(x, ctx)
+            x_damped = jax.tree.map(lambda n, o: damp * n + (1 - damp) * o, x_new, x)
+            return x, x_damped, it + 1
+
+    _, x_star, _ = while_loop(cond_fun, body_fun, (x_guess, f(x_guess, ctx), 0))
     return x_star
 
 
