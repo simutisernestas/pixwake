@@ -497,13 +497,14 @@ class WakeSimulation:
         assert ws_amb.shape == wd.shape
         assert len(ws_amb.shape) == 1
 
+        ti_arr: jnp.ndarray | None = None
         if ti is not None:
-            ti = self._atleast_1d_jax(ti)
-            if ti.size == 1:
-                ti = jnp.full_like(ws_amb, ti)
-            assert ti.shape == ws_amb.shape
+            ti_arr = self._atleast_1d_jax(ti)
+            if ti_arr.size == 1:
+                ti_arr = jnp.full_like(ws_amb, ti_arr)
+            assert ti_arr.shape == ws_amb.shape
 
-        return wt_xs, wt_ys, ws_amb, wd, ti
+        return wt_xs, wt_ys, ws_amb, wd, ti_arr
 
     def _get_downwind_crosswind_distances(
         self,

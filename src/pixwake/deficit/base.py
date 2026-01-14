@@ -48,6 +48,7 @@ class WakeDeficit(ABC):
         ws_eff: jnp.ndarray,
         ti_eff: jnp.ndarray | None,
         ctx: SimulationContext,
+        wake_radius_for_exclude: jnp.ndarray | None = None,
     ) -> tuple[jnp.ndarray, SimulationContext]:
         """Calculates the effective wind speed after considering wake effects.
 
@@ -64,6 +65,9 @@ class WakeDeficit(ABC):
             ti_eff: An optional JAX numpy array of the effective turbulence
                 intensities at each turbine.
             ctx: The simulation context.
+            wake_radius_for_exclude: Optional wake radius from wake model, used
+                by blockage models to determine wake exclusion zones. Ignored
+                by standard wake deficit models.
 
         Returns:
             A tuple containing the updated effective wind speeds and the
