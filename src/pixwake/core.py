@@ -367,8 +367,9 @@ class WakeSimulation:
             turbulence: An optional `WakeTurbulence` model to calculate the
                 added turbulence.
             blockage: An optional blockage model (e.g., SelfSimilarityBlockageDeficit)
-                to calculate the induction/blockage effects. Blockage is applied before
-                wake deficit to model the pressure field around rotors.
+                to calculate the induction/blockage effects. When used in combined mode
+                (with a wake deficit model), the blockage model's exclude_downstream_speedup
+                flag is automatically set to True to match PyWake's behavior.
             fpi_damp: The damping factor for the fixed-point iteration.
             fpi_tol: The convergence tolerance for the fixed-point iteration.
             mapping_strategy: The JAX mapping strategy to use for multiple wind
@@ -381,6 +382,13 @@ class WakeSimulation:
         self.fpi_damp = fpi_damp
         self.fpi_tol = fpi_tol
         self.turbines = turbines
+
+        # In combined mode (wake + blockage), automatically set exclude_downstream_speedup
+        # to match PyWake's behavior where downstream speedup is excluded in wake regions
+        if self.blockage is not None and hasattr(
+            self.blockage, "exclude_downstream_speedup"
+        ):
+            self.blockage.exclude_downstream_speedup = True
 
         def __auto_mapping() -> Callable:
             return (
@@ -542,6 +550,12 @@ class WakeSimulation:
         wd_rad = jnp.deg2rad(wd)
         cos_a = jnp.sin(wd_rad)  # equivalent to cos((450 - wd) % 360)
         sin_a = jnp.cos(wd_rad)  # equivalent to sin((450 - wd) % 360)
+        # Clean up near-zero values from floating-point errors in trig functions
+        # JAX's cos/sin can return values like 1e-8 instead of exactly 0 for angles
+        # like 90, 180, 270 degrees. This ensures symmetric grids produce symmetric dw/cw matrices.
+        trig_tol = 1e-7
+        cos_a = jnp.where(jnp.abs(cos_a) < trig_tol, 0.0, cos_a)
+        sin_a = jnp.where(jnp.abs(sin_a) < trig_tol, 0.0, sin_a)
         # Result shape: (n_wd, n_turbines, n_turbines)
         down_wind_d = -(dx * cos_a[:, None, None] + dy * sin_a[:, None, None])
         horizontal_cross_wind_d = dx * sin_a[:, None, None] - dy * cos_a[:, None, None]
@@ -749,6 +763,10 @@ class WakeSimulation:
         The blockage and wake effects are combined additively:
         ws_final = ambient - wake_deficit - blockage_deficit
 
+        In combined mode, the blockage model's exclude_downstream_speedup flag
+        is set to True (in __init__), so only upstream blockage effects are
+        applied, matching PyWake's behavior.
+
         Args:
             effective: A tuple containing the current effective wind speed and
                 turbulence intensity.
@@ -767,18 +785,21 @@ class WakeSimulation:
         # Blockage effect is computed from ambient wind speed (not wake-affected)
         # This matches PyWake's behavior where blockage uses WS_ilk (freestream)
         if self.blockage is not None:
+            # Store wake radius from wake model for exclude_wake check
+            wake_radius_from_wake_model = ctx.wake_radius
+
             # Compute blockage effect using ambient wind speed for CT calculation
             # Broadcast ambient ws to turbine array shape
             ws_ambient = jnp.broadcast_to(ctx.ws, ws_eff.shape)
-            ws_with_blockage, _ = self.blockage(ws_ambient, ti_eff, ctx)
+            ws_with_blockage, _ = self.blockage(
+                ws_ambient,
+                ti_eff,
+                ctx,
+                wake_radius_for_exclude=wake_radius_from_wake_model,
+            )
             # Blockage deficit = ambient - blockage_modified_ws
-            # Positive means wind speed reduction (upstream blockage)
-            # Negative means wind speed increase (downstream speedup)
+            # The blockage model handles exclude_wake logic internally
             blockage_deficit = ctx.ws - ws_with_blockage
-            # In combined mode, only apply blockage reduction (upstream), not speedup
-            # This matches PyWake's exclude_wake=True behavior where downstream
-            # speedup is removed in the wake region
-            blockage_deficit = jnp.maximum(blockage_deficit, 0.0)
             # Apply blockage deficit to wake result (additive combination)
             ws_eff_new = ws_eff_new - blockage_deficit
             ws_eff_new = jnp.maximum(0.0, ws_eff_new)

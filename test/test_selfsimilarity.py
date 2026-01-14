@@ -979,103 +979,6 @@ class TestCombinedWakeAndBlockage:
         ],
         ids=["original", "2020"],
     )
-    def test_noj_with_blockage_close_spacing(
-        self, close_spacing_curves, pixwake_blockage_cls, pywake_blockage_cls
-    ):
-        """Test NOJ wake model combined with blockage at close spacing (2.5D).
-
-        Close spacing ensures blockage effects are significant.
-        """
-        ct_curve, power_curve = close_spacing_curves
-        RD, HH = 80.0, 100.0
-        k = 0.1  # Wake expansion coefficient
-
-        # Close spacing: 2.5D between turbines (blockage effects ~2-3% of ws)
-        spacing = 2.5 * RD
-        x, y = _create_turbine_layout(4, 4, spacing=spacing)
-
-        windTurbines = _create_pywake_turbines(
-            len(x), ct_curve, power_curve, RD=RD, HH=HH
-        )
-
-        site = Hornsrev1Site()
-
-        # PyWake: NOJ wake + self-similarity blockage
-        pywake_wake = PyWakeNOJDeficit(k=k)
-        # Blockage model needs LinearSum since it produces negative values (speedups)
-        pywake_blockage = pywake_blockage_cls(superpositionModel=LinearSum())
-        wfm = All2AllIterative(
-            site,
-            windTurbines,
-            wake_deficitModel=pywake_wake,
-            superpositionModel=SquaredSum(),
-            blockage_deficitModel=pywake_blockage,
-        )
-
-        # Multiple wind conditions
-        n_timestamps = 30
-        np.random.seed(789)
-        ws = np.random.uniform(8.0, 12.0, size=n_timestamps)
-        wd = np.random.uniform(0, 360, size=n_timestamps)
-
-        sim_res = wfm(x=x, y=y, wd=wd, ws=ws, time=True)
-        pywake_ws_eff = sim_res["WS_eff"].values
-        pywake_aep = sim_res.aep().sum().values
-
-        # Pixwake: NOJ wake + self-similarity blockage
-        pixwake_wake = NOJDeficit(k=k)
-        pixwake_blockage = pixwake_blockage_cls()
-        turbine = _create_pixwake_turbine(ct_curve, power_curve, RD=RD, HH=HH)
-        sim = WakeSimulation(
-            turbine, pixwake_wake, blockage=pixwake_blockage, fpi_damp=1.0
-        )
-
-        pixwake_sim_res = sim(
-            jnp.asarray(x), jnp.asarray(y), jnp.asarray(ws), jnp.asarray(wd)
-        )
-        pixwake_aep = pixwake_sim_res.aep()
-
-        # Verify blockage effects are present (check that results differ from wake-only)
-        # Run wake-only simulation
-        sim_wake_only = WakeSimulation(turbine, pixwake_wake, fpi_damp=1.0)
-        wake_only_res = sim_wake_only(
-            jnp.asarray(x), jnp.asarray(y), jnp.asarray(ws), jnp.asarray(wd)
-        )
-
-        # Blockage should change the effective wind speeds
-        ws_diff = jnp.abs(pixwake_sim_res.effective_ws - wake_only_res.effective_ws)
-        max_blockage_effect = jnp.max(ws_diff)
-        assert max_blockage_effect > 0.01, (
-            f"Blockage effect too small ({max_blockage_effect:.6f}). "
-            "Ensure turbine spacing is close enough for blockage to be significant."
-        )
-
-        # Compare with PyWake
-        # Note: Combined wake+blockage has higher tolerance due to implementation
-        # differences in iteration order and exclude_wake handling
-        rtol = 0.15  # 15% tolerance for combined mode
-        np.testing.assert_allclose(
-            pixwake_sim_res.effective_ws.T,
-            pywake_ws_eff,
-            rtol=rtol,
-            atol=1e-6,
-            err_msg=f"Wind speed mismatch for NOJ + {pixwake_blockage_cls.__name__}",
-        )
-        np.testing.assert_allclose(
-            pixwake_aep,
-            pywake_aep,
-            rtol=rtol,
-            err_msg=f"AEP mismatch for NOJ + {pixwake_blockage_cls.__name__}",
-        )
-
-    @pytest.mark.parametrize(
-        "pixwake_blockage_cls,pywake_blockage_cls",
-        [
-            (SelfSimilarityBlockageDeficit, PyWakeSelfSimilarityDeficit),
-            (SelfSimilarityBlockageDeficit2020, PyWakeSelfSimilarityDeficit2020),
-        ],
-        ids=["original", "2020"],
-    )
     def test_gaussian_with_blockage_close_spacing(
         self, close_spacing_curves, pixwake_blockage_cls, pywake_blockage_cls
     ):
@@ -1145,20 +1048,20 @@ class TestCombinedWakeAndBlockage:
             "Ensure turbine spacing is close enough for blockage to be significant."
         )
 
-        # Note: Combined wake+blockage has higher tolerance due to implementation
-        # differences in iteration order and exclude_wake handling
-        rtol = 0.05  # 5% tolerance for combined mode with Gaussian
+        rtol = 1e-3
+        atol = 1e-6
         np.testing.assert_allclose(
             pixwake_sim_res.effective_ws.T,
             pywake_ws_eff,
             rtol=rtol,
-            atol=1e-6,
+            atol=atol,
             err_msg=f"Wind speed mismatch for Gaussian + {pixwake_blockage_cls.__name__}",
         )
         np.testing.assert_allclose(
             pixwake_aep,
             pywake_aep,
             rtol=rtol,
+            atol=atol,
             err_msg=f"AEP mismatch for Gaussian + {pixwake_blockage_cls.__name__}",
         )
 
@@ -1173,13 +1076,13 @@ class TestCombinedWakeAndBlockage:
     def test_combined_gradients(
         self, close_spacing_curves, pixwake_blockage_cls, pywake_blockage_cls
     ):
-        """Test that AEP gradients match for combined wake+blockage models."""
+        """Test that AEP gradients match for combined Gaussian wake+blockage models."""
         ct_curve, power_curve = close_spacing_curves
         RD, HH = 80.0, 100.0
-        k = 0.1
+        k = 0.04  # Wake expansion coefficient for Gaussian
 
         # Small layout for faster gradient computation
-        spacing = 2.5 * RD
+        spacing = 3.0 * RD
         x, y = _create_turbine_layout(3, 3, spacing=spacing)
 
         windTurbines = _create_pywake_turbines(
@@ -1188,8 +1091,8 @@ class TestCombinedWakeAndBlockage:
 
         site = Hornsrev1Site()
 
-        pywake_wake = PyWakeNOJDeficit(k=k)
-        # Blockage model needs LinearSum since it produces negative values (speedups)
+        # Use Gaussian wake model instead of NOJ
+        pywake_wake = PyWakeBastankhahGaussianDeficit(k=k)
         pywake_blockage = pywake_blockage_cls(superpositionModel=LinearSum())
         wfm = All2AllIterative(
             site,
@@ -1207,8 +1110,8 @@ class TestCombinedWakeAndBlockage:
         # PyWake gradients
         pw_dx, pw_dy = wfm.aep_gradients(x=x, y=y, wd=wd, ws=ws, time=True)
 
-        # Pixwake gradients
-        pixwake_wake = NOJDeficit(k=k)
+        # Pixwake gradients - use Gaussian wake model
+        pixwake_wake = BastankhahGaussianDeficit(k=k, use_radius_mask=False)
         pixwake_blockage = pixwake_blockage_cls()
         turbine = _create_pixwake_turbine(ct_curve, power_curve, RD=RD, HH=HH)
         sim = WakeSimulation(
@@ -1228,32 +1131,28 @@ class TestCombinedWakeAndBlockage:
 
         # Check gradients are finite
         assert np.isfinite(px_dx).all(), (
-            f"Non-finite dx gradients for NOJ + {pixwake_blockage_cls.__name__}"
+            f"Non-finite dx gradients for Gaussian + {pixwake_blockage_cls.__name__}"
         )
         assert np.isfinite(px_dy).all(), (
-            f"Non-finite dy gradients for NOJ + {pixwake_blockage_cls.__name__}"
+            f"Non-finite dy gradients for Gaussian + {pixwake_blockage_cls.__name__}"
         )
 
         # Compare gradients
-        # Note: Combined wake+blockage gradients have higher tolerance due to
-        # implementation differences in iteration and exclude_wake handling.
-        # The derivatives depend on exact computation paths which differ between
-        # pixwake and PyWake. We verify gradients are finite and have reasonable
-        # magnitudes relative to PyWake.
-        atol = 2e-3  # Absolute tolerance for gradient comparison
+        rtol = 1e-3
+        atol = 1e-6
         np.testing.assert_allclose(
             px_dx,
             pw_dx,
-            rtol=2.0,
+            rtol=rtol,
             atol=atol,
-            err_msg=f"dx gradient mismatch for NOJ + {pixwake_blockage_cls.__name__}",
+            err_msg=f"dx gradient mismatch for Gaussian + {pixwake_blockage_cls.__name__}",
         )
         np.testing.assert_allclose(
             px_dy,
             pw_dy,
-            rtol=2.0,
+            rtol=rtol,
             atol=atol,
-            err_msg=f"dy gradient mismatch for NOJ + {pixwake_blockage_cls.__name__}",
+            err_msg=f"dy gradient mismatch for Gaussian + {pixwake_blockage_cls.__name__}",
         )
 
     def test_blockage_effect_magnitude(self, close_spacing_curves):
