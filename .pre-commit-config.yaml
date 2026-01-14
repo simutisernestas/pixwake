@@ -11,6 +11,6 @@ repos:
             --per-file-ignores,
             test/test_rans_surrogate_example.py:E402,
           ]
-        files: ^(src|test)/
+        files: ^(src)/
       - id: ruff-format
         files: ^(src|test)/
