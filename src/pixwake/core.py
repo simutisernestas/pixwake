@@ -352,6 +352,7 @@ class WakeSimulation:
         turbines: Turbine | list[Turbine],
         deficit: WakeDeficit,
         turbulence: WakeTurbulence | None = None,
+        blockage: WakeDeficit | None = None,
         fpi_damp: float = 1.0,
         fpi_tol: float = 1e-6,
         mapping_strategy: str = "auto",
@@ -365,6 +366,10 @@ class WakeSimulation:
             deficit: A `WakeDeficit` model to calculate the velocity deficit.
             turbulence: An optional `WakeTurbulence` model to calculate the
                 added turbulence.
+            blockage: An optional blockage model (e.g., SelfSimilarityBlockageDeficit)
+                to calculate the induction/blockage effects. When used in combined mode
+                (with a wake deficit model), the blockage model's exclude_downstream_speedup
+                flag is automatically set to True to match PyWake's behavior.
             fpi_damp: The damping factor for the fixed-point iteration.
             fpi_tol: The convergence tolerance for the fixed-point iteration.
             mapping_strategy: The JAX mapping strategy to use for multiple wind
@@ -372,10 +377,18 @@ class WakeSimulation:
         """
         self.deficit = deficit
         self.turbulence = turbulence
+        self.blockage = blockage
         self.mapping_strategy = mapping_strategy
         self.fpi_damp = fpi_damp
         self.fpi_tol = fpi_tol
         self.turbines = turbines
+
+        # In combined mode (wake + blockage), automatically set exclude_downstream_speedup
+        # to match PyWake's behavior where downstream speedup is excluded in wake regions
+        if self.blockage is not None and hasattr(
+            self.blockage, "exclude_downstream_speedup"
+        ):
+            self.blockage.exclude_downstream_speedup = True
 
         def __auto_mapping() -> Callable:
             return (
@@ -484,13 +497,14 @@ class WakeSimulation:
         assert ws_amb.shape == wd.shape
         assert len(ws_amb.shape) == 1
 
+        ti_arr: jnp.ndarray | None = None
         if ti is not None:
-            ti = self._atleast_1d_jax(ti)
-            if ti.size == 1:
-                ti = jnp.full_like(ws_amb, ti)
-            assert ti.shape == ws_amb.shape
+            ti_arr = self._atleast_1d_jax(ti)
+            if ti_arr.size == 1:
+                ti_arr = jnp.full_like(ws_amb, ti_arr)
+            assert ti_arr.shape == ws_amb.shape
 
-        return wt_xs, wt_ys, ws_amb, wd, ti
+        return wt_xs, wt_ys, ws_amb, wd, ti_arr
 
     def _get_downwind_crosswind_distances(
         self,
@@ -537,6 +551,12 @@ class WakeSimulation:
         wd_rad = jnp.deg2rad(wd)
         cos_a = jnp.sin(wd_rad)  # equivalent to cos((450 - wd) % 360)
         sin_a = jnp.cos(wd_rad)  # equivalent to sin((450 - wd) % 360)
+        # Clean up near-zero values from floating-point errors in trig functions
+        # JAX's cos/sin can return values like 1e-8 instead of exactly 0 for angles
+        # like 90, 180, 270 degrees. This ensures symmetric grids produce symmetric dw/cw matrices.
+        trig_tol = 1e-7
+        cos_a = jnp.where(jnp.abs(cos_a) < trig_tol, 0.0, cos_a)
+        sin_a = jnp.where(jnp.abs(sin_a) < trig_tol, 0.0, sin_a)
         # Result shape: (n_wd, n_turbines, n_turbines)
         down_wind_d = -(dx * cos_a[:, None, None] + dy * sin_a[:, None, None])
         horizontal_cross_wind_d = dx * sin_a[:, None, None] - dy * cos_a[:, None, None]
@@ -610,13 +630,28 @@ class WakeSimulation:
             wd, wt_x, wt_y, turbines.hub_height, fm_x, fm_y, fm_z
         )
 
-        return jax.vmap(
-            lambda _ws_amb, _dw, _cw, _ws_eff, _ti_eff: self.deficit(
-                _ws_eff,
-                _ti_eff,
-                SimulationContext(turbines, _dw, _cw, _ws_amb, _ti_eff),
-            )
-        )(ws, dw, cw, result.effective_ws, result.effective_ti)[0], (fm_x, fm_y)
+        def _apply_models_to_flowmap(
+            _ws_amb: jnp.ndarray,
+            _dw: jnp.ndarray,
+            _cw: jnp.ndarray,
+            _ws_eff: jnp.ndarray,
+            _ti_eff: jnp.ndarray | None,
+        ) -> jnp.ndarray:
+            """Apply blockage and deficit models to flow map points."""
+            ctx = SimulationContext(turbines, _dw, _cw, _ws_amb, _ti_eff)
+            ws_out = _ws_eff
+
+            # Apply blockage first (if provided)
+            if self.blockage is not None:
+                ws_out, ctx = self.blockage(ws_out, _ti_eff, ctx)
+
+            # Apply wake deficit
+            ws_out, _ = self.deficit(ws_out, _ti_eff, ctx)
+            return ws_out
+
+        return jax.vmap(_apply_models_to_flowmap)(
+            ws, dw, cw, result.effective_ws, result.effective_ti
+        ), (fm_x, fm_y)
 
     def _simulate_vmap(
         self, ctx: SimulationContext
@@ -720,6 +755,19 @@ class WakeSimulation:
         turbulence, calculates the new values based on the wake model, and
         returns the updated estimates.
 
+        The order of model application matches PyWake:
+        1. Wake deficit model - computes ws_after_wake = ambient - wake_deficit
+        2. Blockage model (if provided) - computes blockage_effect, then
+           ws_final = ws_after_wake - blockage_effect
+        3. Turbulence model (if provided) - models added turbulence
+
+        The blockage and wake effects are combined additively:
+        ws_final = ambient - wake_deficit - blockage_deficit
+
+        In combined mode, the blockage model's exclude_downstream_speedup flag
+        is set to True (in __init__), so only upstream blockage effects are
+        applied, matching PyWake's behavior.
+
         Args:
             effective: A tuple containing the current effective wind speed and
                 turbulence intensity.
@@ -730,7 +778,32 @@ class WakeSimulation:
             intensity.
         """
         ws_eff, ti_eff = effective
+
+        # Apply wake deficit model first
         ws_eff_new, ctx = self.deficit(ws_eff, ti_eff, ctx)
+
+        # Apply blockage model (if provided)
+        # Blockage effect is computed from ambient wind speed (not wake-affected)
+        # This matches PyWake's behavior where blockage uses WS_ilk (freestream)
+        if self.blockage is not None:
+            # Store wake radius from wake model for exclude_wake check
+            wake_radius_from_wake_model = ctx.wake_radius
+
+            # Compute blockage effect using ambient wind speed for CT calculation
+            # Broadcast ambient ws to turbine array shape
+            ws_ambient = jnp.broadcast_to(ctx.ws, ws_eff.shape)
+            ws_with_blockage, _ = self.blockage(
+                ws_ambient,
+                ti_eff,
+                ctx,
+                wake_radius_for_exclude=wake_radius_from_wake_model,
+            )
+            # Blockage deficit = ambient - blockage_modified_ws
+            # The blockage model handles exclude_wake logic internally
+            blockage_deficit = ctx.ws - ws_with_blockage
+            # Apply blockage deficit to wake result (additive combination)
+            ws_eff_new = ws_eff_new - blockage_deficit
+            ws_eff_new = jnp.maximum(0.0, ws_eff_new)
 
         ti_eff_new = ti_eff
         if self.turbulence:
