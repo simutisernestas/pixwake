@@ -164,7 +164,15 @@ class Turbine:
     @classmethod
     def tree_unflatten(cls, aux_data: tuple, children: tuple) -> Turbine:
         type_id, is_single_type = aux_data
-        return cls(*children, type_id=type_id, _is_single_type=is_single_type)
+        rotor_diameter, hub_height, power_curve, ct_curve = children
+        return cls(
+            rotor_diameter=rotor_diameter,
+            hub_height=hub_height,
+            power_curve=power_curve,
+            ct_curve=ct_curve,
+            type_id=type_id,
+            _is_single_type=is_single_type,
+        )
 
     @classmethod
     def _from_types(
@@ -613,28 +621,44 @@ class WakeSimulation:
     def _simulate_vmap(
         self, ctx: SimulationContext
     ) -> tuple[jnp.ndarray, jnp.ndarray | None]:
-        """Simulates multiple wind conditions using `jax.vmap`."""
+        """Simulates multiple wind conditions using `jax.vmap`.
 
-        def _single_case(
-            dw: jnp.ndarray, cw: jnp.ndarray, ws: jnp.ndarray, ti: jnp.ndarray | None
-        ) -> tuple[jnp.ndarray, jnp.ndarray | None]:
-            return self._simulate_single_case(
-                SimulationContext(ctx.turbine, dw, cw, ws, ti)
-            )
-
-        return jax.vmap(_single_case)(ctx.dw, ctx.cw, ctx.ws, ctx.ti)
+        Uses pytree-aware vmap to avoid creating SimulationContext objects
+        inside the vmapped function, reducing Python object overhead.
+        """
+        # Specify vmap axes as a matching pytree structure
+        # turbine is broadcast (same for all cases), dw/cw/ws/ti are vmapped over axis 0
+        # Note: JAX in_axes uses int/None for axis spec, not actual types
+        in_axes_ctx = SimulationContext(
+            turbine=None,  # type: ignore[arg-type]  # broadcast
+            dw=0,  # type: ignore[arg-type]
+            cw=0,  # type: ignore[arg-type]
+            ws=0,  # type: ignore[arg-type]
+            ti=0 if ctx.ti is not None else None,  # type: ignore[arg-type]
+            wake_radius=None,  # not set yet
+        )
+        return jax.vmap(self._simulate_single_case, in_axes=(in_axes_ctx,))(ctx)
 
     def _simulate_map(
         self, ctx: SimulationContext
     ) -> tuple[jnp.ndarray, jnp.ndarray | None]:
-        """Simulates multiple wind conditions using `jax.lax.map`."""
+        """Simulates multiple wind conditions using `jax.lax.map`.
+
+        Uses pytree-aware map to avoid creating SimulationContext objects
+        inside the mapped function, reducing Python object overhead.
+        """
+        # For lax.map, we need to stack the varying parts into a single pytree
+        # that gets sliced along axis 0. Turbine is constant, so we close over it.
+        turbine = ctx.turbine
 
         def _single_case(
             case: tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray | None],
         ) -> tuple[jnp.ndarray, jnp.ndarray | None]:
             dw, cw, ws, ti = case
-            single_flow_case_ctx = SimulationContext(ctx.turbine, dw, cw, ws, ti)
-            return self._simulate_single_case(single_flow_case_ctx)
+            # Create context with closed-over turbine to avoid passing it through map
+            return self._simulate_single_case(
+                SimulationContext(turbine, dw, cw, ws, ti)
+            )
 
         return jax.lax.map(_single_case, (ctx.dw, ctx.cw, ctx.ws, ctx.ti))
 
