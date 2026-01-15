@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 import xarray as xr
 from jax import config as jcfg
+from jax.test_util import check_grads
 from py_wake.deficit_models.gaussian import (
     BastankhahGaussianDeficit as PyWakeBastankhahGaussianDeficit,
 )
@@ -736,7 +737,7 @@ def test_gaussian_overlap_avg_model_with_niayifar_full_simulation(curves):
     )
 
     # Generate wind conditions
-    n_timestamps = 150
+    n_timestamps = 500
     ws = np.random.uniform(cutin_ws, cutout_ws, size=n_timestamps)
     wd = np.random.uniform(0, 360, size=n_timestamps)
     ti = 0.06
@@ -761,6 +762,19 @@ def test_gaussian_overlap_avg_model_with_niayifar_full_simulation(curves):
         jnp.asarray(x), jnp.asarray(y), jnp.asarray(ws), jnp.asarray(wd), ti
     )
 
+    # Verify gradients are correct
+    # Note: order=1 only because fixed_point's custom_vjp doesn't support
+    # second-order differentiation (the VJP residuals become closed-over values
+    # during second-order diff, which custom_vjp doesn't handle)
+    check_grads(
+        lambda xx, yy: sim(xx, yy, jnp.asarray(ws), jnp.asarray(wd), ti).aep(),
+        (jnp.asarray(x), jnp.asarray(y)),
+        order=1,
+        modes=["rev"],
+        atol=1e-6,
+        rtol=1e-6,
+    )
+
     # Compare effective wind speeds
     rtol, atol = 1e-3, 1e-6
     _assert_ws_eff_close(
@@ -779,5 +793,5 @@ def test_gaussian_overlap_avg_model_with_niayifar_full_simulation(curves):
     _, dx, dy = _pixwake_compute_gradients(sim, x, y, ws, wd, ti=ti)
 
     # Use larger atol since gradient magnitudes are small
-    np.testing.assert_allclose(dx, pw_dx, rtol=0.5, atol=1e-3)
-    np.testing.assert_allclose(dy, pw_dy, rtol=0.5, atol=1e-3)
+    np.testing.assert_allclose(dx, pw_dx, rtol=rtol, atol=1e-3)
+    np.testing.assert_allclose(dy, pw_dy, rtol=rtol, atol=1e-3)
