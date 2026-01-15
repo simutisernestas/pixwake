@@ -3,7 +3,7 @@ authors = [{ name = "ernie", email = "ernim@dtu.dk" }]
 name = "pixwake"
 requires-python = ">= 3.10"
 version = "0.1.0"
-dependencies = ["jax", "matplotlib"]
+dependencies = ["jax", "matplotlib", "scipy"]
 
 [build-system]
 build-backend = "hatchling.build"

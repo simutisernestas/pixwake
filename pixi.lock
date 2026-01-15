@@ -7481,10 +7481,11 @@ packages:
 - pypi: ./
   name: pixwake
   version: 0.1.0
-  sha256: fccac4a97a0938ae17fab648dd1dd1c41e72a110c75aea123342f4c55dc7698b
+  sha256: 3f31e191b173a19ae347ae831968d37277bf24eb791b993adafd775e1b1026a5
   requires_dist:
   - jax
   - matplotlib
+  - scipy
   requires_python: '>=3.10'
 - conda: https://conda.anaconda.org/conda-forge/noarch/platformdirs-4.5.1-pyhcf101f3_0.conda
   sha256: 04c64fb78c520e5c396b6e07bc9082735a5cc28175dbe23138201d0a9441800b

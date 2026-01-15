@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import warnings
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Callable, TypeAlias
 
 import jax
 import jax.numpy as jnp
@@ -13,7 +13,9 @@ from .core import SimulationContext
 from .jax_utils import get_float_eps, ssqrt
 
 if TYPE_CHECKING:
-    from .deficit.gaussian import BastankhahGaussianDeficit
+    from .deficit.gaussian import BastankhahGaussianDeficit, TurboGaussianDeficit
+
+    GaussianDeficit: TypeAlias = "BastankhahGaussianDeficit | TurboGaussianDeficit"
 
 
 class RotorAvg(ABC):
@@ -230,6 +232,7 @@ def _load_overlap_table() -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
     local_table_path = Path(__file__).parent / "data" / _OVERLAP_TABLE_FILENAME
     if local_table_path.exists():
         try:
+            # TODO: need to bake it into dependencies...
             import xarray as xr
 
             table = xr.load_dataarray(local_table_path, engine="h5netcdf")
@@ -349,7 +352,7 @@ class GaussianOverlapAvgModel(RotorAvg):
         https://gitlab.windenergy.dtu.dk/TOPFARM/PyWake
     """
 
-    deficit_model: "BastankhahGaussianDeficit | None"
+    deficit_model: "GaussianDeficit | None"
 
     def __init__(
         self,
