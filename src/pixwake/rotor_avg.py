@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Callable
 
@@ -210,21 +211,44 @@ class CGIRotorAvg(RotorAvg):
         return jnp.sum(value_at_nodes * weights_broadcast, axis=-1)
 
 
-def _load_pywake_overlap_table() -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
-    """Try to load PyWake's precomputed overlap table.
+_OVERLAP_TABLE_FILENAME = "gaussian_overlap_.02_.02_128_512.nc"
+
+
+def _load_overlap_table() -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
+    """Try to load the precomputed overlap table.
+
+    First tries to load from the local data directory (bundled with pixwake),
+    then falls back to PyWake's location if installed.
 
     Returns:
         Tuple of (R_sigma, CW_sigma, overlap_table) arrays if successful, None otherwise.
     """
-    try:
-        import os
+    import os
+    from pathlib import Path
 
+    # Try loading from local data directory first
+    local_table_path = Path(__file__).parent / "data" / _OVERLAP_TABLE_FILENAME
+    if local_table_path.exists():
+        try:
+            import xarray as xr
+
+            table = xr.load_dataarray(local_table_path, engine="h5netcdf")
+            return (
+                table.R_sigma.values.astype(np.float64),
+                table.CW_sigma.values.astype(np.float64),
+                table.values.astype(np.float64),
+            )
+        except (ImportError, OSError):
+            pass
+
+    # Fall back to PyWake's location
+    try:
         import xarray as xr
         from py_wake.rotor_avg_models import gaussian_overlap_model
 
         table_path = os.path.join(
             os.path.dirname(gaussian_overlap_model.__file__),
-            "gaussian_overlap_.02_.02_128_512.nc",
+            _OVERLAP_TABLE_FILENAME,
         )
         table = xr.load_dataarray(table_path, engine="h5netcdf")
         return (
@@ -349,12 +373,18 @@ class GaussianOverlapAvgModel(RotorAvg):
         """
         self.deficit_model = None
 
-        # Try to load PyWake's precomputed table first (faster)
-        pywake_table = _load_pywake_overlap_table()
-        if pywake_table is not None:
-            self._r_sigma, self._cw_sigma, self._overlap_table = pywake_table
+        # Try to load precomputed table
+        precomputed_table = _load_overlap_table()
+        if precomputed_table is not None:
+            self._r_sigma, self._cw_sigma, self._overlap_table = precomputed_table
         else:
             # Generate our own table (slower)
+            warnings.warn(
+                "Precomputed Gaussian overlap table not found. "
+                "Generating lookup table on-the-fly, will take awhile.. "
+                "Consider installing xarray and h5netcdf for faster loading.",
+                RuntimeWarning,
+            )
             self._r_sigma, self._cw_sigma, self._overlap_table = (
                 _make_overlap_lookup_table(n_theta=n_theta, n_r=n_r, dr=dr, dcw=dcw)
             )
