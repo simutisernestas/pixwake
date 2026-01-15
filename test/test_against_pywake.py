@@ -11,6 +11,9 @@ from py_wake.deficit_models.gaussian import (
 from py_wake.deficit_models.gaussian import (
     NiayifarGaussianDeficit as PyWakeNiayifarGaussianDeficit,
 )
+from py_wake.deficit_models.gaussian import (
+    TurboGaussianDeficit as PyWakeTurboGaussianDeficit,
+)
 from py_wake.deficit_models.noj import NOJDeficit as PyWakeNOJDeficit
 from py_wake.examples.data.hornsrev1 import Hornsrev1Site
 from py_wake.site import XRSite
@@ -28,6 +31,7 @@ from pixwake.core import SimulationContext
 from pixwake.deficit import (
     BastankhahGaussianDeficit,
     NiayifarGaussianDeficit,
+    TurboGaussianDeficit,
     NOJDeficit,
 )
 from pixwake.rotor_avg import GaussianOverlapAvgModel
@@ -797,3 +801,248 @@ def test_gaussian_overlap_avg_model_with_niayifar_full_simulation(curves):
     # Use larger atol since gradient magnitudes are small
     np.testing.assert_allclose(dx, pw_dx, rtol=rtol, atol=1e-3)
     np.testing.assert_allclose(dy, pw_dy, rtol=rtol, atol=1e-3)
+
+
+def test_turbo_gaussian_equivalence_timeseries(curves):
+    """Test TurboGaussianDeficit model equivalence with PyWake.
+
+    This test compares effective wind speeds, AEP, and gradients between
+    pixwake's TurboGaussianDeficit and PyWake's implementation.
+    """
+    ct_curve, power_curve = curves
+    cutin_ws, cutout_ws = 3.0, 25.0
+    RD, HH = 120.0, 100.0
+
+    # Create turbine layout
+    x, y = _create_turbine_layout(10, 5, spacing=RD * 4)
+    windTurbines = _create_pywake_turbines(len(x), ct_curve, power_curve, RD=RD, HH=HH)
+
+    # PyWake setup with TurboGaussianDeficit
+    site = Hornsrev1Site()
+    pw_wake_model = PyWakeTurboGaussianDeficit(
+        use_effective_ws=True,
+        use_effective_ti=False,
+    )
+    wfm = All2AllIterative(
+        site,
+        windTurbines,
+        wake_deficitModel=pw_wake_model,
+        superpositionModel=SquaredSum(),
+        turbulenceModel=PyWakeCrespoHernandez(rotorAvgModel=None),
+    )
+
+    # Generate wind conditions
+    n_timestamps = 200
+    ws = np.random.uniform(cutin_ws, cutout_ws, size=n_timestamps)
+    wd = np.random.uniform(0, 360, size=n_timestamps)
+    ti = 0.08
+
+    # Run PyWake simulation
+    sim_res = wfm(x=x, y=y, wd=wd, ws=ws, time=True, TI=ti)
+    pywake_ws_eff = sim_res["WS_eff"].values
+
+    # PixWake setup with TurboGaussianDeficit
+    px_deficit = TurboGaussianDeficit(
+        use_effective_ws=True,
+        use_effective_ti=False,
+        use_radius_mask=False,
+    )
+
+    turbine = _create_pixwake_turbine(ct_curve, power_curve, RD=RD, HH=HH)
+    sim = WakeSimulation(turbine, px_deficit, CrespoHernandez(), fpi_damp=1.0)
+
+    pixwake_sim_res = sim(
+        jnp.asarray(x), jnp.asarray(y), jnp.asarray(ws), jnp.asarray(wd), ti
+    )
+
+    # Compare effective wind speeds
+    rtol, atol = 1e-3, 1e-6
+    _assert_ws_eff_close(
+        pixwake_sim_res.effective_ws, pywake_ws_eff, rtol=rtol, atol=atol
+    )
+
+    # Compare AEP
+    np.testing.assert_allclose(
+        pixwake_sim_res.aep(), sim_res.aep().sum().values, rtol=rtol
+    )
+
+    # Compare gradients - use relaxed tolerances due to differences in
+    # implicit differentiation implementations between PyWake and PixWake
+    pw_dx, pw_dy = wfm.aep_gradients(x=x, y=y, wd=wd, ws=ws, time=True)
+    _, dx, dy = _pixwake_compute_gradients(sim, x, y, ws, wd, ti=ti)
+
+    # Verify pixwake gradients are self-consistent using JAX gradient checker
+    check_grads(
+        lambda xx, yy: sim(xx, yy, jnp.asarray(ws), jnp.asarray(wd), ti).aep(),
+        (jnp.asarray(x), jnp.asarray(y)),
+        order=1,
+        modes=["rev"],
+        atol=1e-6,
+        rtol=1e-6,
+    )
+
+    # Cross-check gradients with relaxed tolerance
+    np.testing.assert_allclose(dx, pw_dx, rtol=0.5, atol=1e-3)
+    np.testing.assert_allclose(dy, pw_dy, rtol=0.5, atol=1e-3)
+
+
+def test_turbo_gaussian_equivalence_with_effective_ti(curves):
+    """Test TurboGaussianDeficit with effective TI equivalence.
+
+    This test uses use_effective_ti=True to verify the model correctly
+    uses effective turbulence intensity in the wake expansion calculation.
+    """
+    ct_curve, power_curve = curves
+    cutin_ws, cutout_ws = 3.0, 25.0
+    RD, HH = 120.0, 100.0
+
+    # Create turbine layout
+    x, y = _create_turbine_layout(8, 4, spacing=RD * 5)
+    windTurbines = _create_pywake_turbines(len(x), ct_curve, power_curve, RD=RD, HH=HH)
+
+    # PyWake setup with TurboGaussianDeficit and effective TI
+    site = Hornsrev1Site()
+    pw_wake_model = PyWakeTurboGaussianDeficit(
+        use_effective_ws=True,
+        use_effective_ti=True,
+    )
+    wfm = All2AllIterative(
+        site,
+        windTurbines,
+        wake_deficitModel=pw_wake_model,
+        superpositionModel=SquaredSum(),
+        turbulenceModel=PyWakeCrespoHernandez(rotorAvgModel=None),
+    )
+
+    # Generate wind conditions
+    n_timestamps = 300
+    ws = np.random.uniform(cutin_ws, cutout_ws, size=n_timestamps)
+    wd = np.random.uniform(0, 360, size=n_timestamps)
+    ti = 0.06
+
+    # Run PyWake simulation
+    sim_res = wfm(x=x, y=y, wd=wd, ws=ws, time=True, TI=ti)
+    pywake_ws_eff = sim_res["WS_eff"].values
+
+    # PixWake setup with TurboGaussianDeficit and effective TI
+    px_deficit = TurboGaussianDeficit(
+        use_effective_ws=True,
+        use_effective_ti=True,
+        use_radius_mask=False,
+    )
+
+    turbine = _create_pixwake_turbine(ct_curve, power_curve, RD=RD, HH=HH)
+    sim = WakeSimulation(turbine, px_deficit, CrespoHernandez(), fpi_damp=1.0)
+
+    pixwake_sim_res = sim(
+        jnp.asarray(x), jnp.asarray(y), jnp.asarray(ws), jnp.asarray(wd), ti
+    )
+
+    # Compare effective TI
+    rtol, atol = 1e-3, 1e-6
+    np.testing.assert_allclose(
+        pixwake_sim_res.effective_ti.T, sim_res["TI_eff"].values, rtol=rtol, atol=atol
+    )
+
+    # Compare effective wind speeds
+    _assert_ws_eff_close(
+        pixwake_sim_res.effective_ws, pywake_ws_eff, rtol=rtol, atol=atol
+    )
+
+    # Compare AEP
+    np.testing.assert_allclose(
+        pixwake_sim_res.aep(), sim_res.aep().sum().values, rtol=rtol
+    )
+
+    # Compare gradients with relaxed tolerance
+    ws_grad, wd_grad = ws[:100], wd[:100]
+    pw_dx, pw_dy = wfm.aep_gradients(x=x, y=y, wd=wd_grad, ws=ws_grad, time=True)
+    _, dx, dy = _pixwake_compute_gradients(sim, x, y, ws_grad, wd_grad, ti=ti)
+
+    np.testing.assert_allclose(dx, pw_dx, rtol=0.5, atol=1e-3)
+    np.testing.assert_allclose(dy, pw_dy, rtol=0.5, atol=1e-3)
+
+
+def test_turbo_gaussian_with_rotor_avg_model(curves):
+    """Test TurboGaussianDeficit with GaussianOverlapAvgModel rotor averaging.
+
+    This test verifies that the TurboGaussianDeficit model works correctly
+    with rotor averaging enabled.
+    """
+    ct_curve, power_curve = curves
+    cutin_ws, cutout_ws = 3.0, 25.0
+    RD, HH = 120.0, 100.0
+
+    # Create turbine layout
+    x, y = _create_turbine_layout(8, 4, spacing=RD * 5)
+    windTurbines = _create_pywake_turbines(len(x), ct_curve, power_curve, RD=RD, HH=HH)
+
+    # PyWake setup with TurboGaussianDeficit and rotor averaging
+    site = Hornsrev1Site()
+    pw_rotor_avg = PyWakeGaussianOverlapAvgModel()
+    pw_wake_model = PyWakeTurboGaussianDeficit(
+        rotorAvgModel=pw_rotor_avg,
+        use_effective_ws=True,
+        use_effective_ti=True,
+    )
+    wfm = All2AllIterative(
+        site,
+        windTurbines,
+        wake_deficitModel=pw_wake_model,
+        superpositionModel=SquaredSum(),
+        turbulenceModel=PyWakeCrespoHernandez(rotorAvgModel=None),
+    )
+
+    # Generate wind conditions
+    n_timestamps = 200
+    ws = np.random.uniform(cutin_ws, cutout_ws, size=n_timestamps)
+    wd = np.random.uniform(0, 360, size=n_timestamps)
+    ti = 0.08
+
+    # Run PyWake simulation
+    sim_res = wfm(x=x, y=y, wd=wd, ws=ws, time=True, TI=ti)
+    pywake_ws_eff = sim_res["WS_eff"].values
+
+    # PixWake setup with TurboGaussianDeficit and rotor averaging
+    px_rotor_avg = GaussianOverlapAvgModel()
+    px_deficit = TurboGaussianDeficit(
+        rotor_avg_model=px_rotor_avg,
+        use_effective_ws=True,
+        use_effective_ti=True,
+        use_radius_mask=False,
+    )
+
+    turbine = _create_pixwake_turbine(ct_curve, power_curve, RD=RD, HH=HH)
+    sim = WakeSimulation(turbine, px_deficit, CrespoHernandez(), fpi_damp=0.5)
+
+    pixwake_sim_res = sim(
+        jnp.asarray(x), jnp.asarray(y), jnp.asarray(ws), jnp.asarray(wd), ti
+    )
+
+    # Verify gradients are correct using JAX's gradient checker
+    check_grads(
+        lambda xx, yy: sim(xx, yy, jnp.asarray(ws), jnp.asarray(wd), ti).aep(),
+        (jnp.asarray(x), jnp.asarray(y)),
+        order=1,
+        modes=["rev"],
+        atol=1e-6,
+        rtol=1e-6,
+    )
+
+    # Compare effective wind speeds
+    rtol, atol = 1e-3, 1e-6
+    _assert_ws_eff_close(
+        pixwake_sim_res.effective_ws, pywake_ws_eff, rtol=rtol, atol=atol
+    )
+
+    # Compare AEP
+    np.testing.assert_allclose(
+        pixwake_sim_res.aep(), sim_res.aep().sum().values, rtol=rtol
+    )
+
+    # Compare gradients with relaxed tolerance
+    pw_dx, pw_dy = wfm.aep_gradients(x=x, y=y, wd=wd, ws=ws, time=True)
+    _, dx, dy = _pixwake_compute_gradients(sim, x, y, ws, wd, ti=ti)
+
+    np.testing.assert_allclose(dx, pw_dx, rtol=0.5, atol=1e-3)
+    np.testing.assert_allclose(dy, pw_dy, rtol=0.5, atol=1e-3)
