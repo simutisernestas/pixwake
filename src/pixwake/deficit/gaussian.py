@@ -77,6 +77,27 @@ class BastankhahGaussianDeficit(WakeDeficit):
 
         return sigma_normalized, ct
 
+    def sigma(
+        self,
+        ws_eff: jnp.ndarray,
+        ti_eff: jnp.ndarray | None,
+        ctx: SimulationContext,
+    ) -> jnp.ndarray:
+        """Returns the dimensional wake width sigma.
+
+        This method is used by the GaussianOverlapAvgModel for rotor averaging.
+
+        Args:
+            ws_eff: Effective wind speeds at each turbine.
+            ti_eff: Effective turbulence intensities at each turbine.
+            ctx: The simulation context.
+
+        Returns:
+            The dimensional wake width sigma (in meters).
+        """
+        sigma_normalized, _ = self.__wake_params(ws_eff, ti_eff, ctx)
+        return sigma_normalized * ctx.turbine.rotor_diameter
+
     def _deficit(
         self,
         ws_eff: jnp.ndarray,
