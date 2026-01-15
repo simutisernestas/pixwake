@@ -1,4 +1,4 @@
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 import jax.numpy as jnp
 
@@ -6,6 +6,9 @@ from ..core import SimulationContext
 from ..jax_utils import get_float_eps
 from ..utils import ct2a_madsen
 from .base import WakeDeficit
+
+if TYPE_CHECKING:
+    from ..rotor_avg import GaussianOverlapAvgModel
 
 
 class BastankhahGaussianDeficit(WakeDeficit):
@@ -27,6 +30,7 @@ class BastankhahGaussianDeficit(WakeDeficit):
         ctlim: float = 0.899,
         ct2a: Callable = ct2a_madsen,
         use_effective_ws: bool = False,
+        rotor_avg_model: "GaussianOverlapAvgModel | None" = None,
         **kwargs: Any,
     ) -> None:
         """Initializes the `BastankhahGaussianDeficit` model.
@@ -38,14 +42,21 @@ class BastankhahGaussianDeficit(WakeDeficit):
             ct2a: A callable to convert thrust coefficient to induction factor.
             use_effective_ws: If `True`, use the effective wind speed as the
                 reference for deficit calculation.
+            rotor_avg_model: An optional rotor averaging model. If a
+                GaussianOverlapAvgModel is provided, its `deficit_model`
+                attribute is automatically set to this instance.
             **kwargs: Additional arguments passed to the parent class.
         """
-        super().__init__(**kwargs)
+        super().__init__(rotor_avg_model=rotor_avg_model, **kwargs)
         self.k = k
         self.ceps = ceps
         self.ctlim = ctlim
         self.ct2a = ct2a
         self.use_effective_ws = use_effective_ws
+
+        # Set back-reference for GaussianOverlapAvgModel
+        if rotor_avg_model is not None and hasattr(rotor_avg_model, "deficit_model"):
+            rotor_avg_model.deficit_model = self
 
     def __wake_params(
         self,
@@ -166,6 +177,7 @@ class NiayifarGaussianDeficit(BastankhahGaussianDeficit):
         self,
         a: tuple[float, float] = (0.38, 4e-3),
         use_effective_ti: bool = False,
+        rotor_avg_model: "GaussianOverlapAvgModel | None" = None,
         **kwargs: Any,
     ) -> None:
         """Initializes the `NiayifarGaussianDeficit` model.
@@ -174,9 +186,12 @@ class NiayifarGaussianDeficit(BastankhahGaussianDeficit):
             a: A tuple `(a0, a1)` for the wake expansion formula.
             use_effective_ti: If `True`, use the effective turbulence intensity
                 for the wake expansion calculation.
+            rotor_avg_model: An optional rotor averaging model. If a
+                GaussianOverlapAvgModel is provided, its `deficit_model`
+                attribute is automatically set to this instance.
             **kwargs: Additional arguments passed to the parent class.
         """
-        super().__init__(**kwargs)
+        super().__init__(rotor_avg_model=rotor_avg_model, **kwargs)
         self.a = a
         self.use_effective_ti = use_effective_ti
 

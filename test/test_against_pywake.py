@@ -674,10 +674,11 @@ def test_gaussian_overlap_avg_model_full_simulation(curves):
     sim_res = wfm(x=x, y=y, wd=wd, ws=ws, time=True, TI=ti)
     pywake_ws_eff = sim_res["WS_eff"].values
 
-    # PixWake setup with GaussianOverlapAvgModel
-    px_deficit = BastankhahGaussianDeficit(use_effective_ws=True, use_radius_mask=False)
-    px_rotor_avg = GaussianOverlapAvgModel(px_deficit)
-    px_deficit.rotor_avg_model = px_rotor_avg
+    # PixWake setup with GaussianOverlapAvgModel (PyWake-style API)
+    px_rotor_avg = GaussianOverlapAvgModel()
+    px_deficit = BastankhahGaussianDeficit(
+        rotor_avg_model=px_rotor_avg, use_effective_ws=True, use_radius_mask=False
+    )
 
     turbine = _create_pixwake_turbine(ct_curve, power_curve, RD=RD, HH=HH)
     sim = WakeSimulation(turbine, px_deficit, CrespoHernandez(), fpi_damp=0.5)
@@ -747,13 +748,14 @@ def test_gaussian_overlap_avg_model_with_niayifar_full_simulation(curves):
     pywake_ws_eff = sim_res["WS_eff"].values
 
     # PixWake setup with GaussianOverlapAvgModel and NiayifarGaussianDeficit
+    # (PyWake-style API)
+    px_rotor_avg = GaussianOverlapAvgModel()
     px_deficit = NiayifarGaussianDeficit(
+        rotor_avg_model=px_rotor_avg,
         use_effective_ws=True,
         use_effective_ti=True,
         use_radius_mask=False,
     )
-    px_rotor_avg = GaussianOverlapAvgModel(px_deficit)
-    px_deficit.rotor_avg_model = px_rotor_avg
 
     turbine = _create_pixwake_turbine(ct_curve, power_curve, RD=RD, HH=HH)
     sim = WakeSimulation(turbine, px_deficit, CrespoHernandez(), fpi_damp=0.5)

@@ -190,12 +190,9 @@ def test_gaussian_overlap_rotor_avg_against_pywake(
     """Test GaussianOverlapAvgModel against PyWake implementation."""
     wind_turbines = v80_wt()
 
-    # Create pixwake deficit model
-    px_deficit = px_deficit_model(**px_kwargs)
-    # Create rotor averaging model with reference to deficit model
-    px_rotor_avg = GaussianOverlapAvgModel(px_deficit)
-    # Set rotor avg model on deficit
-    px_deficit.rotor_avg_model = px_rotor_avg
+    # Create rotor averaging model and deficit model (PyWake-style API)
+    px_rotor_avg = GaussianOverlapAvgModel()
+    px_deficit = px_deficit_model(rotor_avg_model=px_rotor_avg, **px_kwargs)
 
     def _create_turbine_layout(width, length, spacing_x=3e2, spacing_y=3e2):
         x, y = jnp.meshgrid(

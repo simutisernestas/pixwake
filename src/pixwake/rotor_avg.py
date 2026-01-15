@@ -325,9 +325,10 @@ class GaussianOverlapAvgModel(RotorAvg):
         https://gitlab.windenergy.dtu.dk/TOPFARM/PyWake
     """
 
+    deficit_model: "BastankhahGaussianDeficit | None"
+
     def __init__(
         self,
-        deficit_model: BastankhahGaussianDeficit,
         *,
         n_theta: int = 128,
         n_r: int = 512,
@@ -337,14 +338,16 @@ class GaussianOverlapAvgModel(RotorAvg):
         """Initialize the GaussianOverlapAvgModel.
 
         Args:
-            deficit_model: A Gaussian deficit model instance that provides a
-                `sigma` method for computing wake width.
             n_theta: Number of azimuthal discretization points for lookup table.
             n_r: Number of radial discretization points for lookup table.
             dr: Grid spacing for R_sigma in lookup table.
             dcw: Grid spacing for CW_sigma in lookup table.
+
+        Note:
+            The `deficit_model` attribute is set automatically when this model
+            is passed to a Gaussian deficit model's `rotor_avg_model` parameter.
         """
-        self.deficit_model = deficit_model
+        self.deficit_model = None
 
         # Try to load PyWake's precomputed table first (faster)
         pywake_table = _load_pywake_overlap_table()
@@ -435,7 +438,18 @@ class GaussianOverlapAvgModel(RotorAvg):
 
         Returns:
             The rotor-averaged deficit values.
+
+        Raises:
+            ValueError: If deficit_model has not been set (this is set
+                automatically when passed to a Gaussian deficit model).
         """
+        if self.deficit_model is None:
+            raise ValueError(
+                "GaussianOverlapAvgModel.deficit_model is not set. "
+                "Pass this rotor_avg_model to a Gaussian deficit model's "
+                "rotor_avg_model parameter to set it automatically."
+            )
+
         feps = get_float_eps()
 
         # Evaluate deficit at centerline (cw=0)
