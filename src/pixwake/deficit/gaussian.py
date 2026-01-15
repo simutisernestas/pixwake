@@ -238,8 +238,11 @@ class TurboGaussianDeficit(WakeDeficit):
             ceps: The near-wake coefficient for initial wake expansion.
             ctlim: The maximum thrust coefficient for numerical stability.
             ct2a: A callable to convert thrust coefficient to induction factor.
-            use_effective_ws: If `True`, use the effective wind speed as the
-                reference for deficit calculation.
+            use_effective_ws: If `True`, use the effective wind speed at the
+                source (upstream) turbine as the reference for deficit scaling.
+                If `False`, use the ambient wind speed, which corresponds to
+                PyWake's `WS_key='WS_jlk'` behavior used in Ørsted's TurbOPark
+                model (scaling deficit by ambient WS at downstream location).
             use_effective_ti: If `True`, use the effective turbulence intensity
                 for the wake expansion calculation.
             rotor_avg_model: An optional rotor averaging model. If a
