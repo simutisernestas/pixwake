@@ -386,7 +386,9 @@ class TurboGaussianDeficit(WakeDeficit):
 
         # Gaussian radial decay
         sigma_dimensional = sigma_normalized * ctx.turbine.rotor_diameter
-        radial_factor = jnp.exp(-(ctx.cw**2) / (2.0 * sigma_dimensional**2 + feps))
+        radial_factor = jnp.exp(
+            -(ctx.cw**2) / jnp.maximum(2.0 * sigma_dimensional**2, feps)
+        )
 
         # Total deficit as fraction
         deficit_fraction = centerline_deficit * radial_factor
