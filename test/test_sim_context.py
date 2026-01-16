@@ -37,6 +37,8 @@ def simulation_context(turbine):
 
 def get_all_deficit_models():
     """Discover deficit model classes from pixwake.deficit using its __all__."""
+    import inspect
+
     mod = importlib.import_module("pixwake.deficit")
     names = getattr(mod, "__all__", None)
     assert names is not None
@@ -45,6 +47,9 @@ def get_all_deficit_models():
     for name in names:
         obj = getattr(mod, name, None)
         assert obj is not None
+        # Skip abstract base classes
+        if inspect.isabstract(obj):
+            continue
         instance = obj()
         models.append(instance)
 
