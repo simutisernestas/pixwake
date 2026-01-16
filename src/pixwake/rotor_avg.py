@@ -184,12 +184,16 @@ class CGIRotorAvg(RotorAvg):
         dw = ctx.dw[..., jnp.newaxis]
         cw = ctx.cw[..., jnp.newaxis]
 
-        # TODO: is this correct ? Should add test against pywake !
         node_x_offset = self.nodes_x.reshape(1, 1, -1) * R_dst.reshape(1, -1, 1)
         node_y_offset = self.nodes_y.reshape(1, 1, -1) * R_dst.reshape(1, -1, 1)
 
         hcw_at_nodes = cw + node_x_offset
-        dh_at_nodes = 0.0 + node_y_offset  # TODO: 0 should be ctx.dh ???
+        # Note: The vertical baseline (0.0) is correct here. The `cw` already includes
+        # vertical distance between turbines via ssqrt(horizontal_cw^2 + dz^2) computed
+        # in WakeSimulation._get_downwind_crosswind_distances(). The node_y_offset adds
+        # vertical sampling points across the rotor disk relative to the hub center.
+        # TODO: need to verify this is correct for non-level terrain; It will become relevant there...
+        dh_at_nodes = 0.0 + node_y_offset
         dw_at_nodes = jnp.broadcast_to(dw, hcw_at_nodes.shape)
         cw_at_nodes = ssqrt(hcw_at_nodes**2 + dh_at_nodes**2)
 

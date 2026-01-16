@@ -402,16 +402,22 @@ class SimulationResult:
         """Calculates the Annual Energy Production (AEP) of the wind farm.
 
         This method computes the total AEP in GWh. If `probabilities` are not
-        provided, it assumes a uniform distribution over the simulation cases.
+        provided, it assumes a uniform distribution over the simulation cases
+        (i.e., timeseries mode where each case represents an equal time period).
 
         Args:
             probabilities: An optional JAX numpy array of the probabilities for
-                each simulation case.
+                each simulation case. Should sum to 1.0 if representing a
+                probability distribution over wind conditions.
 
         Returns:
             The total AEP of the wind farm in GWh.
+
+        Note:
+            Power curve values are expected to be in kW. The calculation uses:
+            AEP = sum(power * probability * hours_per_year) * GWh_conversion
+            where hours_per_year = 8760 and GWh_conversion = 1e-9 (W to GWh).
         """
-        # Note: power values assumed to be in kW, converted to W for calculation
         turbine_powers = self.power() * 1e3  # kW -> W
 
         if probabilities is None:
@@ -576,14 +582,18 @@ class WakeSimulation:
         ):
             self.blockage.exclude_downstream_speedup = True
 
-        def __auto_mapping() -> Callable:
+        def __auto_mapping() -> Callable[
+            [SimulationContext], tuple[jnp.ndarray, jnp.ndarray | None]
+        ]:
             return (
                 self._simulate_map
                 if jax.default_backend() == "cpu"
                 else self._simulate_vmap
             )
 
-        self.__sim_call_table: dict[str, Callable] = {
+        self.__sim_call_table: dict[
+            str, Callable[[SimulationContext], tuple[jnp.ndarray, jnp.ndarray | None]]
+        ] = {
             "auto": __auto_mapping(),
             "vmap": self._simulate_vmap,
             "map": self._simulate_map,
@@ -908,19 +918,24 @@ class WakeSimulation:
             ws_out = self.deficit.superposition(ws_out, masked_deficit)
             return jnp.maximum(0.0, ws_out)
 
-        # Compute flow map for each height sample and average
-        flow_maps = []
-        for fm_z_sample in height_samples:
+        # Compute flow map for each height sample using incremental mean
+        # This avoids creating intermediate arrays and reduces memory usage
+        flow_map_result = None
+        for i, fm_z_sample in enumerate(height_samples):
             dw, cw = self._get_downwind_crosswind_distances(
                 wd, wt_x, wt_y, turbines.hub_height, fm_x, fm_y, fm_z_sample
             )
             flow_map_at_height = jax.vmap(_apply_models_to_flowmap)(
                 ws, dw, cw, result.effective_ws, result.effective_ti
             )
-            flow_maps.append(flow_map_at_height)
+            if flow_map_result is None:
+                flow_map_result = flow_map_at_height
+                continue
 
-        # Average across height samples
-        flow_map_result = jnp.mean(jnp.stack(flow_maps, axis=0), axis=0)
+            # Incremental mean: mean_n = mean_{n-1} + (x_n - mean_{n-1}) / n
+            flow_map_result = flow_map_result + (
+                flow_map_at_height - flow_map_result
+            ) / (i + 1)
 
         return flow_map_result, (fm_x, fm_y)
 

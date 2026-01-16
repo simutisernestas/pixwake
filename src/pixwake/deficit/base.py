@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from dataclasses import replace
 
 import jax.numpy as jnp
 
@@ -73,7 +74,8 @@ class WakeDeficit(ABC):
             A tuple containing the updated effective wind speeds and the
             simulation context with added wake radius.
         """
-        ctx.wake_radius = self._wake_radius(ws_eff, ti_eff, ctx)
+        wake_radius = self._wake_radius(ws_eff, ti_eff, ctx)
+        ctx = replace(ctx, wake_radius=wake_radius)
 
         ws_deficit_m = (
             self.rotor_avg_model(self._deficit, ws_eff, ti_eff, ctx)
