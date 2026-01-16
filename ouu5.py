@@ -152,6 +152,7 @@ def create_wfm(site, wind_turbines):
         rotor_avg_model=GaussianOverlapAvgModel(),
         superposition=SquaredSum(),
         use_effective_ws=False,
+        use_radius_mask=False,
     )
     return WakeSimulation(
         wind_turbines,
