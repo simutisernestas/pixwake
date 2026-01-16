@@ -3,6 +3,7 @@ import time
 from functools import partial
 
 import h5py
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
@@ -14,6 +15,7 @@ from py_wake.site.xrsite import XRSite
 from py_wake.wind_turbines.generic_wind_turbines import GenericWindTurbine
 
 from pixwake import Turbine, Curve, WakeSimulation
+from pixwake.plot import plot_flow_map
 from pixwake.deficit import TurboGaussianDeficit, SelfSimilarityBlockageDeficit2020
 from pixwake.rotor_avg import GaussianOverlapAvgModel
 from pixwake.superposition import SquaredSum
@@ -159,11 +161,6 @@ def create_wfm(site, wind_turbines):
     )
 
 
-# =================================================================================
-# == Gradient Functions (No changes needed here)
-# =================================================================================
-
-
 __liberal_aep_jax_func_cache = None
 
 
@@ -275,6 +272,49 @@ if __name__ == "__main__":
         metavar="N",
         help="Run N gradient evaluations to measure runtime, then exit.",
     )
+    parser.add_argument(
+        "--plot-flow-map",
+        action="store_true",
+        help="Plot the flow map and exit.",
+    )
+    parser.add_argument(
+        "--flow-map-ws",
+        type=float,
+        default=9.0,
+        help="Wind speed for flow map plot (default: 9.0 m/s).",
+    )
+    parser.add_argument(
+        "--flow-map-wd",
+        type=float,
+        default=270.0,
+        help="Wind direction for flow map plot (default: 270 deg).",
+    )
+    parser.add_argument(
+        "--flow-map-output",
+        type=str,
+        default=None,
+        help="Output file path for flow map plot (e.g., 'flow_map.png'). If not set, displays interactively.",
+    )
+    parser.add_argument(
+        "--flow-map-height-mode",
+        type=str,
+        choices=["mean", "specific", "average"],
+        default="average",
+        help="Height mode for flow map: 'mean' (mean hub height), 'specific' (use --flow-map-height), "
+        "or 'average' (average across rotor-swept heights). Default: 'average'.",
+    )
+    parser.add_argument(
+        "--flow-map-height",
+        type=float,
+        default=None,
+        help="Specific height for flow map when --flow-map-height-mode=specific.",
+    )
+    parser.add_argument(
+        "--flow-map-n-heights",
+        type=int,
+        default=5,
+        help="Number of height samples when --flow-map-height-mode=average. Default: 5.",
+    )
     args = parser.parse_args()
 
     if args.seed:
@@ -326,6 +366,70 @@ if __name__ == "__main__":
     x_neighbors = np.concatenate(x_neighbors)
     y_neighbors = np.concatenate(y_neighbors)
     wt_types_neighbors = np.concatenate(types_neighbors)
+
+    if args.plot_flow_map:
+        height_mode_desc = {
+            "mean": "mean hub height",
+            "specific": f"height={args.flow_map_height}m",
+            "average": f"averaged over {args.flow_map_n_heights} heights",
+        }
+        print(
+            f"\n--- Plotting flow map (ws={args.flow_map_ws} m/s, wd={args.flow_map_wd} deg, "
+            f"{height_mode_desc[args.flow_map_height_mode]}) ---"
+        )
+
+        if args.mode == "conservative":
+            all_x = np.concatenate([x0, x_neighbors])
+            all_y = np.concatenate([y0, y_neighbors])
+            all_types = (
+                np.concatenate([np.full(len(x0), TARGET_TYPE_IDX), wt_types_neighbors])
+                .astype(int)
+                .tolist()
+            )
+        else:
+            all_x = x0
+            all_y = y0
+            all_types = [TARGET_TYPE_IDX] * len(x0)
+
+        # Define grid bounds with margin around turbines
+        margin = 2000
+        x_min, x_max = all_x.min() - margin, all_x.max() + margin
+        y_min, y_max = all_y.min() - margin, all_y.max() + margin
+        grid_density = 400
+        grid_x, grid_y = np.mgrid[
+            x_min : x_max : grid_density * 1j,
+            y_min : y_max : grid_density * 1j,
+        ]
+
+        flow_map_data, (fm_x, fm_y) = wfm_pristine.flow_map(
+            jnp.array(all_x),
+            jnp.array(all_y),
+            fm_x=jnp.array(grid_x.ravel()),
+            fm_y=jnp.array(grid_y.ravel()),
+            fm_z=args.flow_map_height,
+            ws=args.flow_map_ws,
+            wd=args.flow_map_wd,
+            ti=0.1,
+            wt_types=all_types,
+            height_mode=args.flow_map_height_mode,
+            n_height_samples=args.flow_map_n_heights,
+        )
+
+        ax = plot_flow_map(
+            fm_x, fm_y, flow_map_data[0], jnp.array(all_x), jnp.array(all_y), show=False
+        )
+        ax.set_title(
+            f"Flow Map ({args.mode} mode, ws={args.flow_map_ws} m/s, wd={args.flow_map_wd}°, "
+            f"{height_mode_desc[args.flow_map_height_mode]})"
+        )
+
+        if args.flow_map_output:
+            plt.savefig(args.flow_map_output, dpi=150, bbox_inches="tight")
+            print(f"Flow map saved to {args.flow_map_output}")
+        else:
+            plt.show()
+
+        raise SystemExit(0)
 
     print(f"--- Configuring optimizer for '{args.mode}' mode ---")
 

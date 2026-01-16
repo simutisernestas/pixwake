@@ -558,8 +558,14 @@ class WakeSimulation:
         cos_a = jnp.where(jnp.abs(cos_a) < trig_tol, 0.0, cos_a)
         sin_a = jnp.where(jnp.abs(sin_a) < trig_tol, 0.0, sin_a)
         # Result shape: (n_wd, n_turbines, n_turbines)
-        down_wind_d = -(dx * cos_a[:, None, None] + dy * sin_a[:, None, None])
-        horizontal_cross_wind_d = dx * sin_a[:, None, None] - dy * cos_a[:, None, None]
+        down_wind_d = -(
+            dx[None, :, :] * cos_a[:, None, None]
+            + dy[None, :, :] * sin_a[:, None, None]
+        )
+        horizontal_cross_wind_d = (
+            dx[None, :, :] * sin_a[:, None, None]
+            - dy[None, :, :] * cos_a[:, None, None]
+        )
         cross_wind_d = ssqrt(horizontal_cross_wind_d**2 + dz[None, :, :] ** 2)
         return down_wind_d, cross_wind_d
 
@@ -569,11 +575,13 @@ class WakeSimulation:
         wt_y: jnp.ndarray,
         fm_x: jnp.ndarray | None = None,
         fm_y: jnp.ndarray | None = None,
-        fm_z: jnp.ndarray | None = None,
+        fm_z: jnp.ndarray | float | None = None,
         ws: jnp.ndarray | float = 10.0,
         wd: jnp.ndarray | float = 270.0,
         ti: jnp.ndarray | float | None = None,
         wt_types: list[int] | None = None,
+        height_mode: str = "mean",
+        n_height_samples: int = 5,
     ) -> tuple[jnp.ndarray, tuple[jnp.ndarray, jnp.ndarray]]:
         """Generates a 2D flow map of the wind farm.
 
@@ -587,12 +595,22 @@ class WakeSimulation:
                 grid is generated based on turbine positions.
             fm_y: The y-coordinates of the flow map grid. If `None`, a default
                 grid is generated based on turbine positions.
+            fm_z: The z-coordinate(s) for the flow map. Used when `height_mode`
+                is "specific". Can be a scalar or array matching fm_x/fm_y.
             ws: The free-stream wind speed.
             wd: The wind direction in degrees.
             ti: The ambient turbulence intensity (optional).
             wt_types: Optional list of turbine type IDs corresponding to each position.
                 When provided, turbines are selected from the turbine library provided
                 at initialization. Must have the same length as wt_x/wt_y.
+            height_mode: How to handle the z-coordinate for the flow map:
+                - "mean": Use the mean hub height of all turbines (default).
+                - "specific": Use the provided `fm_z` value(s).
+                - "average": Average wind speed across a range of heights spanning
+                  from (min_hub_height - max_rotor_radius/2) to
+                  (max_hub_height + max_rotor_radius/2).
+            n_height_samples: Number of height samples to use when `height_mode`
+                is "average". Default is 5.
 
         Returns:
             A tuple containing the flow map wind speeds (flattened array) and
@@ -622,13 +640,28 @@ class WakeSimulation:
 
         result = self(wt_x, wt_y, ws, wd, ti, wt_types=wt_types)
 
-        # TODO: should support passing of fm_z as well; this could be
-        # all type heights together and then could average over height
-        # for convenient plotting...
-        fm_z = jnp.full_like(fm_x, jnp.mean(turbines.hub_height))
-        dw, cw = self._get_downwind_crosswind_distances(
-            wd, wt_x, wt_y, turbines.hub_height, fm_x, fm_y, fm_z
-        )
+        # Determine heights for flow map based on height_mode
+        hub_heights = jnp.atleast_1d(turbines.hub_height)
+        rotor_radii = jnp.atleast_1d(turbines.rotor_diameter) / 2.0
+
+        if height_mode == "specific":
+            if fm_z is None:
+                raise ValueError("fm_z must be provided when height_mode='specific'")
+            fm_z_values = jnp.atleast_1d(jnp.asarray(fm_z))
+            if fm_z_values.size == 1:
+                fm_z_arr = jnp.full_like(fm_x, fm_z_values[0])
+            else:
+                fm_z_arr = fm_z_values
+            height_samples = [fm_z_arr]
+        elif height_mode == "average":
+            # Height range: min(hub_height - rotor_radius) to max(hub_height + rotor_radius)
+            z_min = jnp.min(hub_heights - rotor_radii)
+            z_max = jnp.max(hub_heights + rotor_radii)
+            z_levels = jnp.linspace(z_min, z_max, n_height_samples)
+            height_samples = [jnp.full_like(fm_x, z) for z in z_levels]
+        else:  # "mean" (default)
+            fm_z_arr = jnp.full_like(fm_x, jnp.mean(hub_heights))
+            height_samples = [fm_z_arr]
 
         def _apply_models_to_flowmap(
             _ws_amb: jnp.ndarray,
@@ -637,21 +670,50 @@ class WakeSimulation:
             _ws_eff: jnp.ndarray,
             _ti_eff: jnp.ndarray | None,
         ) -> jnp.ndarray:
-            """Apply blockage and deficit models to flow map points."""
+            """Apply blockage and deficit models to flow map points.
+
+            For flow maps, we bypass rotor averaging since grid points don't have
+            rotors - we want point-wise deficit values, not rotor-averaged values.
+            """
             ctx = SimulationContext(turbines, _dw, _cw, _ws_amb, _ti_eff)
-            ws_out = _ws_eff
+            ws_out = _ws_amb  # Start with ambient wind speed
 
             # Apply blockage first (if provided)
             if self.blockage is not None:
-                ws_out, ctx = self.blockage(ws_out, _ti_eff, ctx)
+                ws_out, ctx = self.blockage(_ws_eff, _ti_eff, ctx)
 
-            # Apply wake deficit
-            ws_out, _ = self.deficit(ws_out, _ti_eff, ctx)
-            return ws_out
+            # Apply wake deficit - bypass rotor averaging for flow map points
+            # Rotor averaging is designed for turbine-to-turbine calculations,
+            # not for grid points which have no rotor diameter.
+            ctx.wake_radius = self.deficit._wake_radius(_ws_eff, _ti_eff, ctx)
 
-        return jax.vmap(_apply_models_to_flowmap)(
-            ws, dw, cw, result.effective_ws, result.effective_ti
-        ), (fm_x, fm_y)
+            # Call _deficit directly to get point-wise deficit (no rotor averaging)
+            ws_deficit_m = self.deficit._deficit(_ws_eff, _ti_eff, ctx)
+
+            # Apply mask: only downstream points in wake cone
+            in_wake_mask = ctx.dw > 0.0
+            if self.deficit.use_radius_mask:
+                in_wake_mask &= jnp.abs(ctx.cw) < ctx.wake_radius
+
+            masked_deficit = jnp.where(in_wake_mask, ws_deficit_m, 0.0)
+            ws_out = self.deficit.superposition(ws_out, masked_deficit)
+            return jnp.maximum(0.0, ws_out)
+
+        # Compute flow map for each height sample and average
+        flow_maps = []
+        for fm_z_sample in height_samples:
+            dw, cw = self._get_downwind_crosswind_distances(
+                wd, wt_x, wt_y, turbines.hub_height, fm_x, fm_y, fm_z_sample
+            )
+            flow_map_at_height = jax.vmap(_apply_models_to_flowmap)(
+                ws, dw, cw, result.effective_ws, result.effective_ti
+            )
+            flow_maps.append(flow_map_at_height)
+
+        # Average across height samples
+        flow_map_result = jnp.mean(jnp.stack(flow_maps, axis=0), axis=0)
+
+        return flow_map_result, (fm_x, fm_y)
 
     def _simulate_vmap(
         self, ctx: SimulationContext
