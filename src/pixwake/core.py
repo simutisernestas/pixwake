@@ -1,6 +1,18 @@
+"""Core simulation components for pixwake.
+
+This module contains the main classes and functions for wind farm wake simulation:
+    - Curve: Performance curve dataclass (power, thrust coefficient)
+    - Turbine: Wind turbine specification with physical and performance data
+    - SimulationContext: Container for simulation state passed to models
+    - SimulationResult: Container for simulation outputs
+    - WakeSimulation: Main orchestrator for running simulations
+    - fixed_point: JAX-transformable fixed-point iteration solver
+"""
+
 from __future__ import annotations
 
 import hashlib
+import json
 import pickle
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -19,6 +31,13 @@ from jax.tree_util import register_pytree_node_class
 
 from pixwake.jax_utils import default_float_type, ssqrt
 
+# Hours in a year for AEP (Annual Energy Production) calculation
+HOURS_PER_YEAR: int = 24 * 365
+# Conversion factor from Watts to GWh (Gigawatt-hours)
+GWH_CONVERSION_FACTOR: float = 1e-9
+# Default grid resolution for flow maps when not specified by user
+DEFAULT_FLOW_MAP_RESOLUTION: int = 200
+
 
 @dataclass(frozen=True)
 @register_pytree_node_class
@@ -35,6 +54,10 @@ class Curve:
 
     ws: jnp.ndarray
     values: jnp.ndarray
+
+    def __repr__(self) -> str:
+        ws_range = f"{float(self.ws.min()):.1f}-{float(self.ws.max()):.1f}"
+        return f"Curve(ws=[{ws_range}], n_points={len(self.ws)})"
 
     def tree_flatten(self) -> tuple[tuple, tuple]:
         children = (self.ws, self.values)
@@ -95,6 +118,41 @@ class Turbine:
             )
             object.__setattr__(self, "_is_single_type", is_single)
 
+    def validate(self) -> None:
+        """Validate turbine data consistency.
+
+        Raises:
+            ValueError: If any validation check fails.
+        """
+        # Check rotor diameter
+        if self._is_single_type:
+            if self.rotor_diameter <= 0:
+                raise ValueError(
+                    f"Rotor diameter must be positive, got {self.rotor_diameter}"
+                )
+            if self.hub_height <= 0:
+                raise ValueError(f"Hub height must be positive, got {self.hub_height}")
+
+        # Check power curve consistency
+        if len(self.power_curve.ws) != len(self.power_curve.values):
+            raise ValueError(
+                f"Power curve wind speeds ({len(self.power_curve.ws)}) and "
+                f"values ({len(self.power_curve.values)}) must have same length"
+            )
+
+        # Check ct curve consistency
+        if len(self.ct_curve.ws) != len(self.ct_curve.values):
+            raise ValueError(
+                f"Ct curve wind speeds ({len(self.ct_curve.ws)}) and "
+                f"values ({len(self.ct_curve.values)}) must have same length"
+            )
+
+        # Check wind speeds are sorted
+        if not jnp.all(jnp.diff(self.power_curve.ws) > 0):
+            raise ValueError("Power curve wind speeds must be strictly increasing")
+        if not jnp.all(jnp.diff(self.ct_curve.ws) > 0):
+            raise ValueError("Ct curve wind speeds must be strictly increasing")
+
     def power(self, ws: jnp.ndarray) -> jnp.ndarray:
         """Calculates the turbine's power output for given wind speeds.
         This method interpolates the power curve to find the power output for
@@ -150,6 +208,12 @@ class Turbine:
         return jax.vmap(_interp, in_axes=(1, 0, 0), out_axes=1)(
             ws, self.ct_curve.ws, self.ct_curve.values
         )
+
+    def __repr__(self) -> str:
+        if self._is_single_type:
+            return f"Turbine(D={self.rotor_diameter}m, H={self.hub_height}m)"
+        n_types = len(self.rotor_diameter)
+        return f"Turbines(n={n_types}, D={self.rotor_diameter}, H={self.hub_height})"
 
     def tree_flatten(self) -> tuple[tuple, tuple]:
         children = (
@@ -296,6 +360,44 @@ class SimulationResult:
         """Calculates the power of each turbine for each wind condition."""
         return self.turbine.power(self.effective_ws)
 
+    def gross_power(self) -> jnp.ndarray:
+        """Calculates the gross (unwaked) power of each turbine.
+
+        This is the power each turbine would produce if there were no wake effects,
+        using the ambient wind speed.
+
+        Returns:
+            Gross power array with shape (n_cases, n_turbines) in kW.
+        """
+        # Broadcast ambient wind speed to turbine array shape
+        ws_ambient = jnp.broadcast_to(self.ws[:, None], self.effective_ws.shape)
+        return self.turbine.power(ws_ambient)
+
+    def wake_losses(self) -> jnp.ndarray:
+        """Calculates the wake losses as a fraction of gross power.
+
+        Wake loss is defined as: 1 - (actual_power / gross_power)
+        A value of 0.1 means 10% power is lost due to wake effects.
+
+        Returns:
+            Wake loss fraction array with shape (n_cases, n_turbines).
+            Values are in range [0, 1] where 0 means no loss and 1 means total loss.
+        """
+        gross = self.gross_power()
+        actual = self.power()
+        # Avoid division by zero when gross power is zero
+        return jnp.where(gross > 0, 1.0 - actual / gross, 0.0)
+
+    def farm_wake_loss(self) -> jnp.ndarray:
+        """Calculates the total farm wake loss for each wind condition.
+
+        Returns:
+            Farm-level wake loss fraction for each case with shape (n_cases,).
+        """
+        gross_total = self.gross_power().sum(axis=1)
+        actual_total = self.power().sum(axis=1)
+        return jnp.where(gross_total > 0, 1.0 - actual_total / gross_total, 0.0)
+
     def aep(self, probabilities: jnp.ndarray | None = None) -> jnp.ndarray:
         """Calculates the Annual Energy Production (AEP) of the wind farm.
 
@@ -309,26 +411,110 @@ class SimulationResult:
         Returns:
             The total AEP of the wind farm in GWh.
         """
-        # TODO: power values can have arbitrary units;
-        # these scaling factors should be parameters probably
-        # or not consider units at all here. Now assuming power in kW...
-        turbine_powers = self.power() * 1e3  # W
-
-        hours_in_year = 24 * 365
-        gwh_conversion_factor = 1e-9
+        # Note: power values assumed to be in kW, converted to W for calculation
+        turbine_powers = self.power() * 1e3  # kW -> W
 
         if probabilities is None:
             # Assuming timeseries covers one year
             return (
-                turbine_powers * hours_in_year * gwh_conversion_factor
+                turbine_powers * HOURS_PER_YEAR * GWH_CONVERSION_FACTOR
             ).sum() / self.effective_ws.shape[0]
 
         probabilities = probabilities.reshape(-1, 1)
-        assert probabilities.shape[0] == turbine_powers.shape[0]
+        if probabilities.shape[0] != turbine_powers.shape[0]:
+            raise ValueError(
+                f"probabilities length ({probabilities.shape[0]}) must match "
+                f"number of simulation cases ({turbine_powers.shape[0]})"
+            )
 
         return (
-            turbine_powers * probabilities * hours_in_year * gwh_conversion_factor
+            turbine_powers * probabilities * HOURS_PER_YEAR * GWH_CONVERSION_FACTOR
         ).sum()
+
+    def to_json(self) -> str:
+        """Serialize the simulation result to a JSON string.
+
+        Returns:
+            JSON string representation of the simulation result.
+
+        Note:
+            The turbine object is serialized with its curves data.
+            JAX arrays are converted to nested Python lists.
+        """
+
+        def _array_to_list(arr: jnp.ndarray | None) -> list | None:
+            if arr is None:
+                return None
+            return arr.tolist()
+
+        data = {
+            "turbine": {
+                "rotor_diameter": float(self.turbine.rotor_diameter)
+                if self.turbine._is_single_type
+                else _array_to_list(self.turbine.rotor_diameter),
+                "hub_height": float(self.turbine.hub_height)
+                if self.turbine._is_single_type
+                else _array_to_list(self.turbine.hub_height),
+                "power_curve": {
+                    "ws": _array_to_list(self.turbine.power_curve.ws),
+                    "values": _array_to_list(self.turbine.power_curve.values),
+                },
+                "ct_curve": {
+                    "ws": _array_to_list(self.turbine.ct_curve.ws),
+                    "values": _array_to_list(self.turbine.ct_curve.values),
+                },
+            },
+            "wt_x": _array_to_list(self.wt_x),
+            "wt_y": _array_to_list(self.wt_y),
+            "wd": _array_to_list(self.wd),
+            "ws": _array_to_list(self.ws),
+            "effective_ws": _array_to_list(self.effective_ws),
+            "ti": _array_to_list(self.ti),
+            "effective_ti": _array_to_list(self.effective_ti),
+        }
+        return json.dumps(data, indent=2)
+
+    @classmethod
+    def from_json(cls, json_str: str) -> "SimulationResult":
+        """Deserialize a simulation result from a JSON string.
+
+        Args:
+            json_str: JSON string representation of the simulation result.
+
+        Returns:
+            SimulationResult object reconstructed from the JSON data.
+        """
+        data = json.loads(json_str)
+
+        def _list_to_array(lst: list | None) -> jnp.ndarray | None:
+            if lst is None:
+                return None
+            return jnp.array(lst)
+
+        turbine_data = data["turbine"]
+        turbine = Turbine(
+            rotor_diameter=turbine_data["rotor_diameter"],
+            hub_height=turbine_data["hub_height"],
+            power_curve=Curve(
+                ws=jnp.array(turbine_data["power_curve"]["ws"]),
+                values=jnp.array(turbine_data["power_curve"]["values"]),
+            ),
+            ct_curve=Curve(
+                ws=jnp.array(turbine_data["ct_curve"]["ws"]),
+                values=jnp.array(turbine_data["ct_curve"]["values"]),
+            ),
+        )
+
+        return cls(
+            turbine=turbine,
+            wt_x=_list_to_array(data["wt_x"]),
+            wt_y=_list_to_array(data["wt_y"]),
+            wd=_list_to_array(data["wd"]),
+            ws=_list_to_array(data["ws"]),
+            effective_ws=_list_to_array(data["effective_ws"]),
+            ti=_list_to_array(data["ti"]),
+            effective_ti=_list_to_array(data["effective_ti"]),
+        )
 
 
 class WakeSimulation:
@@ -404,6 +590,15 @@ class WakeSimulation:
             "_manual": self._simulate_manual,
         }
 
+    def __repr__(self) -> str:
+        deficit_name = type(self.deficit).__name__
+        turb_name = type(self.turbulence).__name__ if self.turbulence else "None"
+        block_name = type(self.blockage).__name__ if self.blockage else "None"
+        return (
+            f"WakeSimulation(deficit={deficit_name}, "
+            f"turbulence={turb_name}, blockage={block_name})"
+        )
+
     def __call__(
         self,
         wt_xs: jnp.ndarray,
@@ -458,12 +653,14 @@ class WakeSimulation:
 
         turbines = self.turbines
         if isinstance(self.turbines, list) and wt_types is not None:
-            assert len(wt_xs) == len(wt_types)
-            assert isinstance(self.turbines, list)
+            if len(wt_xs) != len(wt_types):
+                raise ValueError(
+                    f"wt_types length ({len(wt_types)}) must match "
+                    f"number of turbine positions ({len(wt_xs)})"
+                )
             turbines = Turbines._from_types(
                 turbine_library=self.turbines, turbine_types=wt_types
             )
-        assert isinstance(turbines, (Turbine, Turbines))
 
         hh = turbines.hub_height
         dw, cw = self._get_downwind_crosswind_distances(wd_amb, wt_xs, wt_ys, hh)
@@ -489,20 +686,35 @@ class WakeSimulation:
         """Preprocesses and validates the ambient conditions."""
         wt_xs = self._atleast_1d_jax(wt_xs)
         wt_ys = self._atleast_1d_jax(wt_ys)
-        assert wt_xs.shape == wt_ys.shape
-        assert len(wt_xs.shape) == 1
+        if wt_xs.shape != wt_ys.shape:
+            raise ValueError(
+                f"wt_xs shape {wt_xs.shape} must match wt_ys shape {wt_ys.shape}"
+            )
+        if len(wt_xs.shape) != 1:
+            raise ValueError(
+                f"Turbine positions must be 1D arrays, got shape {wt_xs.shape}"
+            )
 
         ws_amb = self._atleast_1d_jax(ws_amb)
         wd = self._atleast_1d_jax(wd)
-        assert ws_amb.shape == wd.shape
-        assert len(ws_amb.shape) == 1
+        if ws_amb.shape != wd.shape:
+            raise ValueError(
+                f"ws_amb shape {ws_amb.shape} must match wd shape {wd.shape}"
+            )
+        if len(ws_amb.shape) != 1:
+            raise ValueError(
+                f"Wind conditions must be 1D arrays, got shape {ws_amb.shape}"
+            )
 
         ti_arr: jnp.ndarray | None = None
         if ti is not None:
             ti_arr = self._atleast_1d_jax(ti)
             if ti_arr.size == 1:
                 ti_arr = jnp.full_like(ws_amb, ti_arr)
-            assert ti_arr.shape == ws_amb.shape
+            if ti_arr.shape != ws_amb.shape:
+                raise ValueError(
+                    f"ti shape {ti_arr.shape} must match ws_amb shape {ws_amb.shape}"
+                )
 
         return wt_xs, wt_ys, ws_amb, wd, ti_arr
 
@@ -552,11 +764,6 @@ class WakeSimulation:
         cos_a = jnp.sin(wd_rad)  # equivalent to cos((450 - wd) % 360)
         sin_a = jnp.cos(wd_rad)  # equivalent to sin((450 - wd) % 360)
         # Clean up near-zero values from floating-point errors in trig functions
-        # JAX's cos/sin can return values like 1e-8 instead of exactly 0 for angles
-        # like 90, 180, 270 degrees. This ensures symmetric grids produce symmetric dw/cw matrices.
-        trig_tol = 1e-7
-        cos_a = jnp.where(jnp.abs(cos_a) < trig_tol, 0.0, cos_a)
-        sin_a = jnp.where(jnp.abs(sin_a) < trig_tol, 0.0, sin_a)
         # Result shape: (n_wd, n_turbines, n_turbines)
         down_wind_d = -(
             dx[None, :, :] * cos_a[:, None, None]
@@ -621,15 +828,17 @@ class WakeSimulation:
 
         turbines = self.turbines
         if isinstance(self.turbines, list) and wt_types is not None:
-            assert len(wt_x) == len(wt_types)
-            assert isinstance(self.turbines, list)
+            if len(wt_x) != len(wt_types):
+                raise ValueError(
+                    f"wt_types length ({len(wt_types)}) must match "
+                    f"number of turbine positions ({len(wt_x)})"
+                )
             turbines = Turbines._from_types(
                 turbine_library=self.turbines, turbine_types=wt_types
             )
-        assert isinstance(turbines, (Turbine, Turbines))
 
         if fm_x is None or fm_y is None:
-            grid_res = 200  # TOOD: on larger farms this is very course...
+            grid_res = DEFAULT_FLOW_MAP_RESOLUTION
             x_min, x_max = jnp.min(wt_x) - 200, jnp.max(wt_x) + 200
             y_min, y_max = jnp.min(wt_y) - 200, jnp.max(wt_y) + 200
             grid_x, grid_y = jnp.meshgrid(

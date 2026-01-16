@@ -3,12 +3,66 @@ from typing import TYPE_CHECKING, Any, Callable
 import jax.numpy as jnp
 
 from ..core import SimulationContext
-from ..jax_utils import get_float_eps
+from ..jax_utils import GRAD_SAFE_MIN, get_float_eps
 from ..utils import ct2a_madsen
 from .base import WakeDeficit
 
 if TYPE_CHECKING:
     from ..rotor_avg import GaussianOverlapAvgModel
+
+
+def _compute_gaussian_deficit(
+    sigma_normalized: jnp.ndarray,
+    ct: jnp.ndarray,
+    ctx: SimulationContext,
+    ct2a: callable,
+    ws_eff: jnp.ndarray,
+    use_effective_ws: bool,
+    use_max_for_radial: bool = False,
+) -> jnp.ndarray:
+    """Compute Gaussian wake deficit from normalized sigma and thrust coefficient.
+
+    This is a shared helper for Gaussian-based deficit models to avoid code duplication.
+
+    Args:
+        sigma_normalized: Wake width normalized by rotor diameter (n_receivers, n_sources).
+        ct: Thrust coefficient array (1, n_sources).
+        ctx: Simulation context.
+        ct2a: Callable to convert thrust coefficient to induction factor.
+        ws_eff: Effective wind speeds at each turbine.
+        use_effective_ws: If True, use effective WS as reference; else use ambient.
+        use_max_for_radial: If True, use jnp.maximum for radial denominator (TurboGaussian);
+            otherwise use addition (Bastankhah).
+
+    Returns:
+        Wake deficit matrix (n_receivers, n_sources) in m/s.
+    """
+    feps = get_float_eps()
+
+    # Effective thrust coefficient accounting for wake expansion
+    ct_effective = ct / (8.0 * sigma_normalized**2 + feps)
+
+    # Centerline deficit (as fraction of reference wind speed)
+    centerline_deficit = jnp.minimum(1.0, 2.0 * ct2a(ct_effective))
+
+    # Gaussian radial decay
+    sigma_dimensional = sigma_normalized * ctx.turbine.rotor_diameter
+    denom = 2.0 * sigma_dimensional**2
+    if use_max_for_radial:
+        denom = jnp.maximum(denom, feps)
+    else:
+        denom = denom + feps
+    radial_factor = jnp.exp(-(ctx.cw**2) / denom)
+
+    # Total deficit as fraction
+    deficit_fraction = centerline_deficit * radial_factor
+
+    # Convert to absolute deficit (m/s)
+    ws_reference = ws_eff[None, :]
+    ws_reference = (
+        ws_reference if use_effective_ws else jnp.full_like(ws_reference, ctx.ws)
+    )
+    return deficit_fraction * ws_reference
 
 
 class BastankhahGaussianDeficit(WakeDeficit):
@@ -115,30 +169,16 @@ class BastankhahGaussianDeficit(WakeDeficit):
         ti_eff: jnp.ndarray | None,
         ctx: SimulationContext,
     ) -> jnp.ndarray:
-        feps = get_float_eps()
         sigma_normalized, ct = self.__wake_params(ws_eff, ti_eff, ctx)
-
-        # Effective thrust coefficient accounting for wake expansion
-        ct_effective = ct / (8.0 * sigma_normalized**2 + feps)
-
-        # Centerline deficit (as fraction of reference wind speed)
-        centerline_deficit = jnp.minimum(1.0, 2.0 * self.ct2a(ct_effective))
-
-        # Gaussian radial decay
-        sigma_dimensional = sigma_normalized * ctx.turbine.rotor_diameter
-        radial_factor = jnp.exp(-(ctx.cw**2) / (2.0 * sigma_dimensional**2 + feps))
-
-        # Total deficit as fraction
-        deficit_fraction = centerline_deficit * radial_factor
-
-        # Convert to absolute deficit (m/s)
-        ws_reference = ws_eff[None, :]
-        ws_reference = (
-            ws_reference
-            if self.use_effective_ws
-            else jnp.full_like(ws_reference, ctx.ws)
+        return _compute_gaussian_deficit(
+            sigma_normalized,
+            ct,
+            ctx,
+            self.ct2a,
+            ws_eff,
+            self.use_effective_ws,
+            use_max_for_radial=False,
         )
-        return deficit_fraction * ws_reference
 
     def wake_expansion_coefficient(
         self, ti_amb: jnp.ndarray | None, ti_eff: jnp.ndarray | None
@@ -303,7 +343,7 @@ class TurboGaussianDeficit(WakeDeficit):
 
         c1, c2 = self.cTI
         alpha = c1 * ti_ref  # (n_sources,) or (1,)
-        ct_safe = jnp.maximum(ct, 1e-20)
+        ct_safe = jnp.maximum(ct, GRAD_SAFE_MIN)
         beta = c2 * ti_ref / jnp.sqrt(ct_safe)  # (n_sources,)
 
         # Factor term (same as PyWake)
@@ -322,7 +362,7 @@ class TurboGaussianDeficit(WakeDeficit):
         term2 = jnp.sqrt(1 + alpha**2)
         term3 = (term1 + 1) * alpha
         # Use gradient-safe absolute value: sqrt(x^2) instead of abs(x)
-        dw_abs = jnp.sqrt(jnp.maximum(dw_normalized**2, 1e-20))
+        dw_abs = jnp.sqrt(jnp.maximum(dw_normalized**2, GRAD_SAFE_MIN))
         term4 = (term2 + 1) * (alpha + beta * dw_abs)
 
         # Wake expansion (dimensional) - direct log like PyWake
@@ -375,32 +415,16 @@ class TurboGaussianDeficit(WakeDeficit):
         Returns:
             The wake deficit matrix (n_receivers, n_sources) in m/s.
         """
-        feps = get_float_eps()
         sigma_normalized, ct = self.__wake_params(ws_eff, ti_eff, ctx)
-
-        # Effective thrust coefficient accounting for wake expansion
-        ct_effective = ct / (8.0 * sigma_normalized**2 + feps)
-
-        # Centerline deficit (as fraction of reference wind speed)
-        centerline_deficit = jnp.minimum(1.0, 2.0 * self.ct2a(ct_effective))
-
-        # Gaussian radial decay
-        sigma_dimensional = sigma_normalized * ctx.turbine.rotor_diameter
-        radial_factor = jnp.exp(
-            -(ctx.cw**2) / jnp.maximum(2.0 * sigma_dimensional**2, feps)
+        return _compute_gaussian_deficit(
+            sigma_normalized,
+            ct,
+            ctx,
+            self.ct2a,
+            ws_eff,
+            self.use_effective_ws,
+            use_max_for_radial=True,
         )
-
-        # Total deficit as fraction
-        deficit_fraction = centerline_deficit * radial_factor
-
-        # Convert to absolute deficit (m/s)
-        ws_reference = ws_eff[None, :]
-        ws_reference = (
-            ws_reference
-            if self.use_effective_ws
-            else jnp.full_like(ws_reference, ctx.ws)
-        )
-        return deficit_fraction * ws_reference
 
     def _wake_radius(
         self,
