@@ -14,7 +14,7 @@ from py_wake.site.xrsite import XRSite
 from py_wake.wind_turbines.generic_wind_turbines import GenericWindTurbine
 
 from pixwake import Turbine, Curve, WakeSimulation
-from pixwake.deficit import TurboGaussianDeficit
+from pixwake.deficit import TurboGaussianDeficit, SelfSimilarityBlockageDeficit2020
 from pixwake.rotor_avg import GaussianOverlapAvgModel
 from pixwake.superposition import SquaredSum
 from pixwake.utils import ct2a_mom1d
@@ -150,10 +150,12 @@ def create_wfm(site, wind_turbines):
         ctlim=0.96,
         rotor_avg_model=GaussianOverlapAvgModel(),
         superposition=SquaredSum(),
+        use_effective_ws=False,
     )
     return WakeSimulation(
         wind_turbines,
         wake_deficit_model,
+        blockage=SelfSimilarityBlockageDeficit2020(),
         mapping_strategy="vmap",
     )
 
@@ -267,6 +269,13 @@ if __name__ == "__main__":
     parser.add_argument("--iterations", type=int, default=8000)
     parser.add_argument("--lr", type=float, default=70.0)
     parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument(
+        "--dry-run",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Run N gradient evaluations to measure runtime, then exit.",
+    )
     args = parser.parse_args()
 
     if args.seed:
@@ -342,6 +351,34 @@ if __name__ == "__main__":
 
     else:
         raise SystemExit(f"Fatal: Unknown mode '{args.mode}' specified.")
+
+    if args.dry_run > 0:
+        print(f"\n--- Dry run: timing {args.dry_run} gradient evaluation(s) ---")
+        # Warmup run (JIT compilation)
+        print("Warmup (JIT compilation)...", end=" ", flush=True)
+        t0 = time.time()
+        _ = grad_func(x0, y0)
+        warmup_time = time.time() - t0
+        print(f"{warmup_time:.2f}s")
+
+        # Timed runs
+        times = []
+        for i in range(args.dry_run):
+            t0 = time.time()
+            _ = grad_func(x0, y0)
+            elapsed = time.time() - t0
+            times.append(elapsed)
+            print(f"  Run {i + 1}: {elapsed:.3f}s")
+
+        avg_time = np.mean(times)
+        std_time = np.std(times)
+        print(
+            f"\nResults ({args.mode} mode, {len(x0)} turbines, {args.n_mc_samples} MC samples):"
+        )
+        print(f"  Average: {avg_time:.3f}s (+/- {std_time:.3f}s)")
+        print(f"  Total:   {np.sum(times):.3f}s")
+        print("--- Dry run finished ---")
+        raise SystemExit(0)
 
     cost_comp = CostModelComponent(
         input_keys=["x", "y"],
