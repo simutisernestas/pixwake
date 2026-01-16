@@ -123,7 +123,6 @@ def get_turbine_types():
 H5_LAYOUT_FILE = "sandbox/re_precomputed_layouts.h5"
 SITE_FILE = "sandbox/ref_site.nc"
 TIME_SERIES_FILE = "sandbox/energy_island_10y_daily_av_wind.csv"
-# CONSERVATIVE_FLOW_MAP_FILE is now dynamic, see main()
 
 TARGET_FARM_IDX = 0
 TARGET_TYPE_IDX = 5
@@ -288,7 +287,7 @@ if __name__ == "__main__":
     site_pristine = XRSite.load(SITE_FILE, shear=shear_model)
     turbine_types = get_turbine_types()
     wfm_pristine = create_wfm(site_pristine, turbine_types)
-    print("-> WFM initialized (Nygaard_2022 equivalent w/o ground model)")
+    print("-> WFM initialized")
 
     ts_data = pd.read_csv(TIME_SERIES_FILE, sep=";")
     ts_data = ts_data[ts_data.WS_150 > 5]
