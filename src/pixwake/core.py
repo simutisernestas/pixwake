@@ -212,7 +212,8 @@ class Turbine:
     def __repr__(self) -> str:
         if self._is_single_type:
             return f"Turbine(D={self.rotor_diameter}m, H={self.hub_height}m)"
-        n_types = len(self.rotor_diameter)
+        rd = jnp.asarray(self.rotor_diameter)
+        n_types = len(rd)
         return f"Turbines(n={n_types}, D={self.rotor_diameter}, H={self.hub_height})"
 
     def tree_flatten(self) -> tuple[tuple, tuple]:
@@ -448,9 +449,11 @@ class SimulationResult:
             JAX arrays are converted to nested Python lists.
         """
 
-        def _array_to_list(arr: jnp.ndarray | None) -> list | None:
+        def _array_to_list(arr: jnp.ndarray | float | None) -> list | float | None:
             if arr is None:
                 return None
+            if isinstance(arr, float):
+                return arr
             return arr.tolist()
 
         data = {
@@ -511,13 +514,23 @@ class SimulationResult:
             ),
         )
 
+        wt_x = _list_to_array(data["wt_x"])
+        wt_y = _list_to_array(data["wt_y"])
+        wd = _list_to_array(data["wd"])
+        ws = _list_to_array(data["ws"])
+        effective_ws = _list_to_array(data["effective_ws"])
+        assert wt_x is not None
+        assert wt_y is not None
+        assert wd is not None
+        assert ws is not None
+        assert effective_ws is not None
         return cls(
             turbine=turbine,
-            wt_x=_list_to_array(data["wt_x"]),
-            wt_y=_list_to_array(data["wt_y"]),
-            wd=_list_to_array(data["wd"]),
-            ws=_list_to_array(data["ws"]),
-            effective_ws=_list_to_array(data["effective_ws"]),
+            wt_x=wt_x,
+            wt_y=wt_y,
+            wd=wd,
+            ws=ws,
+            effective_ws=effective_ws,
             ti=_list_to_array(data["ti"]),
             effective_ti=_list_to_array(data["effective_ti"]),
         )
@@ -661,7 +674,7 @@ class WakeSimulation:
         sc = self._preprocess_ambient_conditions(wt_xs, wt_ys, ws_amb, wd_amb, ti_amb)
         wt_xs, wt_ys, ws_amb, wd_amb, ti_amb = sc
 
-        turbines = self.turbines
+        turbines: Turbine
         if isinstance(self.turbines, list) and wt_types is not None:
             if len(wt_xs) != len(wt_types):
                 raise ValueError(
@@ -671,6 +684,10 @@ class WakeSimulation:
             turbines = Turbines._from_types(
                 turbine_library=self.turbines, turbine_types=wt_types
             )
+        elif isinstance(self.turbines, list):
+            raise ValueError("wt_types must be provided when using a turbine library")
+        else:
+            turbines = self.turbines
 
         hh = turbines.hub_height
         dw, cw = self._get_downwind_crosswind_distances(wd_amb, wt_xs, wt_ys, hh)
@@ -836,7 +853,7 @@ class WakeSimulation:
         sc = self._preprocess_ambient_conditions(wt_x, wt_y, ws, wd, ti)
         wt_x, wt_y, ws, wd, ti = sc
 
-        turbines = self.turbines
+        turbines: Turbine
         if isinstance(self.turbines, list) and wt_types is not None:
             if len(wt_x) != len(wt_types):
                 raise ValueError(
@@ -846,6 +863,10 @@ class WakeSimulation:
             turbines = Turbines._from_types(
                 turbine_library=self.turbines, turbine_types=wt_types
             )
+        elif isinstance(self.turbines, list):
+            raise ValueError("wt_types must be provided when using a turbine library")
+        else:
+            turbines = self.turbines
 
         if fm_x is None or fm_y is None:
             grid_res = DEFAULT_FLOW_MAP_RESOLUTION
@@ -912,9 +933,11 @@ class WakeSimulation:
             # Apply mask: only downstream points in wake cone
             in_wake_mask = ctx.dw > 0.0
             if self.deficit.use_radius_mask:
+                assert ctx.wake_radius is not None
                 in_wake_mask &= jnp.abs(ctx.cw) < ctx.wake_radius
 
             masked_deficit = jnp.where(in_wake_mask, ws_deficit_m, 0.0)
+            assert self.deficit.superposition is not None
             ws_out = self.deficit.superposition(ws_out, masked_deficit)
             return jnp.maximum(0.0, ws_out)
 
@@ -937,6 +960,7 @@ class WakeSimulation:
                 flow_map_at_height - flow_map_result
             ) / (i + 1)
 
+        assert flow_map_result is not None
         return flow_map_result, (fm_x, fm_y)
 
     def _simulate_vmap(

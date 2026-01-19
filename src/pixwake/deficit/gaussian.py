@@ -15,7 +15,7 @@ def _compute_gaussian_deficit(
     sigma_normalized: jnp.ndarray,
     ct: jnp.ndarray,
     ctx: SimulationContext,
-    ct2a: callable,
+    ct2a: Callable[[jnp.ndarray], jnp.ndarray],
     ws_eff: jnp.ndarray,
     use_effective_ws: bool,
     use_max_for_radial: bool = False,

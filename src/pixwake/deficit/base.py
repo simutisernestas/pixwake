@@ -182,10 +182,12 @@ class WakeDeficit(DeficitModelBase):
         # Only apply to downstream positions (dw > 0)
         in_wake_mask = ctx.dw > 0.0
         if self.use_radius_mask:
+            assert ctx.wake_radius is not None
             in_wake_mask &= jnp.abs(ctx.cw) < ctx.wake_radius
 
         # Apply mask and use configurable superposition
         masked_deficit = jnp.where(in_wake_mask, ws_deficit_m, 0.0)
+        assert self.superposition is not None
         new_eff_ws = self.superposition(ctx.ws, masked_deficit)
         return jnp.maximum(0.0, new_eff_ws), ctx
 
@@ -279,6 +281,7 @@ class BlockageDeficit(DeficitModelBase):
                 else ctx.wake_radius
             )
 
+            assert exclude_radius is not None
             in_wake = (ctx.dw > 0.0) & (jnp.abs(ctx.cw) < exclude_radius)
 
             signed_deficit = jnp.where(
@@ -295,6 +298,7 @@ class BlockageDeficit(DeficitModelBase):
             signed_deficit = jnp.where(ctx.dw < 0.0, ws_deficit_m, -ws_deficit_m)
 
         # Apply superposition
+        assert self.superposition is not None
         new_eff_ws = self.superposition(ctx.ws, signed_deficit)
 
         return jnp.maximum(0.0, new_eff_ws), ctx

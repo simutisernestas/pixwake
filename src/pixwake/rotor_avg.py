@@ -198,9 +198,7 @@ class CGIRotorAvg(RotorAvg):
         cw_at_nodes = ssqrt(hcw_at_nodes**2 + dh_at_nodes**2)
 
         # Evaluate func at each integration point by vmapping over last axis
-        def eval_single_point(
-            dw_single: jax.Array, cw_single: jax.Array
-        ) -> tuple[jax.Array, jax.Array]:
+        def eval_single_point(dw_single: jax.Array, cw_single: jax.Array) -> jax.Array:
             ctx_single = SimulationContext(
                 turbine=ctx.turbine,
                 dw=dw_single,
