@@ -1,10 +1,36 @@
+"""JAX utility functions for numerical precision and stability.
+
+This module provides helper functions and constants for working with JAX arrays:
+    - default_float_type: Get current JAX float precision (float32/float64)
+    - get_float_eps: Get machine epsilon for current precision
+    - ssqrt: Gradient-stable square root function
+
+Numerical constants for stability:
+    - GRAD_SAFE_MIN: Minimum value for gradient-safe operations (1e-20)
+    - NUMERICAL_FLOOR: Floor value for power law calculations (1e-10)
+"""
+
 import jax
 import jax.numpy as jnp
 from jax import config as jcfg
 
+# ============================================================================
+# Machine Epsilon Constants
+# ============================================================================
 # Pre-computed epsilon values to avoid repeated jnp.finfo() calls
 _EPS_FLOAT32: float = float(jnp.finfo(jnp.float32).eps)
 _EPS_FLOAT64: float = float(jnp.finfo(jnp.float64).eps)
+
+# ============================================================================
+# Numerical Stability Constants
+# ============================================================================
+# Minimum value for gradient-safe operations to avoid numerical issues
+# (e.g., in sqrt, division). Use when computing gradients near zero.
+GRAD_SAFE_MIN: float = 1e-20
+
+# Floor value for numerical stability in power law and similar calculations.
+# Slightly larger than GRAD_SAFE_MIN for non-gradient contexts.
+NUMERICAL_FLOOR: float = 1e-10
 
 
 def _is_64bit_enabled() -> bool:

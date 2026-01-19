@@ -281,3 +281,32 @@ def test_gaussian_overlap_lookup_table_against_pywake():
                 rtol=1e-4,
                 err_msg=f"Mismatch at R_sigma={r}, CW_sigma={cw}",
             )
+
+
+def test_cgi_rotor_avg_weights_sum_to_one():
+    """Verify CGI quadrature weights sum to 1 (proper probability distribution)."""
+    from pixwake.rotor_avg import CGIRotorAvg
+
+    for n_points in [4, 7, 9, 21]:
+        cgi = CGIRotorAvg(n_points=n_points)
+        weight_sum = float(jnp.sum(cgi.weights))
+        np.testing.assert_allclose(
+            weight_sum,
+            1.0,
+            rtol=1e-10,
+            err_msg=f"CGI weights for n={n_points} do not sum to 1",
+        )
+
+
+def test_cgi_rotor_avg_nodes_within_rotor():
+    """Verify CGI quadrature nodes are within the rotor disk (|r| <= 1)."""
+    from pixwake.rotor_avg import CGIRotorAvg
+
+    for n_points in [4, 7, 9, 21]:
+        cgi = CGIRotorAvg(n_points=n_points)
+        # Compute radial distance from center for each node
+        r_squared = cgi.nodes_x**2 + cgi.nodes_y**2
+        max_r = float(jnp.sqrt(jnp.max(r_squared)))
+        assert max_r <= 1.0 + 1e-10, (
+            f"CGI node outside rotor disk for n={n_points}, max_r={max_r}"
+        )

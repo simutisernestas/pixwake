@@ -1,3 +1,11 @@
+"""Superposition models for combining wake effects from multiple turbines.
+
+This module provides different strategies for combining wake deficits:
+    - SquaredSum: sqrt(sum(deficit²)) - default for wake deficits
+    - SqrMaxSum: sqrt(ambient² + max(added)²) - default for turbulence
+    - LinearSum: Simple summation - used for blockage models
+"""
+
 from abc import abstractmethod
 
 import jax.numpy as jnp

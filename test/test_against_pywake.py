@@ -943,7 +943,6 @@ def test_turbo_gaussian_equivalence_with_effective_ti(curves):
     np.testing.assert_allclose(
         pixwake_sim_res.effective_ti.T, sim_res["TI_eff"].values, rtol=rtol, atol=atol
     )
-
     # Compare effective wind speeds
     _assert_ws_eff_close(
         pixwake_sim_res.effective_ws, pywake_ws_eff, rtol=rtol, atol=atol
@@ -952,6 +951,15 @@ def test_turbo_gaussian_equivalence_with_effective_ti(curves):
     # Compare AEP
     np.testing.assert_allclose(
         pixwake_sim_res.aep(), sim_res.aep().sum().values, rtol=rtol
+    )
+
+    check_grads(
+        lambda xx, yy: sim(xx, yy, jnp.asarray(ws), jnp.asarray(wd), ti).aep(),
+        (jnp.asarray(x), jnp.asarray(y)),
+        order=1,
+        modes=["rev"],
+        atol=1e-6,
+        rtol=1e-6,
     )
 
     # Compare gradients with relaxed tolerance

@@ -1,3 +1,10 @@
+"""Utility functions for wake modeling calculations.
+
+This module provides conversion functions used by wake deficit models:
+    - ct2a_madsen: Polynomial approximation for Ct to axial induction (Madsen 2020)
+    - ct2a_mom1d: 1D momentum theory Ct to induction conversion
+"""
+
 import jax
 import jax.numpy as jnp
 

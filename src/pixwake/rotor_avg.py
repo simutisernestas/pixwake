@@ -1,3 +1,13 @@
+"""Rotor averaging models for computing disk-averaged wake effects.
+
+This module provides models for computing rotor-averaged quantities:
+    - CGIRotorAvg: Clenshaw-Curtis Gauss-Jacobi quadrature integration
+    - GaussianOverlapAvgModel: Specialized overlap integration for Gaussian wakes
+
+Rotor averaging accounts for the spatial variation of wake deficit across
+the rotor disk, providing more accurate effective wind speed calculations.
+"""
+
 from __future__ import annotations
 
 import warnings
@@ -120,7 +130,6 @@ class CGIRotorAvg(RotorAvg):
             self.nodes_y,
             self.weights,
         ) = self._get_cgi_nodes_and_weights(n_points)
-        self._cache: dict[int, Callable] = {}
 
     @staticmethod
     def _get_cgi_nodes_and_weights(
@@ -175,39 +184,35 @@ class CGIRotorAvg(RotorAvg):
         dw = ctx.dw[..., jnp.newaxis]
         cw = ctx.cw[..., jnp.newaxis]
 
-        # TODO: is this correct ? Should add test against pywake !
         node_x_offset = self.nodes_x.reshape(1, 1, -1) * R_dst.reshape(1, -1, 1)
         node_y_offset = self.nodes_y.reshape(1, 1, -1) * R_dst.reshape(1, -1, 1)
 
         hcw_at_nodes = cw + node_x_offset
-        dh_at_nodes = 0.0 + node_y_offset  # TODO: 0 should be ctx.dh ???
+        # Note: The vertical baseline (0.0) is correct here. The `cw` already includes
+        # vertical distance between turbines via ssqrt(horizontal_cw^2 + dz^2) computed
+        # in WakeSimulation._get_downwind_crosswind_distances(). The node_y_offset adds
+        # vertical sampling points across the rotor disk relative to the hub center.
+        # TODO: need to verify this is correct for non-level terrain; It will become relevant there...
+        dh_at_nodes = 0.0 + node_y_offset
         dw_at_nodes = jnp.broadcast_to(dw, hcw_at_nodes.shape)
         cw_at_nodes = ssqrt(hcw_at_nodes**2 + dh_at_nodes**2)
 
-        if id(func) not in self._cache:
-            # Evaluate func at each integration point by vmapping over last axis
-            def eval_single_point(
-                dw_single: jax.Array, cw_single: jax.Array
-            ) -> tuple[jax.Array, jax.Array]:
-                ctx_single = SimulationContext(
-                    turbine=ctx.turbine,
-                    dw=dw_single,
-                    cw=cw_single,
-                    ws=ctx.ws,
-                    ti=ctx.ti,
-                    wake_radius=ctx.wake_radius,
-                )
-                return func(ws_eff, ti_eff, ctx_single)
-
-            # Map over integration points (last dimension)
-            self._cache[id(func)] = jax.vmap(
-                eval_single_point, in_axes=(2, 2), out_axes=2
+        # Evaluate func at each integration point by vmapping over last axis
+        def eval_single_point(dw_single: jax.Array, cw_single: jax.Array) -> jax.Array:
+            ctx_single = SimulationContext(
+                turbine=ctx.turbine,
+                dw=dw_single,
+                cw=cw_single,
+                ws=ctx.ws,
+                ti=ctx.ti,
+                wake_radius=ctx.wake_radius,
             )
+            return func(ws_eff, ti_eff, ctx_single)
 
-        value_at_nodes = self._cache[id(func)](
-            dw_at_nodes,
-            cw_at_nodes,
-        )
+        # Map over integration points (last dimension)
+        # Note: JAX handles internal caching of compiled functions
+        vmapped_eval = jax.vmap(eval_single_point, in_axes=(2, 2), out_axes=2)
+        value_at_nodes = vmapped_eval(dw_at_nodes, cw_at_nodes)
         # Weighted average over integration points
         weights_broadcast = self.weights.reshape(1, 1, -1)
         return jnp.sum(value_at_nodes * weights_broadcast, axis=-1)
@@ -217,22 +222,16 @@ _OVERLAP_TABLE_FILENAME = "gaussian_overlap_.02_.02_128_512.nc"
 
 
 def _load_overlap_table() -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
-    """Try to load the precomputed overlap table.
-
-    First tries to load from the local data directory (bundled with pixwake),
-    then falls back to PyWake's location if installed.
+    """Try to load the precomputed overlap table from local data directory.
 
     Returns:
         Tuple of (R_sigma, CW_sigma, overlap_table) arrays if successful, None otherwise.
     """
-    import os
     from pathlib import Path
 
-    # Try loading from local data directory first
     local_table_path = Path(__file__).parent / "data" / _OVERLAP_TABLE_FILENAME
     if local_table_path.exists():
         try:
-            # TODO: need to bake it into dependencies...
             import xarray as xr
 
             table = xr.load_dataarray(local_table_path, engine="h5netcdf")
@@ -244,23 +243,7 @@ def _load_overlap_table() -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
         except (ImportError, OSError):
             pass
 
-    # Fall back to PyWake's location
-    try:
-        import xarray as xr
-        from py_wake.rotor_avg_models import gaussian_overlap_model
-
-        table_path = os.path.join(
-            os.path.dirname(gaussian_overlap_model.__file__),
-            _OVERLAP_TABLE_FILENAME,
-        )
-        table = xr.load_dataarray(table_path, engine="h5netcdf")
-        return (
-            table.R_sigma.values.astype(np.float64),
-            table.CW_sigma.values.astype(np.float64),
-            table.values.astype(np.float64),
-        )
-    except (ImportError, FileNotFoundError, OSError):
-        return None
+    return None
 
 
 def _make_overlap_lookup_table(

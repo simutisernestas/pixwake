@@ -16,12 +16,11 @@ import jax.numpy as jnp
 
 from ..core import SimulationContext
 from ..jax_utils import get_float_eps
-from ..superposition import LinearSum
 from ..utils import ct2a_madsen
-from .base import WakeDeficit
+from .base import BlockageDeficit
 
 
-class SelfSimilarityBlockageDeficit(WakeDeficit):
+class SelfSimilarityBlockageDeficit(BlockageDeficit):
     """Self-similarity blockage deficit model.
 
     This model calculates the blockage (induction) effect upstream of wind turbines
@@ -62,13 +61,13 @@ class SelfSimilarityBlockageDeficit(WakeDeficit):
             exclude_downstream_speedup: If True, exclude the downstream speedup
                 effect and only apply upstream blockage. This matches PyWake's
                 behavior when used in combined wake+blockage mode. Default False.
-            **kwargs: Additional arguments passed to parent WakeDeficit.
+            **kwargs: Additional arguments passed to parent BlockageDeficit.
         """
-        # Force use_radius_mask to False since we handle masking ourselves
-        kwargs["use_radius_mask"] = False
-        # Use LinearSum by default for blockage models (preserves sign for speedup effects)
-        kwargs.setdefault("superposition", LinearSum())
-        super().__init__(**kwargs)
+        # Pass exclude_downstream_speedup to parent BlockageDeficit
+        super().__init__(
+            exclude_downstream_speedup=exclude_downstream_speedup,
+            **kwargs,
+        )
 
         self.ss_gamma = ss_gamma
         self.ss_lambda = ss_lambda
@@ -77,7 +76,6 @@ class SelfSimilarityBlockageDeficit(WakeDeficit):
         self.ss_beta = float(jnp.sqrt(2.0)) if ss_beta is None else float(ss_beta)
         self.limiter = limiter
         self.ct2a = ct2a
-        self.exclude_downstream_speedup = exclude_downstream_speedup
 
     def r12(self, x_norm: jnp.ndarray) -> jnp.ndarray:
         """Compute half radius of self-similar profile.
@@ -224,85 +222,6 @@ class SelfSimilarityBlockageDeficit(WakeDeficit):
         # Return R * r12 as approximate lateral extent of induction zone
         return R * r12
 
-    def __call__(
-        self,
-        ws_eff: jnp.ndarray,
-        ti_eff: jnp.ndarray | None,
-        ctx: SimulationContext,
-        wake_radius_for_exclude: jnp.ndarray | None = None,
-    ) -> tuple[jnp.ndarray, SimulationContext]:
-        """Calculate effective wind speed after blockage/induction effects.
-
-        Override base class to handle the self-similarity induction model:
-        - Upstream (dw < 0): positive deficit (blockage, reduces wind speed)
-        - Downstream (dw > 0): negative deficit (speedup, increases wind speed)
-
-        This matches PyWake's behavior where the deficit is negated for
-        downstream locations to represent the flow acceleration that occurs
-        downstream of a rotor before the wake fully develops.
-
-        When exclude_downstream_speedup=True (for combined wake+blockage mode),
-        speedup is excluded only when the receiver is in the wake of the source
-        (dw > 0 AND |cw| < wake_radius). This matches PyWake's exclude_wake behavior.
-        Speedup is still applied when the receiver is downstream but outside the
-        wake cone (dw > 0 AND |cw| >= wake_radius).
-
-        Args:
-            ws_eff: Effective wind speed at each turbine
-            ti_eff: Effective turbulence intensity at each turbine
-            ctx: Simulation context
-            wake_radius_for_exclude: Optional wake radius from wake deficit model,
-                used for exclude_wake check in combined mode. If not provided,
-                uses the blockage model's own wake_radius.
-
-        Returns:
-            Tuple of (updated effective wind speeds, updated context)
-        """
-        # Compute blockage model's wake radius (for context)
-        ctx.wake_radius = self._wake_radius(ws_eff, ti_eff, ctx)
-
-        # Compute deficit (positive = reduction in wind speed)
-        ws_deficit_m = self._deficit(ws_eff, ti_eff, ctx)
-
-        if self.exclude_downstream_speedup:
-            # In combined wake+blockage mode, use PyWake's exclude_wake logic:
-            # - Upstream (dw < 0): apply blockage (positive deficit)
-            # - Downstream in wake (dw > 0, |cw| < wake_radius): exclude (0)
-            # - Downstream outside wake (dw > 0, |cw| >= wake_radius): apply speedup
-
-            # Use wake_radius from wake model if provided, otherwise use blockage model's radius
-            wake_radius = (
-                wake_radius_for_exclude
-                if wake_radius_for_exclude is not None
-                else ctx.wake_radius
-            )
-
-            # Determine if each receiver-source pair is "in wake"
-            # in_wake = downstream AND within wake cone
-            in_wake = (ctx.dw > 0.0) & (jnp.abs(ctx.cw) < wake_radius)
-
-            # Apply signed deficit based on position and in-wake status:
-            # - Upstream: positive deficit (blockage)
-            # - Downstream in wake: excluded (0)
-            # - Downstream outside wake: negative deficit (speedup)
-            signed_deficit = jnp.where(
-                ctx.dw < 0.0,
-                ws_deficit_m,  # upstream: blockage
-                jnp.where(
-                    in_wake, 0.0, -ws_deficit_m
-                ),  # downstream: speedup if not in wake
-            )
-        else:
-            # Apply sign based on location:
-            # - Upstream (dw < 0): positive deficit (blockage, reduces wind speed)
-            # - Downstream (dw > 0): negative deficit (speedup, increases wind speed)
-            signed_deficit = jnp.where(ctx.dw < 0.0, ws_deficit_m, -ws_deficit_m)
-
-        # Apply superposition
-        new_eff_ws = self.superposition(ctx.ws, signed_deficit)
-
-        return jnp.maximum(0.0, new_eff_ws), ctx
-
 
 class SelfSimilarityBlockageDeficit2020(SelfSimilarityBlockageDeficit):
     """Updated self-similarity blockage model (2020 version).
@@ -344,12 +263,13 @@ class SelfSimilarityBlockageDeficit2020(SelfSimilarityBlockageDeficit):
                 effect and only apply upstream blockage. Default False.
             **kwargs: Additional arguments passed to parent.
         """
-        # Don't call parent __init__ with the original parameters
-        # Just set up the base WakeDeficit
-        kwargs["use_radius_mask"] = False
-        # Use LinearSum by default for blockage models (preserves sign for speedup effects)
-        kwargs.setdefault("superposition", LinearSum())
-        WakeDeficit.__init__(self, **kwargs)
+        # Initialize BlockageDeficit directly, not through SelfSimilarityBlockageDeficit
+        # to avoid passing ss_gamma, ss_lambda, ss_eta which aren't used
+        BlockageDeficit.__init__(
+            self,
+            exclude_downstream_speedup=exclude_downstream_speedup,
+            **kwargs,
+        )
 
         self.ss_alpha = ss_alpha
         self.ss_beta = float(jnp.sqrt(2.0)) if ss_beta is None else float(ss_beta)
@@ -358,7 +278,6 @@ class SelfSimilarityBlockageDeficit2020(SelfSimilarityBlockageDeficit):
         self.fgp = fgp
         self.limiter = limiter
         self.ct2a = ct2a
-        self.exclude_downstream_speedup = exclude_downstream_speedup
 
     def r12(self, x_norm: jnp.ndarray) -> jnp.ndarray:
         """Compute half radius using linear approximation.

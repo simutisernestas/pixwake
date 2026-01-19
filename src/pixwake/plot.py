@@ -1,3 +1,10 @@
+"""Visualization utilities for pixwake simulations.
+
+This module provides plotting functions for visualizing wake simulations:
+    - plot_flow_map: 2D contour plot of wind speed across the farm
+    - plot_power_and_thrust_curve: Turbine performance curve visualization
+"""
+
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 from matplotlib.axes import Axes

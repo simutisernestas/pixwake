@@ -10,10 +10,12 @@ from .selfsimilarity import (
 )
 
 __all__ = [
+    # Wake deficit models
     "BastankhahGaussianDeficit",
     "NiayifarGaussianDeficit",
     "TurboGaussianDeficit",
     "NOJDeficit",
+    # Blockage deficit models
     "SelfSimilarityBlockageDeficit",
     "SelfSimilarityBlockageDeficit2020",
 ]

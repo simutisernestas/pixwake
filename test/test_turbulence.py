@@ -41,10 +41,10 @@ def test_turbulence_shape(wake_sim):
     # array ti
     _ = wake_sim(xs, ys, ws, wd, ti)
 
-    with pytest.raises(AssertionError):
+    with pytest.raises((AssertionError, ValueError)):
         # no ti
         _ = wake_sim(xs, ys, ws, wd)
-    with pytest.raises(AssertionError):
+    with pytest.raises((AssertionError, ValueError)):
         # wrong shape ti
         _ = wake_sim(xs, ys, ws, wd, jnp.array([0.1, 0.1]))
 

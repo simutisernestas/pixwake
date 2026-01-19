@@ -1,9 +1,10 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable
 
 import jax.numpy as jnp
 
 from pixwake.core import SimulationContext
+from pixwake.jax_utils import NUMERICAL_FLOOR
 from pixwake.turbulence.base import WakeTurbulence
 
 from ..utils import ct2a_madsen
@@ -23,7 +24,7 @@ class CrespoHernandez(WakeTurbulence):
         Aerodynamics, 61(1), 71-85.
     """
 
-    c: list[float] = field(default_factory=lambda: [0.73, 0.8325, -0.0325, -0.32])
+    c: tuple[float, float, float, float] = (0.73, 0.8325, -0.0325, -0.32)
     ct2a: Callable = ct2a_madsen
 
     def _added_turbulence(
@@ -37,9 +38,9 @@ class CrespoHernandez(WakeTurbulence):
 
         # Convert to induction factor with numerical safeguard
         ct = ctx.turbine.ct(ws_eff)  # (n_sources,)
-        induction_factor = jnp.maximum(self.ct2a(ct), 1e-10)
+        induction_factor = jnp.maximum(self.ct2a(ct), NUMERICAL_FLOOR)
         # Safeguard downwind distance for power law
-        dw_safe = jnp.maximum(ctx.dw, 1e-10)
+        dw_safe = jnp.maximum(ctx.dw, NUMERICAL_FLOOR)
         # Normalized downwind distance
         distance_normalized = dw_safe / ctx.turbine.rotor_diameter
         # Apply Crespo-Hernandez formula using ambient ti Eq (21) in paper
