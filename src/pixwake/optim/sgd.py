@@ -63,7 +63,7 @@ class SGDState(NamedTuple):
 class SGDSettings:
     """Configuration for TopFarm-style SGD optimizer.
 
-    The learning rate decays from `learning_rate` to `learning_rate * gamma_min_factor`
+    The learning rate decays from `learning_rate` to `gamma_min_factor`
     over `max_iter` iterations using the decay function:
         lr_t = lr_{t-1} * 1/(1 + mid * t)
 
@@ -72,8 +72,7 @@ class SGDSettings:
 
     Attributes:
         learning_rate: Initial learning rate (default: 10.0).
-        gamma_min_factor: Final learning rate as fraction of initial (default: 0.01).
-            Final lr = learning_rate * gamma_min_factor.
+        gamma_min_factor: Target final learning rate (default: 0.01).
         beta1: First moment decay rate (default: 0.1).
         beta2: Second moment decay rate (default: 0.2).
         max_iter: Maximum number of iterations (default: 3000).
@@ -463,7 +462,8 @@ def topfarm_sgd_solve(
 
     # Compute mid via bisection if not explicitly provided
     if settings.mid is None:
-        gamma_min = settings.learning_rate * settings.gamma_min_factor
+        # TopFarm uses gamma_min = gamma_min_factor directly (not multiplied by learning_rate)
+        gamma_min = settings.gamma_min_factor
         computed_mid = _compute_mid_bisection(
             learning_rate=settings.learning_rate,
             gamma_min=gamma_min,
