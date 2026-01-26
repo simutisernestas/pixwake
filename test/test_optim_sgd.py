@@ -421,21 +421,15 @@ class TestTopFarmParity:
     @pytest.fixture
     def topfarm_available(self):
         """Check if TopFarm is available."""
-        try:
-            import topfarm  # noqa: F401
-
-            return True
-        except ImportError:
-            pytest.skip("TopFarm not installed")
+        pytest.importorskip("topfarm")
+        return True
 
     def test_penalty_similar_to_topfarm(self, topfarm_available, square_boundary):
         """Compare constraint aggregation with TopFarm's implementation."""
-        try:
-            from topfarm.constraint_components.constraint_aggregation import (
-                DistanceConstraintAggregation,
-            )
-        except ImportError:
-            pytest.skip("TopFarm constraint aggregation not available")
+        pytest.importorskip(
+            "topfarm.constraint_components.constraint_aggregation",
+            reason="TopFarm constraint aggregation not available",
+        )
 
         # Create positions with some violations
         x = jnp.array([100.0, 200.0, 500.0, 900.0])
@@ -471,20 +465,19 @@ class TestTopFarmParity:
         1. Our optimizer finds a valid (constraint-satisfying) solution
         2. Our AEP is within reasonable range of TopFarm's result
         """
-        try:
-            from topfarm import TopFarmProblem
-            from topfarm.easy_drivers import EasySGDDriver
-            from topfarm.constraint_components.boundary import (
-                XYBoundaryConstraint,
-            )
-            from topfarm.constraint_components.spacing import SpacingConstraint
-            from topfarm.cost_models.py_wake_wrapper import PyWakeAEPCostModelComponent
-            from py_wake.wind_turbines import WindTurbine
-            from py_wake.wind_turbines.power_ct_functions import PowerCtTabular
-            from py_wake import NOJ
-            from py_wake.site import UniformSite
-        except ImportError:
-            pytest.skip("TopFarm or PyWake not fully available")
+        # Skip if dependencies not available
+        pytest.importorskip("topfarm", reason="TopFarm not available")
+        pytest.importorskip("py_wake", reason="PyWake not available")
+
+        from topfarm import TopFarmProblem
+        from topfarm.easy_drivers import EasySGDDriver
+        from topfarm.constraint_components.boundary import XYBoundaryConstraint
+        from topfarm.constraint_components.spacing import SpacingConstraint
+        from topfarm.cost_models.py_wake_wrapper import PyWakeAEPCostModelComponent
+        from py_wake.wind_turbines import WindTurbine
+        from py_wake.wind_turbines.power_ct_functions import PowerCtTabular
+        from py_wake import NOJ
+        from py_wake.site import UniformSite
 
         # Set up both optimizers with same parameters
         init_x = np.array([250.0, 750.0, 250.0, 750.0])
