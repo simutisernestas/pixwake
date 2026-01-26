@@ -293,7 +293,7 @@ def plot_results(run_id: str):
         print(
             "Please ensure that all benchmark runs were performed with the same settings."
         )
-        return
+        raise e
 
     df = ds.to_dataframe().reset_index()
     df["total_time"] = df["aep_time"] + df["grad_time"]

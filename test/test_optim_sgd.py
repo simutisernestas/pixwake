@@ -483,7 +483,14 @@ class TestTopFarmParity:
             result = sim(x, y, ws_amb=ws, wd_amb=wd)
             return -result.aep()
 
-        settings = SGDSettings(max_iter=200, learning_rate=10.0, beta1=0.1, beta2=0.2)
+        settings = SGDSettings(
+            max_iter=500,
+            learning_rate=10.0,
+            beta1=0.1,
+            beta2=0.2,
+            boundary_weight=10000.0,
+            spacing_weight=10000.0,
+        )
         our_x, our_y = topfarm_sgd_solve(
             neg_aep,
             jnp.array(init_x),
@@ -525,7 +532,7 @@ class TestTopFarmParity:
                 XYBoundaryConstraint(boundary_np),
                 SpacingConstraint(min_spacing),
             ],
-            driver=EasySGDDriver(maxiter=200, learning_rate=10.0, beta1=0.1, beta2=0.2),
+            driver=EasySGDDriver(maxiter=500, learning_rate=10.0, beta1=0.1, beta2=0.2),
         )
         tf_cost, tf_state, _ = problem.optimize()
         tf_aep = float(-tf_cost)

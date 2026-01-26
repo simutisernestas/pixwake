@@ -63,27 +63,89 @@ class SGDState(NamedTuple):
 class SGDSettings:
     """Configuration for TopFarm-style SGD optimizer.
 
+    The learning rate decays from `learning_rate` to `learning_rate * gamma_min_factor`
+    over `max_iter` iterations using the decay function:
+        lr_t = lr_{t-1} * 1/(1 + mid * t)
+
+    The `mid` parameter is computed via bisection search to achieve the target
+    final learning rate, matching TopFarm's EasySGDDriver behavior.
+
     Attributes:
         learning_rate: Initial learning rate (default: 10.0).
+        gamma_min_factor: Final learning rate as fraction of initial (default: 0.01).
+            Final lr = learning_rate * gamma_min_factor.
         beta1: First moment decay rate (default: 0.1).
         beta2: Second moment decay rate (default: 0.2).
         max_iter: Maximum number of iterations (default: 3000).
         tol: Convergence tolerance on gradient norm (default: 1e-6).
-        mid: Learning rate decay factor, computed if None.
+        mid: Learning rate decay factor. If None, computed via bisection to achieve
+            gamma_min_factor. Set explicitly to override bisection.
+        bisect_upper: Upper bound for bisection search (default: 0.1).
+        bisect_lower: Lower bound for bisection search (default: 0.0).
         ks_rho: KS aggregation smoothness parameter (default: 100.0).
         spacing_weight: Weight for spacing penalty (default: 1.0).
         boundary_weight: Weight for boundary penalty (default: 1.0).
     """
 
     learning_rate: float = 10.0
+    gamma_min_factor: float = 0.01
     beta1: float = 0.1
     beta2: float = 0.2
     max_iter: int = 3000
     tol: float = 1e-6
     mid: float | None = None
+    bisect_upper: float = 0.1
+    bisect_lower: float = 0.0
     ks_rho: float = 100.0
     spacing_weight: float = 1.0
     boundary_weight: float = 1.0
+
+
+def _compute_mid_bisection(
+    learning_rate: float,
+    gamma_min: float,
+    max_iter: int,
+    lower: float = 0.0,
+    upper: float = 0.1,
+    n_bisect_iter: int = 100,
+) -> float:
+    """Compute the learning rate decay parameter via bisection search.
+
+    Finds `mid` such that after `max_iter` steps of decay:
+        lr_t = lr_{t-1} * 1/(1 + mid * t)
+    the final learning rate equals `gamma_min`.
+
+    This matches TopFarm's SGDDriver initialization.
+
+    Args:
+        learning_rate: Initial learning rate.
+        gamma_min: Target final learning rate.
+        max_iter: Number of optimization iterations.
+        lower: Lower bound for bisection (default: 0.0).
+        upper: Upper bound for bisection (default: 0.1).
+        n_bisect_iter: Number of bisection iterations (default: 100).
+
+    Returns:
+        The computed `mid` parameter.
+    """
+
+    def final_lr(mid: float) -> float:
+        """Compute final learning rate for a given mid value."""
+        lr = learning_rate
+        for t in range(1, max_iter + 1):
+            lr = lr * 1.0 / (1.0 + mid * t)
+        return lr
+
+    # Bisection search
+    for _ in range(n_bisect_iter):
+        mid = (lower + upper) / 2.0
+        lr_final = final_lr(mid)
+        if lr_final < gamma_min:
+            upper = mid
+        else:
+            lower = mid
+
+    return mid
 
 
 # =============================================================================
@@ -399,6 +461,32 @@ def topfarm_sgd_solve(
     if settings is None:
         settings = SGDSettings()
 
+    # Compute mid via bisection if not explicitly provided
+    if settings.mid is None:
+        gamma_min = settings.learning_rate * settings.gamma_min_factor
+        computed_mid = _compute_mid_bisection(
+            learning_rate=settings.learning_rate,
+            gamma_min=gamma_min,
+            max_iter=settings.max_iter,
+            lower=settings.bisect_lower,
+            upper=settings.bisect_upper,
+        )
+        # Create new settings with computed mid
+        settings = SGDSettings(
+            learning_rate=settings.learning_rate,
+            gamma_min_factor=settings.gamma_min_factor,
+            beta1=settings.beta1,
+            beta2=settings.beta2,
+            max_iter=settings.max_iter,
+            tol=settings.tol,
+            mid=computed_mid,
+            bisect_upper=settings.bisect_upper,
+            bisect_lower=settings.bisect_lower,
+            ks_rho=settings.ks_rho,
+            spacing_weight=settings.spacing_weight,
+            boundary_weight=settings.boundary_weight,
+        )
+
     rho = settings.ks_rho
 
     def total_objective(x: jnp.ndarray, y: jnp.ndarray) -> jnp.ndarray:
@@ -410,9 +498,9 @@ def topfarm_sgd_solve(
 
     def constraint_penalty(x: jnp.ndarray, y: jnp.ndarray) -> jnp.ndarray:
         """Combined constraint penalty for gradient computation."""
-        return boundary_penalty(x, y, boundary, rho) + spacing_penalty(
-            x, y, min_spacing, rho
-        )
+        return settings.boundary_weight * boundary_penalty(
+            x, y, boundary, rho
+        ) + settings.spacing_weight * spacing_penalty(x, y, min_spacing, rho)
 
     # Compute initial gradients for state initialization
     grad_obj_fn = jax.grad(objective_fn, argnums=(0, 1))
