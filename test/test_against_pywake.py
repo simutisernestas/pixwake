@@ -882,8 +882,8 @@ def test_turbo_gaussian_equivalence_timeseries(curves):
     )
 
     # Cross-check gradients with relaxed tolerance
-    np.testing.assert_allclose(dx, pw_dx, rtol=0.5, atol=1e-3)
-    np.testing.assert_allclose(dy, pw_dy, rtol=0.5, atol=1e-3)
+    np.testing.assert_allclose(dx, pw_dx, rtol=0.02, atol=1e-2)
+    np.testing.assert_allclose(dy, pw_dy, rtol=0.02, atol=1e-2)
 
 
 def test_turbo_gaussian_equivalence_with_effective_ti(curves):
