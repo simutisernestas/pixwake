@@ -488,8 +488,6 @@ class TestTopFarmParity:
             learning_rate=10.0,
             beta1=0.1,
             beta2=0.2,
-            boundary_weight=10000.0,
-            spacing_weight=10000.0,
         )
         our_x, our_y = topfarm_sgd_solve(
             neg_aep,

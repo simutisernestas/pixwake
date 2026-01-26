@@ -196,21 +196,20 @@ def boundary_penalty(
     boundary_vertices: jnp.ndarray,
     rho: float = 100.0,
 ) -> jnp.ndarray:
-    """Compute differentiable boundary constraint penalty using KS aggregation.
+    """Compute boundary constraint penalty matching TopFarm's formulation.
 
     For a convex polygon boundary, computes the signed distance from each
     turbine to each edge. Violated constraints (negative distance) are
-    aggregated using the Kreisselmeier-Steinhauser (KS) function for
-    smooth, differentiable penalties.
+    penalized using squared distance, matching TopFarm's DistanceConstraintAggregation.
 
-    KS penalty: max(0, -d) aggregated smoothly as:
-        C = (1/rho) * log(sum(exp(rho * max(0, -d))))
+    Penalty: sum(distance²) for turbines outside boundary (distance < 0)
+    Gradient: 2 * distance for violated turbines
 
     Args:
         x: Turbine x positions, shape (n_turbines,).
         y: Turbine y positions, shape (n_turbines,).
         boundary_vertices: Polygon vertices (CCW order), shape (n_vertices, 2).
-        rho: KS smoothness parameter. Higher = sharper approximation to max.
+        rho: Unused, kept for API compatibility.
 
     Returns:
         Scalar penalty value (0 if all constraints satisfied).
@@ -230,17 +229,11 @@ def boundary_penalty(
     # The minimum distance determines how "inside" we are
     min_distances = jnp.min(all_distances, axis=0)  # shape (n_turbines,)
 
-    # Penalty for violations (negative distances)
-    # Using squared penalty for smooth gradients at boundary
-    violations = jnp.maximum(0.0, -min_distances)
-
-    # KS aggregation for smooth differentiability
-    # Avoid numerical issues with large rho*violations
-    max_viol = jnp.max(violations)
-    if_nonzero = (1.0 / rho) * (
-        max_viol + jnp.log(jnp.sum(jnp.exp(rho * (violations - max_viol))) + 1e-10)
-    )
-    return jnp.where(max_viol > 0, if_nonzero, 0.0)
+    # TopFarm uses squared distance for boundary violations
+    # Penalty: sum(distance²) where distance < 0
+    # Use softplus for smooth transition at boundary
+    violations = jnp.minimum(0.0, min_distances)  # negative distances only
+    return jnp.sum(violations**2)
 
 
 def spacing_penalty(
@@ -249,19 +242,19 @@ def spacing_penalty(
     min_spacing: float,
     rho: float = 100.0,
 ) -> jnp.ndarray:
-    """Compute differentiable spacing constraint penalty using KS aggregation.
+    """Compute spacing constraint penalty matching TopFarm's formulation.
 
-    Penalizes turbine pairs that are closer than min_spacing. Uses the
-    Kreisselmeier-Steinhauser function for smooth aggregation.
+    Penalizes turbine pairs that are closer than min_spacing.
+    Matches TopFarm's DistanceConstraintAggregation which uses:
+        sum(-1 * (d² - min_spacing²)) for violated pairs
 
-    Constraint: d_ij >= min_spacing for all i != j
-    Violation: v_ij = max(0, min_spacing^2 - d_ij^2)
+    This is equivalent to: sum(min_spacing² - d²) where d² < min_spacing²
 
     Args:
         x: Turbine x positions, shape (n_turbines,).
         y: Turbine y positions, shape (n_turbines,).
         min_spacing: Minimum allowed distance between turbines.
-        rho: KS smoothness parameter.
+        rho: Unused, kept for API compatibility.
 
     Returns:
         Scalar penalty value (0 if all constraints satisfied).
@@ -279,21 +272,12 @@ def spacing_penalty(
     i_upper, j_upper = jnp.triu_indices(n, k=1)
     pair_dist_sq = dist_sq[i_upper, j_upper]
 
-    # Constraint: d^2 >= min_spacing^2
-    # Violation: v = max(0, min_spacing^2 - d^2)
+    # TopFarm uses: sum(min_spacing² - d²) for pairs where d² < min_spacing²
+    # Violation: max(0, min_spacing² - d²)
     min_spacing_sq = min_spacing**2
     violations = jnp.maximum(0.0, min_spacing_sq - pair_dist_sq)
 
-    # Normalize by min_spacing^2 for scale invariance
-    violations_normalized = violations / (min_spacing_sq + 1e-10)
-
-    # KS aggregation
-    max_viol = jnp.max(violations_normalized)
-    if_nonzero = (1.0 / rho) * (
-        max_viol
-        + jnp.log(jnp.sum(jnp.exp(rho * (violations_normalized - max_viol))) + 1e-10)
-    )
-    return jnp.where(max_viol > 0, if_nonzero, 0.0)
+    return jnp.sum(violations)
 
 
 # =============================================================================
