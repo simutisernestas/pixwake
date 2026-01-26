@@ -14,3 +14,8 @@ repos:
         files: ^(src)/
       - id: ruff-format
         files: ^(src|test)/
+  - repo: https://github.com/kilojoules/silent-killers
+    rev: v0.1.7
+    hooks:
+      - id: silent-killers-audit
+        files: ^(src|test)/

@@ -459,7 +459,11 @@ class TestTopFarmParity:
     def test_sgd_converges_similarly(
         self, topfarm_available, simple_turbine, square_boundary
     ):
-        """Test that our SGD reaches similar solutions to TopFarm."""
+        """Test that our SGD reaches similar solutions to TopFarm.
+
+        This test requires specific PyWake/TopFarm API compatibility.
+        It will skip if the API doesn't match the expected signatures.
+        """
         try:
             from topfarm import TopFarmProblem
             from topfarm.easy_drivers import EasySGDDriver
@@ -470,8 +474,9 @@ class TestTopFarmParity:
             from topfarm.cost_models.py_wake_wrapper import PyWakeAEPCostModelComponent
             from py_wake.wind_turbines import WindTurbine
             from py_wake.wind_turbines.power_ct_functions import PowerCtTabular
-            from py_wake.deficit_models import NOJDeficit as PyWakeNOJ
+            from py_wake.deficit_models.noj import NOJDeficit as PyWakeNOJ
             from py_wake.site import UniformSite
+            from py_wake import NOJ  # Modern PyWake wind farm model
         except ImportError:
             pytest.skip("TopFarm or PyWake not fully available")
 
@@ -503,40 +508,44 @@ class TestTopFarmParity:
         our_aep = float(-neg_aep(our_x, our_y))
 
         # TopFarm optimizer (more complex setup)
-        try:
-            ws_curve = np.array(simple_turbine.power_curve.ws)
-            power_curve = np.array(simple_turbine.power_curve.values)
-            ct_curve = np.array(simple_turbine.ct_curve.values)
+        ws_curve = np.array(simple_turbine.power_curve.ws)
+        power_curve = np.array(simple_turbine.power_curve.values)
+        ct_curve = np.array(simple_turbine.ct_curve.values)
 
-            wt = WindTurbine(
-                name="test",
-                diameter=80.0,
-                hub_height=70.0,
-                powerCtFunction=PowerCtTabular(ws_curve, power_curve, "kW", ct_curve),
-            )
+        wt = WindTurbine(
+            name="test",
+            diameter=80.0,
+            hub_height=70.0,
+            powerCtFunction=PowerCtTabular(ws_curve, power_curve, "kW", ct_curve),
+        )
 
-            site = UniformSite(p_wd=[1.0], ti=0.06)
-            wake_model = PyWakeNOJ(site, wt, k=0.05)
+        site = UniformSite(p_wd=[1.0], ti=0.06)
+        # Modern PyWake API: use NOJ wind farm model factory
+        wake_model = NOJ(site, wt, k=0.05)
 
-            problem = TopFarmProblem(
-                design_vars={"x": init_x, "y": init_y},
-                cost_comp=PyWakeAEPCostModelComponent(
-                    wake_model, n_wt=4, wd=[270.0], ws=[10.0]
-                ),
-                constraints=[
-                    XYBoundaryConstraint(boundary),
-                    SpacingConstraint(160.0),
-                ],
-                driver=EasySGDDriver(maxiter=200, learning_rate=10.0, beta1=0.1, beta2=0.2),
-            )
-            _, tf_state, _ = problem.optimize()
+        problem = TopFarmProblem(
+            design_vars={"x": init_x, "y": init_y},
+            cost_comp=PyWakeAEPCostModelComponent(
+                wake_model, n_wt=4, wd=[270.0], ws=[10.0]
+            ),
+            constraints=[
+                XYBoundaryConstraint(boundary),
+                SpacingConstraint(160.0),
+            ],
+            driver=EasySGDDriver(maxiter=200, learning_rate=10.0, beta1=0.1, beta2=0.2),
+        )
+        _, tf_state, _ = problem.optimize()
+        # TopFarm API returns cost in different keys depending on version
+        if "cost" in tf_state:
             tf_aep = float(-tf_state["cost"])
+        elif "AEP" in tf_state:
+            tf_aep = float(tf_state["AEP"])
+        else:
+            pytest.skip(f"Unknown TopFarm result format: {list(tf_state.keys())}")
 
-            # AEPs should be within 5% of each other
-            relative_diff = abs(our_aep - tf_aep) / max(our_aep, tf_aep)
-            assert relative_diff < 0.05, (
-                f"AEP mismatch: ours={our_aep:.2f}, TopFarm={tf_aep:.2f}, "
-                f"diff={relative_diff:.2%}"
-            )
-        except Exception as e:
-            pytest.skip(f"TopFarm optimization failed: {e}")
+        # AEPs should be within 5% of each other
+        relative_diff = abs(our_aep - tf_aep) / max(our_aep, tf_aep)
+        assert relative_diff < 0.05, (
+            f"AEP mismatch: ours={our_aep:.2f}, TopFarm={tf_aep:.2f}, "
+            f"diff={relative_diff:.2%}"
+        )
