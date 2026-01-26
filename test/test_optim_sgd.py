@@ -407,7 +407,7 @@ class TestBilevelOptimizer:
 
 
 # =============================================================================
-# Parity with TopFarm (if available)
+# Parity with TopFarm
 # =============================================================================
 
 
@@ -415,22 +415,13 @@ class TestBilevelOptimizer:
 class TestTopFarmParity:
     """Tests comparing pixwake.optim.sgd with TopFarm's implementation.
 
-    These tests are marked slow as they require running both optimizers.
+    These tests require TopFarm and PyWake to be installed (they are test
+    dependencies in pyproject.toml). Tests are marked slow as they require
+    running both optimizers.
     """
 
-    @pytest.fixture
-    def topfarm_available(self):
-        """Check if TopFarm is available."""
-        pytest.importorskip("topfarm")
-        return True
-
-    def test_penalty_similar_to_topfarm(self, topfarm_available, square_boundary):
+    def test_penalty_similar_to_topfarm(self, square_boundary):
         """Compare constraint aggregation with TopFarm's implementation."""
-        pytest.importorskip(
-            "topfarm.constraint_components.constraint_aggregation",
-            reason="TopFarm constraint aggregation not available",
-        )
-
         # Create positions with some violations
         x = jnp.array([100.0, 200.0, 500.0, 900.0])
         y = jnp.array([100.0, 150.0, 500.0, 900.0])
@@ -449,9 +440,7 @@ class TestTopFarmParity:
         else:
             assert our_penalty < 1e-3, "Penalty should be near zero when satisfied"
 
-    def test_sgd_converges_similarly(
-        self, topfarm_available, simple_turbine, square_boundary
-    ):
+    def test_sgd_converges_similarly(self, simple_turbine, square_boundary):
         """Test that our SGD reaches similar or better solutions than TopFarm.
 
         This test compares layout optimization results between pixwake's SGD
@@ -465,10 +454,6 @@ class TestTopFarmParity:
         1. Our optimizer finds a valid (constraint-satisfying) solution
         2. Our AEP is within reasonable range of TopFarm's result
         """
-        # Skip if dependencies not available
-        pytest.importorskip("topfarm", reason="TopFarm not available")
-        pytest.importorskip("py_wake", reason="PyWake not available")
-
         from topfarm import TopFarmProblem
         from topfarm.easy_drivers import EasySGDDriver
         from topfarm.constraint_components.boundary import XYBoundaryConstraint
