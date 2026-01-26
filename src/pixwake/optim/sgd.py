@@ -30,7 +30,6 @@ import jax.numpy as jnp
 from jax import custom_vjp, vjp
 from jax.lax import while_loop
 
-
 # =============================================================================
 # SGD State (Optax-style stateless design)
 # =============================================================================
@@ -609,12 +608,12 @@ def _sgd_solve_implicit_bwd(
     # Solve the linear system H @ v = g using fixed-point iteration
     # v = g - (H - I) @ v, which converges for well-conditioned H
 
-    def hvp(
-        vx: jnp.ndarray, vy: jnp.ndarray
-    ) -> tuple[jnp.ndarray, jnp.ndarray]:
+    def hvp(vx: jnp.ndarray, vy: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
         """Hessian-vector product."""
 
-        def grad_at_opt(x: jnp.ndarray, y: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
+        def grad_at_opt(
+            x: jnp.ndarray, y: jnp.ndarray
+        ) -> tuple[jnp.ndarray, jnp.ndarray]:
             return jax.grad(lambda xx, yy: total_obj(xx, yy, params), argnums=(0, 1))(
                 x, y
             )
@@ -665,7 +664,7 @@ def _sgd_solve_implicit_bwd(
     (grad_params,) = vjp_params_fn((adj_x, adj_y))
 
     # Gradients with respect to init_x, init_y are zero (fixed point doesn't depend on initial guess)
-    return (jnp.zeros_like(init_x), jnp.zeros_like(init_y), -grad_params)
+    return (jnp.zeros_like(opt_x), jnp.zeros_like(opt_y), -grad_params)
 
 
 sgd_solve_implicit.defvjp(_sgd_solve_implicit_fwd, _sgd_solve_implicit_bwd)
@@ -783,8 +782,6 @@ def create_bilevel_optimizer(
     """
     if settings is None:
         settings = SGDSettings()
-
-    rho = settings.ks_rho
 
     def objective_with_neighbors(
         x: jnp.ndarray, y: jnp.ndarray, neighbor_params: jnp.ndarray

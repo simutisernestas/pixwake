@@ -14,8 +14,11 @@ repos:
         files: ^(src)/
       - id: ruff-format
         files: ^(src|test)/
-  - repo: https://github.com/kilojoules/silent-killers
-    rev: v0.1.7
+  - repo: local
     hooks:
       - id: silent-killers-audit
-        files: ^(src|test)/
+        name: silent-killers-audit
+        entry: pixi run silent-killers-audit
+        language: system
+        files: ^(src|test)/.*\.py$
+        types: [python]

@@ -54,12 +54,14 @@ def simple_turbine():
 @pytest.fixture
 def square_boundary():
     """Create a 1km x 1km square boundary."""
-    return jnp.array([
-        [0.0, 0.0],
-        [1000.0, 0.0],
-        [1000.0, 1000.0],
-        [0.0, 1000.0],
-    ])
+    return jnp.array(
+        [
+            [0.0, 0.0],
+            [1000.0, 0.0],
+            [1000.0, 1000.0],
+            [0.0, 1000.0],
+        ]
+    )
 
 
 @pytest.fixture
@@ -187,9 +189,7 @@ class TestTopfarmSGDSolve:
         def objective(x, y):
             return jnp.sum((x - 500) ** 2 + (y - 500) ** 2)
 
-        settings = SGDSettings(
-            max_iter=500, learning_rate=5.0, boundary_weight=100.0
-        )
+        settings = SGDSettings(max_iter=500, learning_rate=5.0, boundary_weight=100.0)
         opt_x, opt_y = topfarm_sgd_solve(
             objective, init_x, init_y, square_boundary, 100.0, settings
         )
@@ -209,9 +209,7 @@ class TestTopfarmSGDSolve:
         def objective(x, y):
             return jnp.sum((x - 500) ** 2 + (y - 500) ** 2) * 0.0001
 
-        settings = SGDSettings(
-            max_iter=500, learning_rate=5.0, spacing_weight=100.0
-        )
+        settings = SGDSettings(max_iter=500, learning_rate=5.0, spacing_weight=100.0)
         opt_x, opt_y = topfarm_sgd_solve(
             objective, init_x, init_y, square_boundary, min_spacing, settings
         )
@@ -425,6 +423,7 @@ class TestTopFarmParity:
         """Check if TopFarm is available."""
         try:
             import topfarm  # noqa: F401
+
             return True
         except ImportError:
             pytest.skip("TopFarm not installed")
