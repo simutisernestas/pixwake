@@ -7,6 +7,7 @@ Main components:
     - WakeSimulation: Main orchestrator for wake simulations
     - Turbine: Wind turbine physical and performance characteristics
     - Curve: Performance curves (power, thrust coefficient)
+    - optim: Optimization solvers (SGD with implicit differentiation)
 
 Example:
     >>> from pixwake import WakeSimulation, Turbine
@@ -14,6 +15,11 @@ Example:
     >>> sim = WakeSimulation(turbine, BastankhahGaussianDeficit())
     >>> result = sim(wt_xs, wt_ys, ws_amb=10.0, wd_amb=270.0)
     >>> print(result.power())
+
+For layout optimization with implicit differentiation:
+    >>> from pixwake.optim import create_layout_optimizer, SGDSettings
+    >>> optimizer = create_layout_optimizer(sim, boundary, min_spacing, ws, wd)
+    >>> opt_x, opt_y = optimizer(init_x, init_y)
 """
 
 import tempfile
