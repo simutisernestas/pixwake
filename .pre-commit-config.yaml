@@ -14,3 +14,11 @@ repos:
         files: ^(src)/
       - id: ruff-format
         files: ^(src|test)/
+  - repo: local
+    hooks:
+      - id: silent-killers-audit
+        name: silent-killers-audit
+        entry: pixi run silent-killers-audit --strict
+        language: system
+        files: ^(src|test)/.*\.py$
+        types: [python]

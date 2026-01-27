@@ -27,6 +27,10 @@ pytest-cov = "*"
 py-wake = ">=2.6.12,<3"
 mypy = ">=1.17.1,<2"
 memory_profiler = ">=0.61.0,<0.62"
+git-lfs = ">=3.7.1,<4"
+
+[tool.pixi.feature.test.pypi-dependencies]
+silent-killers = ">=0.1.7,<0.2"
 
 [tool.pixi.feature.format.dependencies]
 pre-commit = "*"

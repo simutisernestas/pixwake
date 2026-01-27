@@ -231,17 +231,14 @@ def _load_overlap_table() -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
 
     local_table_path = Path(__file__).parent / "data" / _OVERLAP_TABLE_FILENAME
     if local_table_path.exists():
-        try:
-            import xarray as xr
+        import xarray as xr
 
-            table = xr.load_dataarray(local_table_path, engine="h5netcdf")
-            return (
-                table.R_sigma.values.astype(np.float64),
-                table.CW_sigma.values.astype(np.float64),
-                table.values.astype(np.float64),
-            )
-        except (ImportError, OSError):
-            pass
+        table = xr.load_dataarray(local_table_path, engine="h5netcdf")
+        return (
+            table.R_sigma.values.astype(np.float64),
+            table.CW_sigma.values.astype(np.float64),
+            table.values.astype(np.float64),
+        )
 
     return None
 
