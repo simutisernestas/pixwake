@@ -32,7 +32,7 @@ git-lfs = ">=3.7.1,<4"
 [tool.pixi.feature.test.pypi-dependencies]
 silent-killers = ">=0.1.7,<0.2"
 
-[tool.pixi.feature.format.pypi-dependencies
+[tool.pixi.feature.format.pypi-dependencies]
 silent-killers = ">=0.1.7,<0.2"
 
 [tool.pixi.feature.format.dependencies]
