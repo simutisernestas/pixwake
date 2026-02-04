@@ -35,6 +35,7 @@ silent-killers = ">=0.1.7,<0.2"
 [tool.pixi.feature.format.dependencies]
 pre-commit = "*"
 ruff = "*"
+silent-killers = ">=0.1.7,<0.2"
 
 [tool.pixi.feature.format.tasks]
 format = "pre-commit run --all-files"
