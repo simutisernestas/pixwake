@@ -30,7 +30,7 @@ memory_profiler = ">=0.61.0,<0.62"
 git-lfs = ">=3.7.1,<4"
 
 [tool.pixi.feature.test.pypi-dependencies]
-silent-killers = ">=0.1.7,<0.2"
+topfarm = ">=2.5.0,<3.0"
 
 [tool.pixi.feature.format.pypi-dependencies]
 silent-killers = ">=0.1.7,<0.2"
@@ -49,7 +49,7 @@ test = "pytest test/ --cov=src/pixwake -n auto --dist worksteal"
 jax = { version = "*", extras = ["cuda12"] }
 
 [tool.pixi.feature.rocm.target.linux-64.pypi-dependencies]
-jax = { version = "==0.5.0", extras = ["rocm"] }
+jax = { version = ">=0.5.0", extras = ["rocm"] }
 
 [tool.pixi.feature.rocm.target.linux-64.dependencies]
 python = "<3.13"
