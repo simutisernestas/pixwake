@@ -484,8 +484,8 @@ class TestTopFarmParity:
             return -result.aep()
 
         settings = SGDSettings(
-            max_iter=500,
-            learning_rate=10.0,
+            max_iter=2000,
+            learning_rate=5.0,
             beta1=0.1,
             beta2=0.2,
         )
