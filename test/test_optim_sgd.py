@@ -252,6 +252,42 @@ class TestSGDSolveImplicit:
     works and the solver can be used in differentiable pipelines.
     """
 
+    def test_sgd_solve_implicit_backward_pass(
+        self, simple_turbine, square_boundary, four_turbine_layout
+    ):
+        """Verify we can differentiate through the solver (backward pass coverage)."""
+        init_x, init_y = four_turbine_layout
+
+        # Define an objective parameterized by 'target'
+        def objective(x, y, target):
+            # Minimize distance to a moving target
+            tx, ty = target[0], target[1]
+            return jnp.sum((x - tx) ** 2 + (y - ty) ** 2)
+
+        settings = SGDSettings(max_iter=10, learning_rate=1.0)
+        target_params = jnp.array([500.0, 500.0])
+
+        # Define a loss function on the *result* of the optimization
+        def outer_loss(params):
+            opt_x, opt_y = sgd_solve_implicit(
+                objective,
+                init_x,
+                init_y,
+                square_boundary,
+                min_spacing=100.0,
+                settings=settings,
+                params=params,
+            )
+            # Arbitrary outer loss: sum of squared positions
+            return jnp.sum(opt_x**2 + opt_y**2)
+
+        # Compute gradient of outer_loss w.r.t target_params
+        # This triggers _sgd_solve_implicit_bwd
+        grad = jax.grad(outer_loss)(target_params)
+
+        assert jnp.all(jnp.isfinite(grad))
+        assert grad.shape == target_params.shape
+
     def test_sgd_solve_implicit_forward_pass(
         self, simple_turbine, square_boundary, four_turbine_layout
     ):
