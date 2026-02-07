@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import partial
-from typing import Callable, NamedTuple
+from typing import Any, Callable, NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -53,10 +53,10 @@ class SGDState(NamedTuple):
     v_x: jnp.ndarray
     v_y: jnp.ndarray
     iteration: int
-    learning_rate: float
-    alpha: float
-    alpha0: float
-    lr0: float
+    learning_rate: float | jnp.ndarray
+    alpha: float | jnp.ndarray
+    alpha0: float | jnp.ndarray
+    lr0: float | jnp.ndarray
 
 
 @dataclass(frozen=True)
@@ -217,7 +217,7 @@ def boundary_penalty(
     n_vertices = boundary_vertices.shape[0]
 
     # Compute signed distance to each edge for all turbines
-    def edge_distances(i: int) -> jnp.ndarray:
+    def edge_distances(i: Any) -> jnp.ndarray:
         x1, y1 = boundary_vertices[i]
         x2, y2 = boundary_vertices[(i + 1) % n_vertices]
         return _signed_distance_to_edge(x, y, x1, y1, x2, y2)
@@ -748,7 +748,7 @@ sgd_solve_implicit.defvjp(_sgd_solve_implicit_fwd, _sgd_solve_implicit_bwd)
 
 
 def create_layout_optimizer(
-    sim_engine,
+    sim_engine: Any,
     boundary: jnp.ndarray,
     min_spacing: float,
     ws_amb: jnp.ndarray | float,
@@ -802,7 +802,7 @@ def create_layout_optimizer(
 
 
 def create_bilevel_optimizer(
-    sim_engine,
+    sim_engine: Any,
     target_boundary: jnp.ndarray,
     min_spacing: float,
     ws_amb: jnp.ndarray | float,
