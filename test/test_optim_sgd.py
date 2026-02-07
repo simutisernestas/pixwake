@@ -447,13 +447,11 @@ class TestBilevelOptimizer:
 # =============================================================================
 
 
-@pytest.mark.slow
 class TestTopFarmParity:
     """Tests comparing pixwake.optim.sgd with TopFarm's implementation.
 
     These tests require TopFarm and PyWake to be installed (they are test
-    dependencies in pyproject.toml). Tests are marked slow as they require
-    running both optimizers.
+    dependencies in pyproject.toml).
     """
 
     def test_penalty_similar_to_topfarm(self, square_boundary):
