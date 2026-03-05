@@ -20,8 +20,6 @@ jobs:
         uses: prefix-dev/setup-pixi@v0.9.4
         with:
           cache: true
-          auth-host: prefix.dev
-          auth-token: ${{ secrets.PREFIX_DEV_TOKEN }}
 
       - name: Run pre-commit hooks
         run: pixi run -e format format
