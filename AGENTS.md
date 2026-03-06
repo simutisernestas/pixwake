@@ -6,21 +6,21 @@ This document provides instructions for agents on how to use and test the `pixwa
 
 `pixwake` is a JAX-based library for fast and differentiable wind farm wake modeling. It provides implementations of the multiple wake deficit models. The library is designed for performance-critical applications, such as wind farm layout optimization.
 
-## Testing (pip)
-
-The tests for `pixwake` are located in the `test/` directory. To run the tests, use `pytest`:
-
-```bash
-pip install py_wake pytest memory_profiler pytest-xdist pytest-cov mypy -e .
-pytest
-```
-
 ## Testing (pixi)
 
-The tests for `pixwake` are located in the `test/` directory. To run the tests, use `pytest`:
+The tests for `pixwake` are located in the `test/` directory. To run the tests, use `pytest` via pixi:
 
 ```bash
 pixi run test
+```
+
+## Testing (pip)
+
+Alternatively, you can install dependencies with pip and run tests directly:
+
+```bash
+pip install py_wake topfarm pytest memory_profiler pytest-xdist pytest-cov -e .
+pytest test/ --cov=src/pixwake -n auto --dist worksteal
 ```
 
 ## mypy
@@ -28,18 +28,15 @@ pixi run test
 Package must comply with `mypy` type checking:
 
 ```bash
-pip install mypy
-mypy src/
+pixi run mypy src/
 ```
 
 ## Formatting
 
-Formatting is enforced with `pre-commit`
+Formatting is enforced with `pre-commit`:
 
 ```bash
-pip install pre-commit
-pre-commit install
-pre-commit run --all-files
+pixi run format
 ```
 
 ## Usage
