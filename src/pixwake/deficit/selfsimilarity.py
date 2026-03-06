@@ -186,7 +186,9 @@ class SelfSimilarityBlockageDeficit(BlockageDeficit):
         ct2ax = ct2a0[None, :] * ct2af  # (n_receivers, n_sources)
 
         # Deficit = WS * axial_induction * radial_shape
-        deficit = jnp.atleast_1d(jnp.asarray(ctx.ws))[None, :] * ct2ax * f_eps  # (n_receivers, n_sources)
+        deficit = (
+            jnp.atleast_1d(jnp.asarray(ctx.ws))[None, :] * ct2ax * f_eps
+        )  # (n_receivers, n_sources)
 
         return deficit
 

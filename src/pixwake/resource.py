@@ -271,6 +271,7 @@ class GridWindResource(WindResource):
             - ``wd_per_case``: shape ``(n_cases,)``
             - ``ti_at_turbines``: shape ``(n_cases, n_turbines)`` or ``None``
         """
+
         def _interp_case(field_2d: jnp.ndarray) -> jnp.ndarray:
             return self._bilinear_interp_field(field_2d, wt_x, wt_y)
 
@@ -313,16 +314,10 @@ class GridWindResource(WindResource):
         wt_y = jnp.asarray(wt_y)
 
         # Domain check: only runs on concrete arrays (outside JAX trace).
-        # Inside jax.jit or jax.grad the arrays are abstract tracers — both
-        # ConcretizationTypeError (jit) and TracerArrayConversionError (grad)
-        # are possible; catch both and skip the check when inside any JAX trace.
-        try:
+        # Inside jax.jit or jax.grad the arrays are abstract tracers — skip
+        # the Python-level check when any input is a JAX tracer.
+        if not isinstance(wt_x, jax.core.Tracer):
             self._check_domain(wt_x, wt_y)
-        except (
-            jax.errors.ConcretizationTypeError,
-            jax.errors.TracerArrayConversionError,
-        ):
-            pass  # inside a JAX trace — skip the Python-level check
 
         return self._interpolate_jax(wt_x, wt_y)
 
@@ -408,9 +403,7 @@ class ScatteredWindResource(WindResource):
     def _validate(self) -> None:
         """Validate shapes."""
         if self.points.ndim != 2 or self.points.shape[1] != 2:
-            raise ValueError(
-                f"points must have shape (N, 2), got {self.points.shape}"
-            )
+            raise ValueError(f"points must have shape (N, 2), got {self.points.shape}")
         if self.wd.ndim != 1:
             raise ValueError(f"wd must be 1D, got shape {self.wd.shape}")
 

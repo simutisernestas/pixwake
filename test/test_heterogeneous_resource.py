@@ -5,8 +5,18 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from pixwake import Curve, GridWindResource, ScatteredWindResource, Turbine, WakeSimulation
-from pixwake.deficit import BastankhahGaussianDeficit, NOJDeficit, NiayifarGaussianDeficit
+from pixwake import (
+    Curve,
+    GridWindResource,
+    ScatteredWindResource,
+    Turbine,
+    WakeSimulation,
+)
+from pixwake.deficit import (
+    BastankhahGaussianDeficit,
+    NOJDeficit,
+    NiayifarGaussianDeficit,
+)
 from pixwake.resource import WindResource
 from pixwake.turbulence import CrespoHernandez
 
@@ -106,7 +116,7 @@ class TestGridWindResourceInterpolation:
         wt_y = jnp.array([1000.0, 1000.0, 1000.0])
         ws_t, wd_t, ti_t = grid_resource.interpolate(wt_x, wt_y)
         assert ws_t.shape == (3, 3)  # (n_cases, n_turbines)
-        assert wd_t.shape == (3,)    # (n_cases,)
+        assert wd_t.shape == (3,)  # (n_cases,)
         assert ti_t is None
 
     def test_interpolate_at_grid_nodes_exact(self):
@@ -326,7 +336,7 @@ class TestWakeSimulationWithResource:
         result = sim(wt_x, wt_y, wind_resource=resource)
 
         assert result.effective_ws.shape == (2, 3)  # (n_cases, n_turbines)
-        assert result.ws.shape == (2, 3)             # heterogeneous: (n_cases, n_turbines)
+        assert result.ws.shape == (2, 3)  # heterogeneous: (n_cases, n_turbines)
 
     def test_uniform_resource_matches_homogeneous(self, simple_turbine):
         """Uniform grid resource should give same result as homogeneous API."""
@@ -392,7 +402,9 @@ class TestWakeSimulationWithResource:
         np.testing.assert_allclose(result_vary.ws[0, 1], 12.0, atol=1e-5)
 
         # 2. Effective ws (post-wake) must differ from the uniform-resource result
-        assert not jnp.allclose(result_vary.effective_ws, result_uni.effective_ws, atol=1e-3)
+        assert not jnp.allclose(
+            result_vary.effective_ws, result_uni.effective_ws, atol=1e-3
+        )
 
     def test_multi_case_shapes(self, simple_turbine):
         """Multi-case grid resource should produce correct output shapes."""

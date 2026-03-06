@@ -382,9 +382,7 @@ class SimulationResult:
         # If ws is (n_cases,) → broadcast to (n_cases, n_turbines).
         # If ws is already (n_cases, n_turbines) → no-op broadcast.
         ws_ambient = jnp.broadcast_to(
-            jnp.atleast_2d(self.ws)
-            if self.ws.ndim == 1
-            else self.ws,
+            jnp.atleast_2d(self.ws) if self.ws.ndim == 1 else self.ws,
             self.effective_ws.shape,
         )
         return self.turbine.power(ws_ambient)
@@ -729,7 +727,9 @@ class WakeSimulation:
             # --- homogeneous path ---
             assert ws_amb is not None, "ws_amb is required when wind_resource is None"
             assert wd_amb is not None, "wd_amb is required when wind_resource is None"
-            sc = self._preprocess_ambient_conditions(wt_xs, wt_ys, ws_amb, wd_amb, ti_amb)
+            sc = self._preprocess_ambient_conditions(
+                wt_xs, wt_ys, ws_amb, wd_amb, ti_amb
+            )
             wt_xs, wt_ys, ws_amb_arr, wd_amb_arr, ti_per_turbine = sc
             # ws_amb_arr:  (n_cases,)  — broadcast to (n_cases, n_turbines) later
             # Expand to (n_cases, n_turbines) so ctx.ws is always per-turbine
@@ -742,9 +742,7 @@ class WakeSimulation:
                     ti_per_turbine[:, None], (ti_per_turbine.shape[0], n_turbines)
                 )
             ws_for_result = ws_amb_arr  # keep (n_cases,) scalar form for result
-            ti_for_result = (
-                self._atleast_1d_jax(ti_amb) if ti_amb is not None else None
-            )
+            ti_for_result = self._atleast_1d_jax(ti_amb) if ti_amb is not None else None
             # Re-read the preprocessed ti from sc for result storage
             ti_for_result = sc[4]  # the preprocessed ti_arr (n_cases,) or None
 
@@ -771,8 +769,14 @@ class WakeSimulation:
         sim_func = self.__sim_call_table[self.mapping_strategy]
         ws_eff, ti_eff = sim_func(ctx)
         return SimulationResult(
-            turbines, wt_xs, wt_ys, wd_amb_arr, ws_for_result, ws_eff,
-            ti_for_result, ti_eff
+            turbines,
+            wt_xs,
+            wt_ys,
+            wd_amb_arr,
+            ws_for_result,
+            ws_eff,
+            ti_for_result,
+            ti_eff,
         )
 
     def _atleast_1d_jax(self, x: jnp.ndarray | float | list) -> jnp.ndarray:
