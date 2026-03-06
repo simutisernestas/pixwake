@@ -355,25 +355,44 @@ class TestWakeSimulationWithResource:
         )
 
     def test_spatially_varying_ws_affects_result(self, simple_turbine):
-        """Non-uniform ws should produce different results than uniform ws at same mean."""
-        wt_x = jnp.array([0.0, 1000.0])
-        wt_y = jnp.array([0.0, 0.0])
+        """Non-uniform ws should produce different effective_ws than uniform ws at the same mean.
 
-        # Grid with strong gradient in ws
+        Layout: two turbines placed exactly on grid nodes along x, wind from west (270 deg).
+          T0 at x=0   (upstream),   ambient 8 m/s (grid node xs[0])
+          T1 at x=2000 (downstream), ambient 12 m/s (grid node xs[1])
+
+        Uniform resource: both turbines see 10 m/s ambient (same mean).
+
+        Assertions:
+          1. result.ws (per-turbine ambient) matches the resource values at each node.
+          2. result.effective_ws (after wake) differs from the uniform-resource result.
+        """
         xs = jnp.array([0.0, 2000.0])
         ys = jnp.array([-500.0, 500.0])
         wd = jnp.array([270.0])
 
-        # Turbine 0 sees 8 m/s, turbine 1 sees 12 m/s
-        ws_grid = jnp.array([[[8.0, 8.0], [12.0, 12.0]]])  # (1, 2, 2) — varies in x
-        resource = GridWindResource(xs=xs, ys=ys, wd=wd, ws=ws_grid)
+        # Turbines exactly at grid nodes so bilinear interp returns exact grid values
+        wt_x = jnp.array([0.0, 2000.0])
+        wt_y = jnp.array([0.0, 0.0])
 
         sim = WakeSimulation(simple_turbine, NOJDeficit(k=0.05))
-        result = sim(wt_x, wt_y, wind_resource=resource)
 
-        # Wind speed at each turbine should match the resource
-        # (downstream turbine gets wake from upstream — but ambient is different)
-        assert jnp.all(jnp.isfinite(result.effective_ws))
+        # Spatially varying: xs[0] → 8 m/s, xs[1] → 12 m/s (independent of y)
+        ws_grid_vary = jnp.array([[[8.0, 8.0], [12.0, 12.0]]])  # (1, Nx=2, Ny=2)
+        resource_vary = GridWindResource(xs=xs, ys=ys, wd=wd, ws=ws_grid_vary)
+        result_vary = sim(wt_x, wt_y, wind_resource=resource_vary)
+
+        # Uniform: both turbines see 10 m/s ambient (same spatial mean)
+        ws_grid_uni = jnp.ones((1, 2, 2)) * 10.0
+        resource_uni = GridWindResource(xs=xs, ys=ys, wd=wd, ws=ws_grid_uni)
+        result_uni = sim(wt_x, wt_y, wind_resource=resource_uni)
+
+        # 1. Per-turbine ambient wind speed must reflect the resource at each grid node
+        np.testing.assert_allclose(result_vary.ws[0, 0], 8.0, atol=1e-5)
+        np.testing.assert_allclose(result_vary.ws[0, 1], 12.0, atol=1e-5)
+
+        # 2. Effective ws (post-wake) must differ from the uniform-resource result
+        assert not jnp.allclose(result_vary.effective_ws, result_uni.effective_ws, atol=1e-3)
 
     def test_multi_case_shapes(self, simple_turbine):
         """Multi-case grid resource should produce correct output shapes."""
