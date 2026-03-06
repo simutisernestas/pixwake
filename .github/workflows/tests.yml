@@ -29,7 +29,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
-            lfs: true  
+            lfs: true
 
       - name: Setup Pixi
         uses: prefix-dev/setup-pixi@v0.9.4
