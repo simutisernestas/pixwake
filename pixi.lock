@@ -11390,7 +11390,7 @@ packages:
 - pypi: ./
   name: pixwake
   version: 0.1.0
-  sha256: 3b3283272b037d8724602a87d101b44cab672ccce78d7207230eceab6ea0840a
+  sha256: 3d737082b6858c461ec239d3ea08788bd3f12ecb88ef4558fc5dfed362717640
   requires_dist:
   - jax
   - matplotlib

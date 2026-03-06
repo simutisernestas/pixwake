@@ -28,6 +28,7 @@ from pathlib import Path
 from jax import config as jcfg
 
 from .core import Curve, Turbine, WakeSimulation
+from .resource import GridWindResource, ScatteredWindResource
 
 __version__ = "0.1.0"
 
@@ -43,4 +44,6 @@ __all__ = [
     "WakeSimulation",
     "Curve",
     "Turbine",
+    "GridWindResource",
+    "ScatteredWindResource",
 ]

@@ -45,11 +45,12 @@ class CrespoHernandez(WakeTurbulence):
         distance_normalized = dw_safe / ctx.turbine.rotor_diameter
         # Apply Crespo-Hernandez formula using ambient ti Eq (21) in paper
         c0, c1, c2, c3 = self.c
-        ti_ambient = ctx.ti  # scalar
+        # ctx.ti is (n_turbines,) per-turbine ambient TI; broadcast to (1, n_sources)
+        ti_ambient = jnp.atleast_1d(jnp.asarray(ctx.ti))[None, :]
         ti_added = (
             c0
             * induction_factor[None, :] ** c1
-            * ti_ambient**c2  # type: ignore
+            * ti_ambient**c2
             * distance_normalized**c3
         )
         return ti_added
