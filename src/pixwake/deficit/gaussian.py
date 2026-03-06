@@ -60,7 +60,7 @@ def _compute_gaussian_deficit(
     # Convert to absolute deficit (m/s)
     ws_reference = ws_eff[None, :]
     ws_reference = (
-        ws_reference if use_effective_ws else jnp.full_like(ws_reference, ctx.ws)
+        ws_reference if use_effective_ws else jnp.atleast_1d(jnp.asarray(ctx.ws))[None, :]
     )
     return deficit_fraction * ws_reference
 

@@ -49,7 +49,7 @@ class NOJDeficit(WakeDeficit):
             2 * self.ct2a(wt.ct(ws_eff))
             * (rr / jnp.maximum(ctx.wake_radius, get_float_eps())) ** 2
         )  # fmt:skip
-        return ctx.ws * all2all_deficit_matrix
+        return jnp.atleast_1d(jnp.asarray(ctx.ws))[None, :] * all2all_deficit_matrix
 
     def _wake_radius(
         self,

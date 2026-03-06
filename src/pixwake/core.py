@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
     from pixwake.deficit.base import WakeDeficit
+    from pixwake.resource import WindResource
     from pixwake.turbulence.base import WakeTurbulence
 
 from dataclasses import dataclass
@@ -293,8 +294,11 @@ class SimulationContext:
         turbine: The `Turbine` or `Turbines` object used in the simulation.
         dw: A JAX numpy array of downwind distances between all pairs of turbines.
         cw: A JAX numpy array of crosswind distances between all pairs of turbines.
-        ws: The free-stream wind speed for the simulation case.
-        ti: The ambient turbulence intensity for the simulation case (optional).
+        ws: The free-stream wind speed at each turbine for this case, shape
+            ``(n_turbines,)``.  All turbines share the same value in the homogeneous
+            case; they may differ when a :class:`~pixwake.resource.WindResource` is used.
+        ti: The ambient turbulence intensity at each turbine, shape ``(n_turbines,)``
+            or ``None`` when TI is not modelled.  Same heterogeneity semantics as ``ws``.
         wake_radius: The wake radius at each turbine, set by the deficit model at runtime.
     """
 
@@ -367,11 +371,22 @@ class SimulationResult:
         This is the power each turbine would produce if there were no wake effects,
         using the ambient wind speed.
 
+        ``ws`` may be either ``(n_cases,)`` (homogeneous resource, one scalar per
+        case) or ``(n_cases, n_turbines)`` (heterogeneous resource, one value per
+        turbine per case).  Both shapes are handled correctly.
+
         Returns:
             Gross power array with shape (n_cases, n_turbines) in kW.
         """
-        # Broadcast ambient wind speed to turbine array shape
-        ws_ambient = jnp.broadcast_to(self.ws[:, None], self.effective_ws.shape)
+        # Broadcast ambient wind speed to turbine array shape.
+        # If ws is (n_cases,) → broadcast to (n_cases, n_turbines).
+        # If ws is already (n_cases, n_turbines) → no-op broadcast.
+        ws_ambient = jnp.broadcast_to(
+            jnp.atleast_2d(self.ws)
+            if self.ws.ndim == 1
+            else self.ws,
+            self.effective_ws.shape,
+        )
         return self.turbine.power(ws_ambient)
 
     def wake_losses(self) -> jnp.ndarray:
@@ -626,44 +641,53 @@ class WakeSimulation:
         self,
         wt_xs: jnp.ndarray,
         wt_ys: jnp.ndarray,
-        ws_amb: jnp.ndarray | float | list,
-        wd_amb: jnp.ndarray | float | list,
+        ws_amb: jnp.ndarray | float | list | None = None,
+        wd_amb: jnp.ndarray | float | list | None = None,
         ti_amb: jnp.ndarray | float | None = None,
         wt_types: list[int] | None = None,
+        wind_resource: WindResource | None = None,
     ) -> SimulationResult:
         """Runs the wake simulation for the given ambient conditions.
+
+        Either ``wind_resource`` or the combination of ``ws_amb`` / ``wd_amb`` must
+        be provided.  They are mutually exclusive.
 
         Args:
             wt_xs: x-coordinates of the wind turbines.
             wt_ys: y-coordinates of the wind turbines.
             ws_amb: Free-stream wind speed(s). Can be a single value, list, or array
-                for multiple wind conditions.
+                for multiple wind conditions.  Must be ``None`` when ``wind_resource``
+                is provided.
             wd_amb: Wind direction(s) in degrees. Can be a single value, list, or array
-                for multiple wind conditions.
+                for multiple wind conditions.  Must be ``None`` when ``wind_resource``
+                is provided.
             ti_amb: Optional ambient turbulence intensity. Can be a single value, list,
-                or array for multiple wind conditions.
+                or array for multiple wind conditions.  Must be ``None`` when
+                ``wind_resource`` is provided.
             wt_types: Optional list of turbine type IDs corresponding to each position.
                 When provided, turbines are selected from the turbine library provided
                 at initialization. Must have the same length as wt_xs/wt_ys.
+            wind_resource: Optional heterogeneous wind resource.  When provided,
+                ``ws_amb``, ``wd_amb``, and ``ti_amb`` must all be ``None``.  The
+                resource is interpolated at the turbine positions to yield per-turbine
+                ambient conditions.  Wind direction stays uniform per case (taken from
+                the resource's ``wd`` field).
 
         Returns:
             A `SimulationResult` object containing the effective wind speeds, power
             output, and other simulation results.
 
-        Example:
-            ```python
-            # Single turbine type
+        Example::
+
+            # Homogeneous resource
             turbine = Turbine(...)
             sim = WakeSimulation(turbine, deficit_model)
             result = sim(wt_xs=xs, wt_ys=ys, ws_amb=10.0, wd_amb=270.0)
 
-            # Multiple turbine types from library
-            turbine_lib = [turbine1, turbine2]
-            sim = WakeSimulation(turbine_lib, deficit_model)
-            result = sim(wt_xs=xs, wt_ys=ys, ws_amb=10.0, wd_amb=270.0, wt_types=[
-                turbine1.type_id, turbine2.type_id, turbine1.type_id, turbine2.type_id
-            ]) # Alternating turbine types
-            ```
+            # Heterogeneous resource
+            from pixwake.resource import GridWindResource
+            resource = GridWindResource(xs=gx, ys=gy, wd=wd, ws=ws_grid)
+            result = sim(wt_xs=xs, wt_ys=ys, wind_resource=resource)
         """
         if self.mapping_strategy not in self.__sim_call_table.keys():
             raise ValueError(
@@ -671,8 +695,58 @@ class WakeSimulation:
                 f"Valid options are: {self.__sim_call_table.keys()}"
             )
 
-        sc = self._preprocess_ambient_conditions(wt_xs, wt_ys, ws_amb, wd_amb, ti_amb)
-        wt_xs, wt_ys, ws_amb, wd_amb, ti_amb = sc
+        # --- mutual exclusivity check ---
+        if wind_resource is not None:
+            if ws_amb is not None or wd_amb is not None or ti_amb is not None:
+                raise ValueError(
+                    "wind_resource is mutually exclusive with ws_amb, wd_amb, and "
+                    "ti_amb.  Provide either wind_resource or the scalar/array "
+                    "ambient conditions, not both."
+                )
+
+        wt_xs = self._atleast_1d_jax(wt_xs)
+        wt_ys = self._atleast_1d_jax(wt_ys)
+        if wt_xs.shape != wt_ys.shape:
+            raise ValueError(
+                f"wt_xs shape {wt_xs.shape} must match wt_ys shape {wt_ys.shape}"
+            )
+        if len(wt_xs.shape) != 1:
+            raise ValueError(
+                f"Turbine positions must be 1D arrays, got shape {wt_xs.shape}"
+            )
+
+        if wind_resource is not None:
+            # --- heterogeneous path ---
+            ws_per_turbine, wd_amb_arr, ti_per_turbine = wind_resource.interpolate(
+                wt_xs, wt_ys
+            )
+            # ws_per_turbine: (n_cases, n_turbines)
+            # wd_amb_arr:     (n_cases,)
+            # ti_per_turbine: (n_cases, n_turbines) | None
+            ws_for_result = ws_per_turbine  # store full (n_cases, n_turbines) in result
+            ti_for_result = ti_per_turbine
+        else:
+            # --- homogeneous path ---
+            assert ws_amb is not None, "ws_amb is required when wind_resource is None"
+            assert wd_amb is not None, "wd_amb is required when wind_resource is None"
+            sc = self._preprocess_ambient_conditions(wt_xs, wt_ys, ws_amb, wd_amb, ti_amb)
+            wt_xs, wt_ys, ws_amb_arr, wd_amb_arr, ti_per_turbine = sc
+            # ws_amb_arr:  (n_cases,)  — broadcast to (n_cases, n_turbines) later
+            # Expand to (n_cases, n_turbines) so ctx.ws is always per-turbine
+            n_turbines = wt_xs.shape[0]
+            ws_per_turbine = jnp.broadcast_to(
+                ws_amb_arr[:, None], (ws_amb_arr.shape[0], n_turbines)
+            )
+            if ti_per_turbine is not None:
+                ti_per_turbine = jnp.broadcast_to(
+                    ti_per_turbine[:, None], (ti_per_turbine.shape[0], n_turbines)
+                )
+            ws_for_result = ws_amb_arr  # keep (n_cases,) scalar form for result
+            ti_for_result = (
+                self._atleast_1d_jax(ti_amb) if ti_amb is not None else None
+            )
+            # Re-read the preprocessed ti from sc for result storage
+            ti_for_result = sc[4]  # the preprocessed ti_arr (n_cases,) or None
 
         turbines: Turbine
         if isinstance(self.turbines, list) and wt_types is not None:
@@ -690,12 +764,15 @@ class WakeSimulation:
             turbines = self.turbines
 
         hh = turbines.hub_height
-        dw, cw = self._get_downwind_crosswind_distances(wd_amb, wt_xs, wt_ys, hh)
-        ctx = SimulationContext(turbines, dw, cw, ws_amb, ti_amb)
+        # wd_amb_arr: (n_cases,)  — uniform per case
+        dw, cw = self._get_downwind_crosswind_distances(wd_amb_arr, wt_xs, wt_ys, hh)
+        # ctx.ws is (n_cases, n_turbines), ctx.ti is (n_cases, n_turbines) or None
+        ctx = SimulationContext(turbines, dw, cw, ws_per_turbine, ti_per_turbine)
         sim_func = self.__sim_call_table[self.mapping_strategy]
         ws_eff, ti_eff = sim_func(ctx)
         return SimulationResult(
-            turbines, wt_xs, wt_ys, wd_amb, ws_amb, ws_eff, ti_amb, ti_eff
+            turbines, wt_xs, wt_ys, wd_amb_arr, ws_for_result, ws_eff,
+            ti_for_result, ti_eff
         )
 
     def _atleast_1d_jax(self, x: jnp.ndarray | float | list) -> jnp.ndarray:
@@ -989,48 +1066,59 @@ class WakeSimulation:
     ) -> tuple[jnp.ndarray, jnp.ndarray | None]:
         """Simulates multiple wind conditions using `jax.lax.map`.
 
-        Uses pytree-aware map to avoid creating SimulationContext objects
-        inside the mapped function, reducing Python object overhead.
+        Uses pytree-aware lax.map (sequential scan, lower peak memory than vmap on CPU).
         """
-        # For lax.map, we need to stack the varying parts into a single pytree
-        # that gets sliced along axis 0. Turbine is constant, so we close over it.
-        turbine = ctx.turbine
+        n_cases = ctx.ws.shape[0]
 
-        def _single_case(
-            case: tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray | None],
+        def _map_fn(
+            i: jnp.ndarray,
         ) -> tuple[jnp.ndarray, jnp.ndarray | None]:
-            dw, cw, ws, ti = case
-            # Create context with closed-over turbine to avoid passing it through map
-            return self._simulate_single_case(
-                SimulationContext(turbine, dw, cw, ws, ti)
+            single_ctx = SimulationContext(
+                turbine=ctx.turbine,
+                dw=ctx.dw[i],
+                cw=ctx.cw[i],
+                ws=ctx.ws[i],
+                ti=ctx.ti[i] if ctx.ti is not None else None,
             )
+            return self._simulate_single_case(single_ctx)
 
-        return jax.lax.map(_single_case, (ctx.dw, ctx.cw, ctx.ws, ctx.ti))
+        indices = jnp.arange(n_cases)
+        return jax.lax.map(_map_fn, indices)
 
     def _simulate_manual(
         self, ctx: SimulationContext
     ) -> tuple[jnp.ndarray, jnp.ndarray | None]:
-        """Simulates multiple conditions with a Python loop (for debugging)."""
-        n_cases = ctx.ws.size
-        n_turbines = ctx.dw.shape[0]
-        ws_out = jnp.zeros((n_cases, n_turbines))
-        ti_out = None if ctx.ti is None else jnp.zeros((n_cases, n_turbines))
+        """Simulates multiple wind conditions using a plain Python loop.
+
+        This strategy is not JIT-traced in the outer loop and is useful for
+        debugging with standard Python tools (e.g., breakpoints inside
+        `_simulate_single_case`).
+        """
+        n_cases = ctx.ws.shape[0]
+        n_turbines = ctx.dw.shape[1]
+
+        ws_results = []
+        ti_results: list[jnp.ndarray] | None = [] if ctx.ti is not None else None
 
         for i in range(n_cases):
-            _ws = ctx.ws[i]
-            _dw = ctx.dw[i]
-            _cw = ctx.cw[i]
-            _ti = None if ctx.ti is None else ctx.ti[i]
-
-            ws_eff, ti_eff = self._simulate_single_case(
-                SimulationContext(ctx.turbine, _dw, _cw, _ws, _ti)
+            single_ctx = SimulationContext(
+                turbine=ctx.turbine,
+                dw=ctx.dw[i],
+                cw=ctx.cw[i],
+                ws=ctx.ws[i],
+                ti=ctx.ti[i] if ctx.ti is not None else None,
             )
-            ws_out = ws_out.at[i].set(ws_eff)
-            if ti_out is not None:
-                assert ti_eff is not None
-                ti_out = ti_out.at[i].set(ti_eff)
+            ws_eff_i, ti_eff_i = self._simulate_single_case(single_ctx)
+            ws_results.append(ws_eff_i)
+            if ti_results is not None and ti_eff_i is not None:
+                ti_results.append(ti_eff_i)
 
-        return (ws_out, ti_out)
+        ws_stacked = jnp.stack(ws_results)  # (n_cases, n_turbines)
+        ti_stacked: jnp.ndarray | None = None
+        if ti_results is not None and len(ti_results) == n_cases:
+            ti_stacked = jnp.stack(ti_results)
+        _ = n_turbines  # used implicitly via dw shape
+        return ws_stacked, ti_stacked
 
     def _simulate_single_case(
         self,
@@ -1043,10 +1131,10 @@ class WakeSimulation:
         solver to find the stable state.
         """
         # initialize all turbines with ambient quantities
+        # ctx.ws is already (n_turbines,) per-turbine array
         fdtype = default_float_type()
-        n_turbines = ctx.dw.shape[0]
-        ws_amb = jnp.full(n_turbines, ctx.ws, dtype=fdtype)
-        ti_amb = None if ctx.ti is None else jnp.full(n_turbines, ctx.ti, dtype=fdtype)
+        ws_amb = jnp.asarray(ctx.ws, dtype=fdtype)
+        ti_amb = None if ctx.ti is None else jnp.asarray(ctx.ti, dtype=fdtype)
         x_guess = (ws_amb, ti_amb)
 
         fp_func = (  # fixed_point_debug is not traced and can be used with pydebugger
