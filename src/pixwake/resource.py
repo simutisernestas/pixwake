@@ -7,12 +7,19 @@ rotation for all turbines).
 
 Two representations are supported:
     - GridWindResource: Regular 2D grid of resource data with bilinear interpolation.
+      Uses a pure-JAX implementation of bilinear (RegularGridInterpolator-style)
+      interpolation that is fully JIT-compatible and differentiable w.r.t. both
+      turbine positions and resource values — suitable for layout optimisation.
     - ScatteredWindResource: Arbitrary scatter points with barycentric interpolation.
+      Uses scipy's Delaunay triangulation for the triangle lookup, which runs at
+      Python level (outside the JAX trace).  This means it is **not** JIT-safe and
+      is **not** differentiable w.r.t. turbine query positions.  This is by design:
+      the interpolation itself is fast (O(n_turbines) scipy lookup), and the wind
+      farm simulation dominates runtime.  Use GridWindResource when JIT or position
+      gradients are required.
 
 Both classes support:
     - Multiple wind cases (time series) with the same spatial point distribution.
-    - JAX-differentiable interpolation (GridWindResource fully; ScatteredWindResource
-      differentiable w.r.t. resource values but not w.r.t. turbine query positions).
     - Out-of-domain detection with a small floating-point tolerance.
 
 Example::
@@ -38,6 +45,7 @@ from abc import ABC, abstractmethod
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 # Relative tolerance factor used for domain boundary checks.
 # A turbine at `x` is considered inside [x0, x1] if
@@ -155,25 +163,29 @@ class GridWindResource(WindResource):
             )
 
     def _check_domain(self, wt_x: jnp.ndarray, wt_y: jnp.ndarray) -> None:
-        """Raise ValueError if any turbine lies outside the grid domain."""
-        x0, x1 = float(self.xs[0]), float(self.xs[-1])
-        y0, y1 = float(self.ys[0]), float(self.ys[-1])
+        """Raise ValueError if any turbine lies outside the grid domain.
+
+        This method operates on concrete (numpy-level) values and must only be
+        called outside a JAX trace (i.e. not inside ``jax.jit``).
+        """
+        x0, x1 = float(np.asarray(self.xs[0])), float(np.asarray(self.xs[-1]))
+        y0, y1 = float(np.asarray(self.ys[0])), float(np.asarray(self.ys[-1]))
         tol_x = _DOMAIN_TOL_FACTOR * (x1 - x0)
         tol_y = _DOMAIN_TOL_FACTOR * (y1 - y0)
 
-        wt_x_np = jnp.asarray(wt_x)
-        wt_y_np = jnp.asarray(wt_y)
+        wt_x_np = np.asarray(wt_x)
+        wt_y_np = np.asarray(wt_y)
 
         out_x = (wt_x_np < x0 - tol_x) | (wt_x_np > x1 + tol_x)
         out_y = (wt_y_np < y0 - tol_y) | (wt_y_np > y1 + tol_y)
 
-        if jnp.any(out_x):
+        if out_x.any():
             bad = wt_x_np[out_x]
             raise ValueError(
                 f"Turbine x-coordinates {bad.tolist()} are outside the grid domain "
                 f"[{x0}, {x1}] (tolerance {tol_x:.6g})."
             )
-        if jnp.any(out_y):
+        if out_y.any():
             bad = wt_y_np[out_y]
             raise ValueError(
                 f"Turbine y-coordinates {bad.tolist()} are outside the grid domain "
@@ -237,12 +249,53 @@ class GridWindResource(WindResource):
             + f11 * tx * ty
         )
 
+    def _interpolate_jax(
+        self,
+        wt_x: jnp.ndarray,
+        wt_y: jnp.ndarray,
+    ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray | None]:
+        """Pure-JAX bilinear interpolation — JIT-safe and differentiable.
+
+        This is the inner implementation without any Python-level domain checks.
+        Turbine positions are clamped to the grid boundary before interpolation,
+        so out-of-domain values silently extrapolate to the nearest boundary value
+        rather than raising.  Call :meth:`interpolate` (the public method) for
+        domain validation when running eagerly.
+
+        Args:
+            wt_x: Turbine x-coordinates, shape ``(n_turbines,)``.
+            wt_y: Turbine y-coordinates, shape ``(n_turbines,)``.
+
+        Returns:
+            - ``ws_at_turbines``: shape ``(n_cases, n_turbines)``
+            - ``wd_per_case``: shape ``(n_cases,)``
+            - ``ti_at_turbines``: shape ``(n_cases, n_turbines)`` or ``None``
+        """
+        def _interp_case(field_2d: jnp.ndarray) -> jnp.ndarray:
+            return self._bilinear_interp_field(field_2d, wt_x, wt_y)
+
+        ws_at_turbines = jax.vmap(_interp_case)(self.ws)  # (n_cases, n_turbines)
+
+        ti_at_turbines: jnp.ndarray | None = None
+        if self.ti is not None:
+            ti_at_turbines = jax.vmap(_interp_case)(self.ti)
+
+        return ws_at_turbines, self.wd, ti_at_turbines
+
     def interpolate(
         self,
         wt_x: jnp.ndarray,
         wt_y: jnp.ndarray,
     ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray | None]:
         """Bilinearly interpolate wind resource at turbine positions.
+
+        This method validates turbine positions against the grid domain and then
+        delegates to :meth:`_interpolate_jax` for the pure-JAX computation.
+
+        The domain check runs at Python (eager) level.  When this method is used
+        inside ``jax.jit``, the check executes once during tracing (on abstract
+        shapes) and is skipped on subsequent calls.  To skip the check entirely,
+        call :meth:`_interpolate_jax` directly.
 
         Args:
             wt_x: Turbine x-coordinates, shape ``(n_turbines,)``.
@@ -254,26 +307,24 @@ class GridWindResource(WindResource):
             - ``ti_at_turbines``: shape ``(n_cases, n_turbines)`` or ``None``
 
         Raises:
-            ValueError: If any turbine is outside the grid domain.
+            ValueError: If any turbine is outside the grid domain (eager mode only).
         """
         wt_x = jnp.asarray(wt_x)
         wt_y = jnp.asarray(wt_y)
 
-        # Domain check (eager — outside JAX trace)
-        self._check_domain(wt_x, wt_y)
+        # Domain check: only runs on concrete arrays (outside JAX trace).
+        # Inside jax.jit or jax.grad the arrays are abstract tracers — both
+        # ConcretizationTypeError (jit) and TracerArrayConversionError (grad)
+        # are possible; catch both and skip the check when inside any JAX trace.
+        try:
+            self._check_domain(wt_x, wt_y)
+        except (
+            jax.errors.ConcretizationTypeError,
+            jax.errors.TracerArrayConversionError,
+        ):
+            pass  # inside a JAX trace — skip the Python-level check
 
-        # Vectorise over cases: for each case, interpolate over all turbines
-        def _interp_case(field_2d: jnp.ndarray) -> jnp.ndarray:
-            return self._bilinear_interp_field(field_2d, wt_x, wt_y)
-
-        # ws has shape (n_cases, Nx, Ny) → map over axis 0
-        ws_at_turbines = jax.vmap(_interp_case)(self.ws)  # (n_cases, n_turbines)
-
-        ti_at_turbines: jnp.ndarray | None = None
-        if self.ti is not None:
-            ti_at_turbines = jax.vmap(_interp_case)(self.ti)  # (n_cases, n_turbines)
-
-        return ws_at_turbines, self.wd, ti_at_turbines
+        return self._interpolate_jax(wt_x, wt_y)
 
 
 class ScatteredWindResource(WindResource):

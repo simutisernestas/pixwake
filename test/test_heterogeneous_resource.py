@@ -503,3 +503,111 @@ class TestHomogeneousBackwardCompat:
         gp = result.gross_power()
         assert gp.shape == (1, 3)
         np.testing.assert_allclose(gp, result.turbine.power(jnp.array(10.0)), atol=1.0)
+
+
+# ---------------------------------------------------------------------------
+# GridWindResource JIT-compatibility
+# ---------------------------------------------------------------------------
+
+
+class TestGridWindResourceJIT:
+    """GridWindResource.interpolate must work inside jax.jit and jax.grad."""
+
+    @pytest.fixture
+    def resource(self):
+        xs = jnp.linspace(0.0, 2000.0, 5)
+        ys = jnp.linspace(0.0, 2000.0, 5)
+        wd = jnp.array([270.0])
+        ws = jnp.ones((1, 5, 5)) * 10.0
+        return GridWindResource(xs=xs, ys=ys, wd=wd, ws=ws)
+
+    def test_interpolate_jit(self, resource):
+        """jax.jit(resource.interpolate) must not raise and return correct shapes."""
+        wt_x = jnp.array([500.0, 1000.0, 1500.0])
+        wt_y = jnp.array([1000.0, 1000.0, 1000.0])
+        ws_t, wd_t, ti_t = jax.jit(resource.interpolate)(wt_x, wt_y)
+        assert ws_t.shape == (1, 3)
+        assert wd_t.shape == (1,)
+        assert ti_t is None
+        np.testing.assert_allclose(ws_t, 10.0, atol=1e-5)
+
+    def test_interpolate_jit_grad_wrt_positions(self):
+        """jax.grad through jit-compiled interpolation w.r.t. turbine positions."""
+        xs = jnp.linspace(0.0, 1000.0, 5)
+        ys = jnp.linspace(0.0, 1000.0, 5)
+        wd = jnp.array([270.0])
+        # ws varies linearly in x so gradients w.r.t. x are non-zero
+        ws_grid = (8.0 + 4.0 * xs[None, :, None] / 1000.0) * jnp.ones((1, 5, 5))
+        resource = GridWindResource(xs=xs, ys=ys, wd=wd, ws=ws_grid)
+
+        @jax.jit
+        def f(wt_x, wt_y):
+            ws_t, _, _ = resource.interpolate(wt_x, wt_y)
+            return ws_t.sum()
+
+        wt_x = jnp.array([250.0, 750.0])
+        wt_y = jnp.array([500.0, 500.0])
+        grad_x, grad_y = jax.grad(f, argnums=(0, 1))(wt_x, wt_y)
+        assert jnp.all(jnp.isfinite(grad_x))
+        assert jnp.any(grad_x != 0.0)
+
+    def test_sim_jit_with_grid_resource(self, resource, simple_turbine):
+        """jax.jit applied to the full simulation must work with GridWindResource."""
+        sim = WakeSimulation(simple_turbine, NOJDeficit(k=0.05))
+
+        @jax.jit
+        def run(wt_x, wt_y):
+            result = sim(wt_x, wt_y, wind_resource=resource)
+            return result.effective_ws
+
+        wt_x = jnp.array([0.0, 500.0, 1000.0])
+        wt_y = jnp.array([0.0, 0.0, 0.0])
+        eff_ws = run(wt_x, wt_y)
+        assert eff_ws.shape == (1, 3)
+        assert jnp.all(jnp.isfinite(eff_ws))
+
+    def test_aep_grad_layout_jit_compiled(self, resource, simple_turbine):
+        """jit-compiled gradient of AEP w.r.t. turbine positions."""
+        sim = WakeSimulation(simple_turbine, NOJDeficit(k=0.05))
+
+        @jax.jit
+        def aep_fn(wt_x, wt_y):
+            result = sim(wt_x, wt_y, wind_resource=resource)
+            return result.aep()
+
+        wt_x = jnp.array([0.0, 400.0, 800.0])
+        wt_y = jnp.array([0.0, 0.0, 0.0])
+        grad_x, grad_y = jax.grad(aep_fn, argnums=(0, 1))(wt_x, wt_y)
+        assert jnp.all(jnp.isfinite(grad_x))
+        assert jnp.all(jnp.isfinite(grad_y))
+
+
+# ---------------------------------------------------------------------------
+# ScatteredWindResource is not JIT-safe (by design)
+# ---------------------------------------------------------------------------
+
+
+class TestScatteredNotJIT:
+    """ScatteredWindResource is intentionally not JIT-safe.
+
+    The scipy Delaunay triangle lookup (find_simplex) runs outside the JAX
+    trace and cannot be traced.  This test documents that behaviour.
+    """
+
+    def test_scattered_not_jit_safe(self):
+        """Calling jax.jit on ScatteredWindResource.interpolate must raise."""
+        pts = np.array(
+            [[x, y] for x in np.linspace(0, 2000, 5) for y in np.linspace(0, 2000, 5)]
+        )
+        wd = jnp.array([270.0])
+        ws = jnp.ones((1, 25)) * 10.0
+        resource = ScatteredWindResource(points=pts, wd=wd, ws=ws)
+
+        wt_x = jnp.array([500.0, 1000.0])
+        wt_y = jnp.array([1000.0, 1000.0])
+
+        # ScatteredWindResource.interpolate calls scipy inside the function
+        # body, which is fine in eager mode but will error under jax.jit
+        # because np.asarray on a traced array raises.
+        with pytest.raises(Exception):
+            jax.jit(resource.interpolate)(wt_x, wt_y)
